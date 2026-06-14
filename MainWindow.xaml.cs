@@ -3401,7 +3401,8 @@ public partial class MainWindow : Window
 
         _speech.StopSpeaking();
         _speech.ReadyForNextSpeech();
-        _speech.StartListening();
+        if (!_speech.StartListening())
+            SetUIState("idle", "Voice input unavailable");
     }
 
     private void StopAll_Click(object sender, RoutedEventArgs e)

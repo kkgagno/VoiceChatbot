@@ -52,6 +52,15 @@ The server controls and Hermes commands expect model batch files in `C:\llama.cp
 
 Local transcription uses Whisper.net. Use **Download Model** inside the app to download a Whisper model. A microphone is required for voice input.
 
+If **Listen** does not start on a new PC:
+
+1. Select `Whisper.net` as the transcription backend.
+2. Select `base` (or another size) under Whisper Model.
+3. Click **Download Model** once.
+4. Select the microphone and press **Listen** again.
+
+The app reports microphone-open and missing-model errors directly in the chat. If a saved microphone cannot be opened, it retries the Windows default input device.
+
 Optional transcription tools:
 
 - Ryzen AI Whisper can be configured with an external command in the app.

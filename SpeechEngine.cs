@@ -269,16 +269,20 @@ public class SpeechEngine : IDisposable
 
     // ==================== Recording ====================
 
-    public void StartListening()
+    public bool StartListening()
     {
         if (_isProcessing || _isRecording)
         {
-            return;
+            return false;
         }
 
-        if (_whisperProcessor == null)
+        var canUseExternalTranscriber =
+            IsRyzenAiSelected() &&
+            !string.IsNullOrWhiteSpace(ExternalNpuTranscriberCommand);
+        if (_whisperProcessor == null && !canUseExternalTranscriber)
         {
-            return;
+            Log?.Invoke("Voice input is not ready: no Whisper model is installed. Choose a Whisper model and click Download Model.");
+            return false;
         }
 
         // Clean up any previous WaveIn
@@ -289,50 +293,77 @@ public class SpeechEngine : IDisposable
             _waveIn = null;
         }
 
-        _isRecording = true;
         _silenceBucketCount = 0;
         _voiceBucketCount = 0;
         _voiceDetected = false;
         _logThrottle = 0;
-        SetState(VoiceState.Listening);
 
         // Audio buffer to store PCM data
         _audioBuffer = new MemoryStream();
 
-        // Set up NAudio recording
-        var deviceNum = MicDeviceIndex;
-        
-        // Log which device we're using
         try
         {
-            var caps = WaveInEvent.GetCapabilities(deviceNum);
+            StartWaveInDevice(MicDeviceIndex);
+            _isRecording = true;
+            SetState(VoiceState.Listening);
+            return true;
         }
         catch (Exception ex)
         {
-        }
+            var firstError = ex.Message;
+            try
+            {
+                _waveIn?.Dispose();
+                _waveIn = null;
 
+                var fallbackDevice = MicDeviceIndex == -1 && WaveInEvent.DeviceCount > 0
+                    ? 0
+                    : -1;
+                if (fallbackDevice != MicDeviceIndex)
+                {
+                    StartWaveInDevice(fallbackDevice);
+                    _isRecording = true;
+                    SetState(VoiceState.Listening);
+                    var fallbackName = fallbackDevice == -1
+                        ? "Windows default microphone"
+                        : WaveInEvent.GetCapabilities(fallbackDevice).ProductName;
+                    Log?.Invoke($"Could not open the selected microphone ({firstError}). Using {fallbackName} instead.");
+                    return true;
+                }
+            }
+            catch (Exception fallbackEx)
+            {
+                firstError += $" Default microphone also failed: {fallbackEx.Message}";
+            }
+
+            _isRecording = false;
+            _audioBuffer?.Dispose();
+            _audioBuffer = null;
+            try { _waveIn?.Dispose(); } catch { }
+            _waveIn = null;
+            SetState(VoiceState.Idle);
+            Log?.Invoke($"Microphone could not start: {firstError}");
+            ListeningTimedOut?.Invoke();
+            return false;
+        }
+    }
+
+    private void StartWaveInDevice(int deviceNumber)
+    {
         _waveIn = new WaveInEvent
         {
-            WaveFormat = new WaveFormat(16000, 16, 1), // 16kHz mono - what Whisper expects
+            WaveFormat = new WaveFormat(16000, 16, 1),
             BufferMilliseconds = 100,
-            DeviceNumber = deviceNum
+            DeviceNumber = deviceNumber
         };
 
         _waveIn.DataAvailable += OnAudioDataAvailable;
-        _waveIn.RecordingStopped += (s, e) =>
+        _waveIn.RecordingStopped += (_, e) =>
         {
+            if (e.Exception != null && _isRecording)
+                Log?.Invoke($"Microphone recording stopped unexpectedly: {e.Exception.Message}");
         };
-
-        try
-        {
-            _waveIn.StartRecording();
-        }
-        catch (Exception ex)
-        {
-            _isRecording = false;
-            SetState(VoiceState.Idle);
-            ListeningTimedOut?.Invoke();
-        }
+        _waveIn.StartRecording();
     }
 
     private void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
