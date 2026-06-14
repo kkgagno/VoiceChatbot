@@ -455,6 +455,10 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         if (!OperatingSystem.IsWindows())
             return "ffmpeg";
 
+        var bundled = Path.Combine(AppContext.BaseDirectory, "Tools", "Media", "ffmpeg.exe");
+        if (File.Exists(bundled))
+            return bundled;
+
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var packageRoot = Path.Combine(
             localAppData,

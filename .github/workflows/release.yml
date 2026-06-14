@@ -39,6 +39,8 @@ jobs:
 
       - name: Build installer and portable archive
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\Build-Installer.ps1 -Version "${{ steps.version.outputs.version }}"
 
       - name: Upload build artifacts

@@ -116,10 +116,10 @@ Enable **Phone Remote**, choose a LAN port, and optionally set a PIN. The app cr
 
 ### YouTube and document tools
 
-Optional tools improve media and document support:
+The Windows installer bundles `yt-dlp`, Deno, and `ffmpeg`, so YouTube captions and audio fallback work on a clean installation. Release builds fetch current official Windows binaries from their projects.
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube captions/audio.
-- [ffmpeg](https://ffmpeg.org) for audio conversion.
+Optional tools improve document support:
+
 - Poppler `pdftoppm` and Tesseract OCR for scanned PDFs.
 
 These tools can be installed with WinGet where packages are available.

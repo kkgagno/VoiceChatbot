@@ -347,6 +347,10 @@ public sealed class YouTubeTranscriptService
     {
         if (OperatingSystem.IsWindows())
         {
+            var bundledPath = Path.Combine(AppContext.BaseDirectory, "Tools", "Media", "yt-dlp.exe");
+            if (File.Exists(bundledPath))
+                yield return new YtDlpCommand(bundledPath);
+
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var installedPath = Path.Combine(
                 localAppData,
@@ -418,6 +422,10 @@ public sealed class YouTubeTranscriptService
         if (!OperatingSystem.IsWindows())
             return "";
 
+        var bundled = Path.Combine(AppContext.BaseDirectory, "Tools", "Media", "deno.exe");
+        if (File.Exists(bundled))
+            return bundled;
+
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var exact = Path.Combine(
             localAppData,
@@ -437,6 +445,10 @@ public sealed class YouTubeTranscriptService
     {
         if (!OperatingSystem.IsWindows())
             return "";
+
+        var bundled = Path.Combine(AppContext.BaseDirectory, "Tools", "Media", "ffmpeg.exe");
+        if (File.Exists(bundled))
+            return bundled;
 
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var packageRoot = Path.Combine(

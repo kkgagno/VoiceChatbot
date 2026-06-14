@@ -11,6 +11,7 @@ $artifactsDir = Join-Path $projectRoot "artifacts"
 $installerScript = Join-Path $projectRoot "installer\VoiceChatbot.iss"
 
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
+Get-ChildItem $artifactsDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
 $dotnetCandidates = @(
     "$env:USERPROFILE\.dotnet\dotnet.exe",
@@ -36,6 +37,79 @@ if (-not $dotnet) {
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }
+
+function Get-GitHubReleaseAsset {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][scriptblock]$AssetFilter
+    )
+
+    $headers = @{ "User-Agent" = "VoiceChatbot-Build" }
+    if ($env:GITHUB_TOKEN) {
+        $headers["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
+        $headers["X-GitHub-Api-Version"] = "2022-11-28"
+    }
+
+    $release = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$Repository/releases/latest" `
+        -Headers $headers
+    $asset = $release.assets | Where-Object $AssetFilter | Select-Object -First 1
+    if (-not $asset) {
+        throw "No matching release asset was found for $Repository."
+    }
+    return $asset
+}
+
+$mediaDir = Join-Path $publishDir "Tools\Media"
+New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
+
+$ytDlpAsset = Get-GitHubReleaseAsset "yt-dlp/yt-dlp" { $_.name -eq "yt-dlp.exe" }
+Invoke-WebRequest $ytDlpAsset.browser_download_url -OutFile (Join-Path $mediaDir "yt-dlp.exe")
+
+$denoAsset = Get-GitHubReleaseAsset "denoland/deno" { $_.name -eq "deno-x86_64-pc-windows-msvc.zip" }
+$denoZip = Join-Path $env:TEMP $denoAsset.name
+$denoExtract = Join-Path $env:TEMP "voicechatbot-deno-$Version"
+Invoke-WebRequest $denoAsset.browser_download_url -OutFile $denoZip
+if (Test-Path $denoExtract) {
+    Remove-Item -LiteralPath $denoExtract -Recurse -Force
+}
+Expand-Archive -LiteralPath $denoZip -DestinationPath $denoExtract -Force
+Copy-Item (Get-ChildItem $denoExtract -Recurse -Filter deno.exe | Select-Object -First 1 -ExpandProperty FullName) `
+    (Join-Path $mediaDir "deno.exe") -Force
+
+$ffmpegAsset = Get-GitHubReleaseAsset "yt-dlp/FFmpeg-Builds" {
+    $_.name -match "win64-gpl\.zip$" -and $_.name -notmatch "shared"
+}
+$ffmpegZip = Join-Path $env:TEMP $ffmpegAsset.name
+$ffmpegExtract = Join-Path $env:TEMP "voicechatbot-ffmpeg-$Version"
+Invoke-WebRequest $ffmpegAsset.browser_download_url -OutFile $ffmpegZip
+if (Test-Path $ffmpegExtract) {
+    Remove-Item -LiteralPath $ffmpegExtract -Recurse -Force
+}
+Expand-Archive -LiteralPath $ffmpegZip -DestinationPath $ffmpegExtract -Force
+Copy-Item (Get-ChildItem $ffmpegExtract -Recurse -Filter ffmpeg.exe | Select-Object -First 1 -ExpandProperty FullName) `
+    (Join-Path $mediaDir "ffmpeg.exe") -Force
+
+$thirdParty = @"
+Bundled media tools
+===================
+
+yt-dlp
+Source: https://github.com/yt-dlp/yt-dlp
+Release: $($ytDlpAsset.browser_download_url)
+License: The Unlicense
+
+Deno
+Source: https://github.com/denoland/deno
+Release: $($denoAsset.browser_download_url)
+License: MIT
+
+FFmpeg build for yt-dlp
+Source: https://github.com/yt-dlp/FFmpeg-Builds
+Release: $($ffmpegAsset.browser_download_url)
+License: GPL build; see https://ffmpeg.org/legal.html
+"@
+Set-Content (Join-Path $mediaDir "THIRD-PARTY-NOTICES.txt") $thirdParty -Encoding utf8
 
 $isccCandidates = @(
     (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
