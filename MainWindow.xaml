@@ -270,8 +270,8 @@
                             <TextBlock Text="Whisper Model" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
                             <ComboBox x:Name="WhisperModelCombo" Foreground="Black" Background="White" Margin="0,0,0,4">
                                 <ComboBoxItem Foreground="Black" Content="tiny"/>
-                                <ComboBoxItem Foreground="Black" Content="base" IsSelected="True"/>
-                                <ComboBoxItem Foreground="Black" Content="small"/>
+                                <ComboBoxItem Foreground="Black" Content="base"/>
+                                <ComboBoxItem Foreground="Black" Content="small" IsSelected="True"/>
                                 <ComboBoxItem Foreground="Black" Content="medium"/>
                             </ComboBox>
                             <Button x:Name="DownloadModelBtn" Content="Download Model" Style="{StaticResource ActionButton}" Click="DownloadModel_Click" Margin="0,0,0,8" Background="{StaticResource AccentBrush}"/>

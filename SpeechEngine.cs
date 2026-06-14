@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Text;
@@ -175,12 +176,16 @@ public class SpeechEngine : IDisposable
         if (!string.IsNullOrWhiteSpace(WhisperModelPath))
             modelPaths.Add(WhisperModelPath);
         modelPaths.Add(Path.Combine(modelDir, "ggml-base.bin"));
+        modelPaths.Add(Path.Combine(modelDir, "ggml-tiny.bin"));
         modelPaths.Add(Path.Combine(modelDir, "ggml-small.bin"));
+        modelPaths.Add(Path.Combine(modelDir, "ggml-medium.bin"));
         modelPaths.Add(Path.Combine(modelDir, "ggml-base.en.bin"));
         modelPaths.Add(Path.Combine(modelDir, "ggml-small.en.bin"));
         // Also check next to the exe
+        modelPaths.Add("ggml-tiny.bin");
         modelPaths.Add("ggml-base.bin");
         modelPaths.Add("ggml-small.bin");
+        modelPaths.Add("ggml-medium.bin");
         modelPaths.Add("ggml-base.en.bin");
         modelPaths.Add("ggml-small.en.bin");
 
@@ -232,24 +237,28 @@ public class SpeechEngine : IDisposable
         // HuggingFace download URLs for Whisper models
         var urls = new Dictionary<string, string>
         {
-            ["tiny"] = "https://huggingface.co/sandrohanea/whisper.net/resolve/main/ggml-tiny.bin",
-            ["base"] = "https://huggingface.co/sandrohanea/whisper.net/resolve/main/ggml-base.bin",
-            ["small"] = "https://huggingface.co/sandrohanea/whisper.net/resolve/main/ggml-small.bin",
-            ["medium"] = "https://huggingface.co/sandrohanea/whisper.net/resolve/main/ggml-medium.bin",
+            ["tiny"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+            ["base"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+            ["small"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            ["medium"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
         };
 
         if (!urls.TryGetValue(size, out var url))
             url = urls["base"];
 
-        using var client = new System.Net.Http.HttpClient();
+        var partialPath = targetPath + ".download";
+        try { File.Delete(partialPath); } catch { }
+
+        using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         using var response = await client.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Whisper model download returned HTTP {(int)response.StatusCode} from {url}");
 
         var totalBytes = response.Content.Headers.ContentLength ?? 0;
         var bytesRead = 0L;
 
         using var stream = await response.Content.ReadAsStreamAsync();
-        using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await using var fileStream = new FileStream(partialPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
         var buffer = new byte[8192];
         int read;
@@ -261,9 +270,14 @@ public class SpeechEngine : IDisposable
                 progress?.Report((float)bytesRead / totalBytes);
         }
 
+        await fileStream.FlushAsync();
+        fileStream.Close();
+        File.Move(partialPath, targetPath, overwrite: true);
+
         // Re-init with the new model
         _whisperProcessor?.Dispose();
         _whisperFactory?.Dispose();
+        WhisperModelPath = targetPath;
         InitWhisper();
     }
 

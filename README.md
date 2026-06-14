@@ -61,6 +61,13 @@ If **Listen** does not start on a new PC:
 
 The app reports microphone-open and missing-model errors directly in the chat. If a saved microphone cannot be opened, it retries the Windows default input device.
 
+Whisper model guidance:
+
+- `tiny`: fastest and least accurate.
+- `base`: lightweight general use.
+- `small`: recommended balance of speed and recognition accuracy.
+- `medium`: highest accuracy in the dropdown, but much larger and slower.
+
 Optional transcription tools:
 
 - Ryzen AI Whisper can be configured with an external command in the app.

@@ -31,6 +31,7 @@ public class AppSettings
     public bool AutoDetectVoice { get; set; } = true;
     public string WakeWord { get; set; } = "hey assistant";
     public int MicDeviceIndex { get; set; } = -1;
+    public string WhisperModelSize { get; set; } = "small";
     public string TranscriptionBackend { get; set; } = "Whisper.net";
     public string ExternalNpuTranscriberCommand { get; set; } = DefaultRyzenAiWhisperCommand;
 

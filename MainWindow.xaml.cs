@@ -468,6 +468,7 @@ public partial class MainWindow : Window
         _speech.AutoDetect = _settings.AutoDetectVoice;
         _speech.WakeWord = _settings.WakeWord;
         _speech.MicDeviceIndex = _settings.MicDeviceIndex;
+        _speech.WhisperModelPath = GetWhisperModelPath(_settings.WhisperModelSize);
         _speech.TranscriptionBackend = _settings.TranscriptionBackend;
         _speech.ExternalNpuTranscriberCommand = _settings.ExternalNpuTranscriberCommand;
         _speech.VoiceName = _settings.VoiceName;
@@ -482,6 +483,7 @@ public partial class MainWindow : Window
             AddSystemMessage($"{_speech.InitError}");
 
         PopulateMicrophoneCombo(_settings.MicDeviceIndex);
+        SelectWhisperModelCombo(_settings.WhisperModelSize);
 
         // Populate voice combo with real TTS voices
         VoiceCombo.Items.Clear();
@@ -524,6 +526,29 @@ public partial class MainWindow : Window
 
         _speech.MicDeviceIndex = mic.Index;
         _settings.MicDeviceIndex = mic.Index;
+    }
+
+    private static string GetWhisperModelPath(string size)
+    {
+        var normalized = size is "tiny" or "base" or "small" or "medium" ? size : "small";
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "VoiceChatbot",
+            $"ggml-{normalized}.bin");
+    }
+
+    private void SelectWhisperModelCombo(string size)
+    {
+        foreach (var item in WhisperModelCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Content?.ToString(), size, StringComparison.OrdinalIgnoreCase))
+            {
+                WhisperModelCombo.SelectedItem = item;
+                return;
+            }
+        }
+
+        WhisperModelCombo.SelectedIndex = 2;
     }
 
     // ==================== Slider Bindings ====================
@@ -4242,6 +4267,9 @@ public partial class MainWindow : Window
     private async void DownloadModel_Click(object sender, RoutedEventArgs e)
     {
         var size = (WhisperModelCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "base";
+        _settings.WhisperModelSize = size;
+        _speech.WhisperModelPath = GetWhisperModelPath(size);
+        SaveSettings();
         DownloadModelBtn.IsEnabled = false;
         DownloadModelBtn.Content = $"... Downloading {size}...";
 
@@ -4272,7 +4300,7 @@ public partial class MainWindow : Window
             Dispatcher.Invoke(() =>
             {
                 DownloadModelBtn.IsEnabled = true;
-                DownloadModelBtn.Content = "Download Download Model";
+                DownloadModelBtn.Content = "Download Model";
             });
         }
     }
