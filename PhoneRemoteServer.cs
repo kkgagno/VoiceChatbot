@@ -14,7 +14,9 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace VoiceChatbot;
@@ -65,11 +67,16 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
         builder.WebHost.ConfigureKestrel(options =>
         {
+            options.Limits.MaxRequestBodySize = 256L * 1024 * 1024;
             options.Listen(IPAddress.Any, _settings.Port, listen =>
             {
                 listen.Protocols = HttpProtocols.Http1;
                 listen.UseHttps(_certificateInfo.Certificate);
             });
+        });
+        builder.Services.Configure<FormOptions>(options =>
+        {
+            options.MultipartBodyLengthLimit = 256L * 1024 * 1024;
         });
 
         var app = builder.Build();
@@ -654,7 +661,7 @@ const createVideo = document.getElementById('createVideo');
 const meetingRecord = document.getElementById('meetingRecord');
 const clearMeeting = document.getElementById('clearMeeting');
 const meetingStatus = document.getElementById('meetingStatus');
-let audioContext, source, processor, stream, chunks = [], recording = false;
+let audioContext, source, processor, stream, chunks = [], recordedSamples = 0, recording = false;
 let meetingRecording = false, meetingChunks = [], meetingBlob = null, meetingStartedAt = 0;
 let livePlaybackSource = null;
 let livePlayer, liveAudioUnlocked = false;
@@ -669,8 +676,8 @@ const shortSilenceToSendMs = 500;
 const noiseResetSilenceMs = 900;
 const normalSilenceToSendMs = 2600;
 const longSilenceToSendMs = 5500;
-const normalMaxClipMs = 30000;
-const longMaxClipMs = 120000;
+const normalMaxClipMs = 300000;
+const longMaxClipMs = 1200000;
 const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
 function add(cls, text) {
@@ -680,6 +687,11 @@ function add(cls, text) {
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
   return el;
+}
+
+function clearSpeechChunks() {
+  chunks = [];
+  recordedSamples = 0;
 }
 
 function addBotResult(data) {
@@ -874,7 +886,10 @@ async function ensureMic() {
   processor = audioContext.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = e => {
     const input = e.inputBuffer.getChannelData(0);
-    if (recording) chunks.push(new Float32Array(input));
+    if (recording) {
+      chunks.push(new Float32Array(input));
+      recordedSamples += input.length;
+    }
     if (meetingRecording) meetingChunks.push(new Float32Array(input));
     if (liveMode && liveArmed && !liveSending) handleLiveAudio(input);
   };
@@ -887,7 +902,7 @@ function releaseMicForPlayback() {
   liveArmed = false;
   liveSpeechStarted = false;
   liveLastTick = 0;
-  chunks = [];
+  clearSpeechChunks();
   if (liveMode) {
     statusEl.textContent = 'Speaking';
     return;
@@ -907,7 +922,7 @@ async function resumeMicAfterPlayback() {
   try {
     await ensureMic();
     if (audioContext && audioContext.state !== 'running') await audioContext.resume();
-    chunks = [];
+    clearSpeechChunks();
     recording = false;
     liveSending = false;
     liveSpeechStarted = false;
@@ -957,7 +972,7 @@ async function start() {
     if (liveMode) return;
     await ensureMic();
     await audioContext.resume();
-    chunks = [];
+    clearSpeechChunks();
     recording = true;
     statusEl.textContent = 'Listening';
     talk.textContent = 'Release to Send';
@@ -1199,7 +1214,7 @@ function handleLiveAudio(input) {
   if (!liveSpeechStarted) {
     statusEl.textContent = 'Live: listening';
     if (rms > liveStartThreshold) {
-      chunks = [];
+      clearSpeechChunks();
       recording = true;
       liveSpeechStarted = true;
       liveSilenceMs = 0;
@@ -1216,9 +1231,9 @@ function handleLiveAudio(input) {
     liveSilenceMs += dt;
   }
 
-  const clipMs = chunks.reduce((n, b) => n + b.length, 0) / audioContext.sampleRate * 1000;
+  const clipMs = recordedSamples / audioContext.sampleRate * 1000;
   if (liveVoiceMs < liveMinVoiceMs && liveSilenceMs >= noiseResetSilenceMs) {
-    chunks = [];
+    clearSpeechChunks();
     recording = false;
     liveSpeechStarted = false;
     liveSilenceMs = 0;
@@ -1232,7 +1247,12 @@ function handleLiveAudio(input) {
     ? longSilenceToSendMs
     : (liveVoiceMs <= shortUtteranceMaxVoiceMs ? shortSilenceToSendMs : normalSilenceToSendMs);
   const maxClip = longTalkMode ? longMaxClipMs : normalMaxClipMs;
-  if ((liveVoiceMs >= liveMinVoiceMs && liveSilenceMs >= silenceLimit) || clipMs >= maxClip) {
+  if (clipMs >= maxClip) {
+    add('sys', longTalkMode
+      ? 'Long Talk reached its 20-minute safety limit. Sending what was recorded.'
+      : 'Live speech reached its 5-minute safety limit. Sending what was recorded.');
+    finishLiveUtterance();
+  } else if (liveVoiceMs >= liveMinVoiceMs && liveSilenceMs >= silenceLimit) {
     finishLiveUtterance();
   }
 }
@@ -1245,7 +1265,7 @@ async function finishLiveUtterance() {
   liveSpeechStarted = false;
   statusEl.textContent = 'Live: thinking';
   await sendChunks(true);
-  chunks = [];
+  clearSpeechChunks();
   liveSending = false;
   if (liveMode) {
     liveLastTick = 0;
@@ -1263,7 +1283,7 @@ async function setLiveMode(on) {
   if (liveMode) {
     await ensureMic();
     await audioContext.resume();
-    chunks = [];
+    clearSpeechChunks();
     recording = false;
     liveSending = false;
     liveSpeechStarted = false;
@@ -1275,7 +1295,7 @@ async function setLiveMode(on) {
     liveArmed = false;
     liveSpeechStarted = false;
     recording = false;
-    chunks = [];
+    clearSpeechChunks();
     statusEl.textContent = 'Ready';
     add('sys', 'Live mode off.');
   }
