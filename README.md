@@ -70,7 +70,8 @@ Whisper model guidance:
 
 Optional transcription tools:
 
-- Ryzen AI Whisper can be configured with an external command in the app.
+- Ryzen AI Whisper uses this default external command:
+  `call "%USERPROFILE%\VoiceChatbot\tools\ryzen-ai-whisper-transcribe.bat" {input}`
 - `ffmpeg` is needed for some phone audio formats.
 
 ### Kokoro speech output

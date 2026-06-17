@@ -10,7 +10,7 @@ public class AppSettings
     public const int DefaultImageWidth = 1080;
     public const int DefaultImageHeight = 1920;
     public const string DefaultTavilyApiKey = "";
-    public const string DefaultRyzenAiWhisperCommand = "";
+    public const string DefaultRyzenAiWhisperCommand = "call \"%USERPROFILE%\\VoiceChatbot\\tools\\ryzen-ai-whisper-transcribe.bat\" {input}";
     // Chat backend
     public string ChatProvider { get; set; } = "Ollama";
     public string OllamaUrl { get; set; } = "http://localhost:11434";
