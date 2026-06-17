@@ -14,6 +14,7 @@ public partial class SchedulerWindow : Window
     private readonly SchedulerStore _store;
     private readonly Action _save;
     private readonly Func<ScheduledPromptTask, Task> _runNowAsync;
+    private readonly Func<ScheduledPromptTask, ScheduledPromptRun, Task> _sendToMainChatAsync;
     private readonly Action<string> _playAudio;
     private readonly ObservableCollection<ScheduledPromptTask> _tasks;
     private bool _loading;
@@ -22,12 +23,14 @@ public partial class SchedulerWindow : Window
         SchedulerStore store,
         Action save,
         Func<ScheduledPromptTask, Task> runNowAsync,
+        Func<ScheduledPromptTask, ScheduledPromptRun, Task> sendToMainChatAsync,
         Action<string> playAudio)
     {
         InitializeComponent();
         _store = store;
         _save = save;
         _runNowAsync = runNowAsync;
+        _sendToMainChatAsync = sendToMainChatAsync;
         _playAudio = playAudio;
         _tasks = new ObservableCollection<ScheduledPromptTask>(_store.Tasks);
 
@@ -121,6 +124,22 @@ public partial class SchedulerWindow : Window
         _playAudio(run.AudioPath);
     }
 
+    private async void SendToMainChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (TaskList.SelectedItem is not ScheduledPromptTask task || RunList.SelectedItem is not ScheduledPromptRun run)
+            return;
+
+        try
+        {
+            await _sendToMainChatAsync(task, run);
+            StatusText.Text = "Sent to main chat.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not send to main chat: {ex.Message}";
+        }
+    }
+
     private void CreateTask(bool select)
     {
         var task = new ScheduledPromptTask
@@ -182,6 +201,7 @@ public partial class SchedulerWindow : Window
         {
             ResponseBox.Text = "";
             PlayAudioBtn.IsEnabled = false;
+            SendToMainChatBtn.IsEnabled = false;
             return;
         }
 
@@ -189,6 +209,7 @@ public partial class SchedulerWindow : Window
             ? run.ResponseText
             : $"Error: {run.Error}";
         PlayAudioBtn.IsEnabled = !string.IsNullOrWhiteSpace(run.AudioPath) && File.Exists(run.AudioPath);
+        SendToMainChatBtn.IsEnabled = true;
     }
 
     private bool TryApplyForm(ScheduledPromptTask task)

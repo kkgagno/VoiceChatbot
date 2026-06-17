@@ -29,7 +29,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="180"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <Grid>
@@ -76,23 +76,35 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
                         <TextBlock Text="Saved Runs" FontWeight="Bold" Foreground="#222222" Margin="0,0,0,6"/>
-                        <ListBox x:Name="RunList" SelectionChanged="RunList_SelectionChanged"/>
-                    </StackPanel>
+                        <ListBox x:Name="RunList" Grid.Row="1" SelectionChanged="RunList_SelectionChanged"/>
+                    </Grid>
 
-                    <StackPanel Grid.Column="2">
-                        <DockPanel Margin="0,0,0,6">
-                            <Button x:Name="PlayAudioBtn" DockPanel.Dock="Right" Content="Play Audio" Width="90"
-                                    Click="PlayAudio_Click" IsEnabled="False"/>
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button x:Name="SendToMainChatBtn" Content="Send to Main Chat" Width="130"
+                                        Click="SendToMainChat_Click" IsEnabled="False" Margin="0,0,6,0"/>
+                                <Button x:Name="PlayAudioBtn" Content="Play Audio" Width="90"
+                                        Click="PlayAudio_Click" IsEnabled="False"/>
+                            </StackPanel>
                             <TextBlock Text="Response" FontWeight="Bold" Foreground="#222222" VerticalAlignment="Center"/>
                         </DockPanel>
-                        <TextBox x:Name="ResponseBox" TextWrapping="Wrap" AcceptsReturn="True"
-                                 IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
-                    </StackPanel>
+                        <TextBox x:Name="ResponseBox" Grid.Row="1" TextWrapping="Wrap" AcceptsReturn="True"
+                                 IsReadOnly="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+                    </Grid>
                 </Grid>
 
-                <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="#555555" TextWrapping="Wrap"/>
+                <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="#555555" TextWrapping="Wrap" Margin="0,4,0,0"/>
             </Grid>
         </Border>
     </Grid>

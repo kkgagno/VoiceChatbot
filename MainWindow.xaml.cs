@@ -2178,6 +2178,7 @@ public partial class MainWindow : Window
             _schedulerStore,
             SaveScheduler,
             RunScheduledTaskNowAsync,
+            AddScheduledRunToMainChatAsync,
             path => _speech.PlayAudioFile(path))
         {
             Owner = this
