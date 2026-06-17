@@ -48,6 +48,7 @@
                                  VerticalScrollBarVisibility="Auto" Margin="0,2,0,8"/>
 
                         <CheckBox x:Name="EnabledBox" Content="Enabled" Margin="0,0,0,8"/>
+                        <CheckBox x:Name="ShowInMainChatBox" Content="Show result in main chat" Margin="0,0,0,8"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2">

@@ -2260,11 +2260,15 @@ public partial class MainWindow : Window
             run.ResponseText = result.Text;
             run.AudioPath = result.AudioPath;
             task.LastStatus = "Completed";
+            if (task.ShowInMainChat)
+                await AddScheduledRunToMainChatAsync(task, run);
         }
         catch (Exception ex)
         {
             run.Error = ex.Message;
             task.LastStatus = $"Error: {ex.Message}";
+            if (task.ShowInMainChat)
+                await AddScheduledRunToMainChatAsync(task, run);
         }
         finally
         {
@@ -2354,6 +2358,25 @@ public partial class MainWindow : Window
         }
 
         return new ScheduledPromptResult(cleaned, audioPath);
+    }
+
+    private async Task AddScheduledRunToMainChatAsync(ScheduledPromptTask task, ScheduledPromptRun run)
+    {
+        await Dispatcher.InvokeAsync(() =>
+        {
+            var promptLabel = $"[Scheduled] {task.Name}\n\n{run.Prompt}";
+            AddUserMessage(promptLabel);
+            _history.Add("user", promptLabel);
+
+            var response = string.IsNullOrWhiteSpace(run.Error)
+                ? run.ResponseText
+                : $"Scheduled task error: {run.Error}";
+            var assistantMessage = AddAssistantMessage(response);
+            if (!string.IsNullOrWhiteSpace(run.AudioPath) && File.Exists(run.AudioPath))
+                AddAudioButtons(assistantMessage, run.AudioPath);
+
+            _history.Add("assistant", response);
+        });
     }
 
     private static string GetSchedulerAudioDirectory()

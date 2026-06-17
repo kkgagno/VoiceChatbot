@@ -22,6 +22,7 @@ public sealed class ScheduledPromptTask
     public DateTime? LastRunAt { get; set; }
     public ScheduledTaskRecurrence Recurrence { get; set; } = ScheduledTaskRecurrence.Once;
     public int KeepRuns { get; set; } = 5;
+    public bool ShowInMainChat { get; set; } = false;
     public string LastStatus { get; set; } = "Pending";
     public List<ScheduledPromptRun> Runs { get; set; } = new();
 

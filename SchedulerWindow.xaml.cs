@@ -145,6 +145,7 @@ public partial class SchedulerWindow : Window
             NameBox.Text = "";
             PromptBox.Text = "";
             EnabledBox.IsChecked = false;
+            ShowInMainChatBox.IsChecked = false;
             RunDatePicker.SelectedDate = null;
             RunTimeBox.Text = "";
             KeepRunsBox.Text = "5";
@@ -159,6 +160,7 @@ public partial class SchedulerWindow : Window
         NameBox.Text = task.Name;
         PromptBox.Text = task.Prompt;
         EnabledBox.IsChecked = task.IsEnabled;
+        ShowInMainChatBox.IsChecked = task.ShowInMainChat;
         RunDatePicker.SelectedDate = task.NextRunAt.Date;
         RunTimeBox.Text = task.NextRunAt.ToString("h:mm tt", CultureInfo.CurrentCulture);
         RecurrenceBox.SelectedItem = task.Recurrence;
@@ -217,6 +219,7 @@ public partial class SchedulerWindow : Window
         task.Name = string.IsNullOrWhiteSpace(name) ? "Scheduled prompt" : name;
         task.Prompt = prompt;
         task.IsEnabled = EnabledBox.IsChecked == true;
+        task.ShowInMainChat = ShowInMainChatBox.IsChecked == true;
         task.NextRunAt = nextRun;
         task.Recurrence = RecurrenceBox.SelectedItem is ScheduledTaskRecurrence recurrence
             ? recurrence
@@ -236,6 +239,7 @@ public partial class SchedulerWindow : Window
         RecurrenceBox.IsEnabled = !busy;
         KeepRunsBox.IsEnabled = !busy;
         EnabledBox.IsEnabled = !busy;
+        ShowInMainChatBox.IsEnabled = !busy;
         if (!string.IsNullOrWhiteSpace(status))
             StatusText.Text = status;
     }
