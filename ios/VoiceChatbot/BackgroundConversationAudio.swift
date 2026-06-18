@@ -22,7 +22,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private let stopThreshold: Float = 0.012
     private let silenceSeconds = 1.2
     private let minimumSpeechSeconds = 0.35
-    private let maximumSegmentSeconds = 300
+    private let maximumSegmentSeconds = 300.0
 
     override init() {
         super.init()
@@ -98,7 +98,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetoothHFP]
+            options: [.defaultToSpeaker, .allowBluetooth]
         )
         try session.setPreferredSampleRate(48_000)
         try session.setActive(true)
