@@ -12,20 +12,12 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     private let engine = AVAudioEngine()
     private var player: AVAudioPlayer?
-    private var samples = [Float]()
-    private var preRollSamples = [Float]()
-    private var sampleRate = 16_000.0
-    private var heardSpeech = false
-    private var silenceFrames = 0
     private var isPaused = false
-    private var captureSuspended = false
-
-    private let startThreshold: Float = 0.014
-    private let stopThreshold: Float = 0.009
-    private let preRollSeconds = 0.65
-    private let silenceSeconds = 2.4
-    private let minimumSpeechSeconds = 0.35
-    private let maximumSegmentSeconds = 300.0
+    private lazy var speechDetector = BackgroundSpeechDetector { [weak self] data in
+        Task { @MainActor in
+            self?.onSpeechSegment?(data)
+        }
+    }
 
     override init() {
         super.init()
@@ -39,19 +31,18 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func startListening() throws {
         isPaused = false
-        captureSuspended = false
         try configureSession()
-        guard !engine.isRunning else { return }
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
-        sampleRate = inputFormat.sampleRate
-        input.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
+        speechDetector.resume(sampleRate: inputFormat.sampleRate)
+        guard !engine.isRunning else { return }
+
+        let detector = speechDetector
+        input.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { buffer, _ in
             guard let channel = buffer.floatChannelData?.pointee else { return }
             let values = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
-            Task { @MainActor [weak self] in
-                self?.consume(values)
-            }
+            detector.consume(values)
         }
 
         engine.prepare()
@@ -61,9 +52,8 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func pause() {
         isPaused = true
-        captureSuspended = true
+        speechDetector.suspendAndReset()
         stopEngine()
-        clearCapture()
         updateNowPlaying(active: false)
     }
 
@@ -73,9 +63,8 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func stop() {
         isPaused = false
-        captureSuspended = false
+        speechDetector.suspendAndReset(keepingCapacity: false)
         stopEngine()
-        clearCapture(keepingCapacity: false)
         player?.stop()
         player = nil
         updateNowPlaying(active: false)
@@ -83,9 +72,8 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     func play(_ data: Data) throws {
-        captureSuspended = true
+        speechDetector.suspendAndReset()
         stopEngine()
-        clearCapture()
         try configurePlaybackSession()
         let audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer.delegate = self
@@ -125,56 +113,6 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         guard engine.isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-    }
-
-    private func consume(_ buffer: [Float]) {
-        guard !isPaused, !captureSuspended, !buffer.isEmpty else { return }
-        let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
-
-        if !heardSpeech {
-            appendToPreRoll(buffer)
-            guard rms >= startThreshold else { return }
-            heardSpeech = true
-            samples = preRollSamples
-            preRollSamples.removeAll(keepingCapacity: true)
-        } else {
-            samples.append(contentsOf: buffer)
-        }
-
-        silenceFrames = rms < stopThreshold ? silenceFrames + buffer.count : 0
-
-        let recordedSeconds = Double(samples.count) / sampleRate
-        let silentSeconds = Double(silenceFrames) / sampleRate
-        if recordedSeconds >= maximumSegmentSeconds ||
-            (recordedSeconds >= minimumSpeechSeconds && silentSeconds >= silenceSeconds) {
-            finishSegment()
-        }
-    }
-
-    private func finishSegment() {
-        let completed = samples
-        samples.removeAll(keepingCapacity: true)
-        preRollSamples.removeAll(keepingCapacity: true)
-        heardSpeech = false
-        silenceFrames = 0
-        guard Double(completed.count) / sampleRate >= minimumSpeechSeconds else { return }
-        captureSuspended = true
-        onSpeechSegment?(WAVEncoder.encode(samples: completed, sourceRate: sampleRate))
-    }
-
-    private func appendToPreRoll(_ buffer: [Float]) {
-        preRollSamples.append(contentsOf: buffer)
-        let maximumCount = max(1, Int(sampleRate * preRollSeconds))
-        if preRollSamples.count > maximumCount {
-            preRollSamples.removeFirst(preRollSamples.count - maximumCount)
-        }
-    }
-
-    private func clearCapture(keepingCapacity: Bool = true) {
-        samples.removeAll(keepingCapacity: keepingCapacity)
-        preRollSamples.removeAll(keepingCapacity: keepingCapacity)
-        heardSpeech = false
-        silenceFrames = 0
     }
 
     private func observeInterruptions() {
@@ -229,6 +167,95 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             MPMediaItemPropertyArtist: title,
             MPNowPlayingInfoPropertyPlaybackRate: 1
         ] : nil
+    }
+}
+
+private final class BackgroundSpeechDetector: @unchecked Sendable {
+    private let queue = DispatchQueue(
+        label: "com.keithgagnon.VoiceChatbot.speech-detector",
+        qos: .userInitiated
+    )
+    private let onSegment: @Sendable (Data) -> Void
+
+    private var samples = [Float]()
+    private var preRollSamples = [Float]()
+    private var sampleRate = 16_000.0
+    private var heardSpeech = false
+    private var silenceFrames = 0
+    private var suspended = true
+
+    private let startThreshold: Float = 0.014
+    private let stopThreshold: Float = 0.009
+    private let preRollSeconds = 0.65
+    private let silenceSeconds = 2.4
+    private let minimumSpeechSeconds = 0.35
+    private let maximumSegmentSeconds = 300.0
+
+    init(onSegment: @escaping @Sendable (Data) -> Void) {
+        self.onSegment = onSegment
+    }
+
+    func resume(sampleRate: Double) {
+        queue.sync {
+            self.sampleRate = sampleRate
+            suspended = false
+            reset(keepingCapacity: true)
+        }
+    }
+
+    func suspendAndReset(keepingCapacity: Bool = true) {
+        queue.sync {
+            suspended = true
+            reset(keepingCapacity: keepingCapacity)
+        }
+    }
+
+    func consume(_ buffer: [Float]) {
+        queue.async { [self] in
+            guard !suspended, !buffer.isEmpty else { return }
+            let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
+
+            if !heardSpeech {
+                appendToPreRoll(buffer)
+                guard rms >= startThreshold else { return }
+                heardSpeech = true
+                samples = preRollSamples
+                preRollSamples.removeAll(keepingCapacity: true)
+            } else {
+                samples.append(contentsOf: buffer)
+            }
+
+            silenceFrames = rms < stopThreshold ? silenceFrames + buffer.count : 0
+            let recordedSeconds = Double(samples.count) / sampleRate
+            let silentSeconds = Double(silenceFrames) / sampleRate
+            if recordedSeconds >= maximumSegmentSeconds ||
+                (recordedSeconds >= minimumSpeechSeconds && silentSeconds >= silenceSeconds) {
+                finishSegment()
+            }
+        }
+    }
+
+    private func finishSegment() {
+        let completed = samples
+        reset(keepingCapacity: true)
+        guard Double(completed.count) / sampleRate >= minimumSpeechSeconds else { return }
+        suspended = true
+        onSegment(WAVEncoder.encode(samples: completed, sourceRate: sampleRate))
+    }
+
+    private func appendToPreRoll(_ buffer: [Float]) {
+        preRollSamples.append(contentsOf: buffer)
+        let maximumCount = max(1, Int(sampleRate * preRollSeconds))
+        if preRollSamples.count > maximumCount {
+            preRollSamples.removeFirst(preRollSamples.count - maximumCount)
+        }
+    }
+
+    private func reset(keepingCapacity: Bool) {
+        samples.removeAll(keepingCapacity: keepingCapacity)
+        preRollSamples.removeAll(keepingCapacity: keepingCapacity)
+        heardSpeech = false
+        silenceFrames = 0
     }
 }
 
