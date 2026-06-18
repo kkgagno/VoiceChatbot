@@ -21,7 +21,9 @@ final class AppModel {
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
+    private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
+    private var networkRefreshTask: Task<Void, Never>?
 
     init() {
         let initialProfile: ServerProfile
@@ -62,6 +64,12 @@ final class AppModel {
         audio.onRemoteStop = { [weak self] in
             self?.isConversationActive = false
             self?.conversationState = .idle
+        }
+
+        networkMonitor.start { [weak self] in
+            Task { @MainActor in
+                self?.scheduleNetworkRefresh()
+            }
         }
     }
 
@@ -104,6 +112,15 @@ final class AppModel {
         connectionMessage = profile.endpointCandidates.isEmpty
             ? "Enter at least one server address."
             : "Could not reach the PC on Home Wi-Fi or VPN."
+    }
+
+    private func scheduleNetworkRefresh() {
+        networkRefreshTask?.cancel()
+        networkRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.25))
+            guard !Task.isCancelled, let self else { return }
+            await self.refreshStatus()
+        }
     }
 
     func startSession() async {
