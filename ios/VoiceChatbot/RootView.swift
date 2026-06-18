@@ -330,7 +330,8 @@ private struct ChatBubble: View {
 private struct ConnectionView: View {
     private enum Field: Hashable {
         case profileName
-        case serverURL
+        case localURL
+        case vpnURL
         case pin
     }
 
@@ -392,6 +393,14 @@ private struct ConnectionView: View {
                     .font(.subheadline.weight(.medium))
                     .lineLimit(2)
             }
+            if !model.activeRoute.isEmpty {
+                Label(
+                    model.activeRoute,
+                    systemImage: model.activeRoute == "VPN" ? "lock.shield.fill" : "wifi"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.cyan)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(22)
@@ -406,13 +415,24 @@ private struct ConnectionView: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .profileName)
                 .submitLabel(.next)
-                .onSubmit { focusedField = .serverURL }
-            TextField("https://192.168.1.50:5100", text: $model.profile.baseURL)
+                .onSubmit { focusedField = .localURL }
+            Text("The app tries Home Wi-Fi first, then VPN automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Home: https://192.168.1.50:5100", text: $model.profile.localURL)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
-                .focused($focusedField, equals: .serverURL)
+                .focused($focusedField, equals: .localURL)
+                .submitLabel(.next)
+                .onSubmit { focusedField = .vpnURL }
+            TextField("VPN: https://10.8.0.1:5100", text: $model.profile.vpnURL)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .focused($focusedField, equals: .vpnURL)
                 .submitLabel(.next)
                 .onSubmit { focusedField = .pin }
             SecureField("PIN (optional)", text: $model.profile.pin)

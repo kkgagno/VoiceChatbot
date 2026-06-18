@@ -2,9 +2,46 @@ import Foundation
 
 struct ServerProfile: Codable, Equatable {
     var name = "Home PC"
-    var baseURL = "https://192.168.1.50:5100"
+    var localURL = "https://192.168.1.50:5100"
+    var vpnURL = "https://10.8.0.1:5100"
     var pin = ""
     var pinnedCertificateDER: Data?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, localURL, vpnURL, pin, pinnedCertificateDER
+        case legacyBaseURL = "baseURL"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Home PC"
+        localURL = try container.decodeIfPresent(String.self, forKey: .localURL)
+            ?? container.decodeIfPresent(String.self, forKey: .legacyBaseURL)
+            ?? "https://192.168.1.50:5100"
+        vpnURL = try container.decodeIfPresent(String.self, forKey: .vpnURL) ?? "https://10.8.0.1:5100"
+        pin = try container.decodeIfPresent(String.self, forKey: .pin) ?? ""
+        pinnedCertificateDER = try container.decodeIfPresent(Data.self, forKey: .pinnedCertificateDER)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(localURL, forKey: .localURL)
+        try container.encode(vpnURL, forKey: .vpnURL)
+        try container.encode(pin, forKey: .pin)
+        try container.encodeIfPresent(pinnedCertificateDER, forKey: .pinnedCertificateDER)
+    }
+
+    var endpointCandidates: [(name: String, url: String)] {
+        var seen = Set<String>()
+        return [("Home Wi-Fi", localURL), ("VPN", vpnURL)].compactMap { name, rawURL in
+            let url = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !url.isEmpty, seen.insert(url).inserted else { return nil }
+            return (name, url)
+        }
+    }
 }
 
 struct ServerStatus: Decodable {

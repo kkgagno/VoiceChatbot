@@ -16,6 +16,8 @@ final class AppModel {
     var transcript = ""
     var isConnecting = false
     var connectionMessage = "Not connected"
+    var activeRoute = ""
+    var activeServerURL = ""
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -30,7 +32,10 @@ final class AppModel {
             initialProfile = ServerProfile()
         }
         profile = initialProfile
-        api = VoiceChatAPI(profile: initialProfile)
+        api = VoiceChatAPI(
+            profile: initialProfile,
+            baseURL: initialProfile.endpointCandidates.first?.url ?? ""
+        )
 
         audio.onSpeechSegment = { [weak self] wav in
             Task { @MainActor in
@@ -61,29 +66,49 @@ final class AppModel {
     }
 
     func applyProfile() async {
-        api = VoiceChatAPI(profile: profile)
         await refreshStatus()
     }
 
     func importCertificate(_ data: Data) {
         profile.pinnedCertificateDER = data
-        api = VoiceChatAPI(profile: profile)
+        activeRoute = ""
+        activeServerURL = ""
     }
 
     func refreshStatus() async {
         isConnecting = true
         defer { isConnecting = false }
-        do {
-            status = try await api.status()
-            connectionMessage = "Connected"
-        } catch {
-            status = nil
-            connectionMessage = error.localizedDescription
+        status = nil
+        activeRoute = ""
+        activeServerURL = ""
+
+        for candidate in profile.endpointCandidates {
+            do {
+                let probe = VoiceChatAPI(
+                    profile: profile,
+                    baseURL: candidate.url,
+                    probeMode: true
+                )
+                let discoveredStatus = try await probe.status()
+                api = VoiceChatAPI(profile: profile, baseURL: candidate.url)
+                status = discoveredStatus
+                activeRoute = candidate.name
+                activeServerURL = candidate.url
+                connectionMessage = "Connected automatically via \(candidate.name)"
+                return
+            } catch {
+                continue
+            }
         }
+
+        connectionMessage = profile.endpointCandidates.isEmpty
+            ? "Enter at least one server address."
+            : "Could not reach the PC on Home Wi-Fi or VPN."
     }
 
     func startSession() async {
         guard !isConversationActive else { return }
+        await refreshStatus()
         guard status?.ok == true else {
             failMessage("Connect to your PC in the Connection tab before starting.")
             return

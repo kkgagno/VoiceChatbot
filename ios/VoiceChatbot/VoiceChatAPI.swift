@@ -59,14 +59,16 @@ final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, @unchecked 
 
 actor VoiceChatAPI {
     private let profile: ServerProfile
+    private let baseURL: String
     private let session: URLSession
 
-    init(profile: ServerProfile) {
+    init(profile: ServerProfile, baseURL: String, probeMode: Bool = false) {
         self.profile = profile
+        self.baseURL = baseURL
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 90
-        configuration.timeoutIntervalForResource = 300
-        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = probeMode ? 3 : 90
+        configuration.timeoutIntervalForResource = probeMode ? 4 : 300
+        configuration.waitsForConnectivity = !probeMode
         session = URLSession(
             configuration: configuration,
             delegate: PinnedCertificateDelegate(certificateDER: profile.pinnedCertificateDER),
@@ -119,7 +121,7 @@ actor VoiceChatAPI {
     }
 
     private func makeRequest(path: String, method: String) throws -> URLRequest {
-        guard var base = URL(string: profile.baseURL) else {
+        guard var base = URL(string: baseURL) else {
             throw APIError.invalidServerURL
         }
         if !path.isEmpty {
@@ -153,4 +155,3 @@ private extension Data {
         append(Data(string.utf8))
     }
 }
-
