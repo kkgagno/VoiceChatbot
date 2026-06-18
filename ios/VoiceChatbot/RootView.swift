@@ -55,6 +55,11 @@ private struct ConversationView: View {
         .navigationTitle("Voice Chatbot")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                SessionToolbarButton(model: model, mode: .conversation)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if model.isConversationActive {
                 ActiveSessionBar(model: model)
@@ -256,6 +261,9 @@ private struct TranscriptionView: View {
         .navigationTitle("Transcription")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                SessionToolbarButton(model: model, mode: .transcription)
+            }
             if !model.transcript.isEmpty {
                 ShareLink(item: model.transcript) {
                     Image(systemName: "square.and.arrow.up")
@@ -271,6 +279,29 @@ private struct TranscriptionView: View {
             if model.isConversationActive {
                 ActiveSessionBar(model: model)
             }
+        }
+    }
+}
+
+private struct SessionToolbarButton: View {
+    @Bindable var model: AppModel
+    let mode: ActiveSessionMode
+
+    var body: some View {
+        if model.isConversationActive {
+            Button(role: .destructive) {
+                model.stopConversation()
+            } label: {
+                Label("Stop", systemImage: "stop.circle.fill")
+            }
+        } else {
+            Button {
+                model.activeMode = mode
+                Task { await model.startSession() }
+            } label: {
+                Label("Start", systemImage: "mic.circle.fill")
+            }
+            .disabled(model.status?.ok != true)
         }
     }
 }

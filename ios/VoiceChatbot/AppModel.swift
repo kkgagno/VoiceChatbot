@@ -83,6 +83,7 @@ final class AppModel {
     }
 
     func startSession() async {
+        guard !isConversationActive else { return }
         guard status?.ok == true else {
             failMessage("Connect to your PC in the Connection tab before starting.")
             return
@@ -100,6 +101,8 @@ final class AppModel {
                 title: activeMode == .conversation ? "Active conversation" : "Active transcription"
             )
         } catch {
+            audio.stop()
+            isConversationActive = false
             fail(error)
         }
     }
@@ -112,8 +115,11 @@ final class AppModel {
     func resumeConversation() {
         do {
             try audio.resume()
+            isConversationActive = true
             conversationState = .listening
         } catch {
+            audio.stop()
+            isConversationActive = false
             fail(error)
         }
     }
@@ -153,8 +159,9 @@ final class AppModel {
                 await send(text: transcript)
             }
         } catch {
+            audio.stop()
+            isConversationActive = false
             fail(error)
-            try? audio.startListening()
         }
     }
 
@@ -185,10 +192,9 @@ final class AppModel {
                 conversationState = .idle
             }
         } catch {
+            audio.stop()
+            isConversationActive = false
             fail(error)
-            if isConversationActive {
-                try? audio.startListening()
-            }
         }
     }
 
