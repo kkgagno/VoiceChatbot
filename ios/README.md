@@ -33,6 +33,9 @@ but is not authoritative for screen-lock audio behavior.
 Every push to the iOS branch is also compiled by `.github/workflows/ios-build.yml` on
 GitHub's macOS runner.
 
+For the complete Mac, signing, iPhone installation, certificate, and screen-lock test steps,
+see [`MAC_INSTALL.md`](MAC_INSTALL.md).
+
 ## PC setup
 
 1. Enable **Phone Remote** in the Windows app.
