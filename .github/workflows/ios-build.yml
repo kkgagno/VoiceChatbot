@@ -40,6 +40,7 @@ jobs:
             -scheme VoiceChatbot \
             -configuration Debug \
             -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$PWD/build" \
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee xcodebuild.log
 
@@ -69,8 +70,8 @@ jobs:
       - name: Verify runtime privacy configuration
         working-directory: ios
         run: |
-          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -path '*Build/Products/Debug-iphonesimulator/VoiceChatbot.app' -print -quit)"
-          test -n "$APP_PATH"
+          APP_PATH="$PWD/build/Build/Products/Debug-iphonesimulator/VoiceChatbot.app"
+          test -d "$APP_PATH"
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP_PATH/Info.plist"
           /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$APP_PATH/Info.plist"
           /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes:0" "$APP_PATH/Info.plist" | grep -Fx audio
