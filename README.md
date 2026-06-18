@@ -2,6 +2,10 @@
 
 Voice Chatbot is a Windows desktop and phone-browser client for local AI models. It supports voice conversation, local Whisper transcription, Ollama, OpenAI-compatible llama.cpp servers, multimodal image prompts, web search, ComfyUI image/video workflows, Kokoro speech, and SSH-based model switching.
 
+A native SwiftUI iPhone client is under development in [`ios/`](ios/README.md). It keeps
+models and transcription on the PC while adding native background audio support for
+user-started conversations over Wi-Fi or VPN.
+
 ## Download and install
 
 For a normal Windows installation, download the latest `VoiceChatbot-Setup-*-win-x64.exe` from GitHub Releases and run it.
