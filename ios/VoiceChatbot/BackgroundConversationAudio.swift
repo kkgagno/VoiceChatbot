@@ -18,6 +18,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private var heardSpeech = false
     private var silenceFrames = 0
     private var isPaused = false
+    private var captureSuspended = false
 
     private let startThreshold: Float = 0.014
     private let stopThreshold: Float = 0.009
@@ -38,6 +39,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func startListening() throws {
         isPaused = false
+        captureSuspended = false
         try configureSession()
         guard !engine.isRunning else { return }
 
@@ -59,6 +61,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func pause() {
         isPaused = true
+        captureSuspended = true
         stopEngine()
         clearCapture()
         updateNowPlaying(active: false)
@@ -70,6 +73,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func stop() {
         isPaused = false
+        captureSuspended = false
         stopEngine()
         clearCapture(keepingCapacity: false)
         player?.stop()
@@ -79,6 +83,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     func play(_ data: Data) throws {
+        captureSuspended = true
         stopEngine()
         clearCapture()
         try configurePlaybackSession()
@@ -123,7 +128,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     private func consume(_ buffer: [Float]) {
-        guard !isPaused, !buffer.isEmpty else { return }
+        guard !isPaused, !captureSuspended, !buffer.isEmpty else { return }
         let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
 
         if !heardSpeech {
@@ -153,7 +158,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         heardSpeech = false
         silenceFrames = 0
         guard Double(completed.count) / sampleRate >= minimumSpeechSeconds else { return }
-        stopEngine()
+        captureSuspended = true
         onSpeechSegment?(WAVEncoder.encode(samples: completed, sourceRate: sampleRate))
     }
 
