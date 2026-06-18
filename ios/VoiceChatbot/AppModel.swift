@@ -12,6 +12,8 @@ final class AppModel {
     var messages = [ChatEntry]()
     var typedMessage = ""
     var isConversationActive = false
+    var activeMode: ActiveSessionMode = .conversation
+    var transcript = ""
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -72,7 +74,7 @@ final class AppModel {
         }
     }
 
-    func startConversation() async {
+    func startSession() async {
         guard await audio.requestPermission() else {
             failMessage("Microphone permission is required.")
             return
@@ -81,6 +83,10 @@ final class AppModel {
             try audio.startListening()
             isConversationActive = true
             conversationState = .listening
+            audio.updateNowPlaying(
+                active: true,
+                title: activeMode == .conversation ? "Active conversation" : "Active transcription"
+            )
         } catch {
             fail(error)
         }
@@ -122,14 +128,32 @@ final class AppModel {
             conversationState = .transcribing
             let transcript = try await api.transcribe(wav: wav)
             guard !transcript.isEmpty else {
+                try audio.startListening()
                 conversationState = .listening
                 return
             }
-            await send(text: transcript)
+            if activeMode == .transcription {
+                appendTranscript(transcript)
+                try audio.startListening()
+                audio.updateNowPlaying(active: true, title: "Active transcription")
+                conversationState = .listening
+            } else {
+                await send(text: transcript)
+            }
         } catch {
             fail(error)
             try? audio.startListening()
         }
+    }
+
+    func clearTranscript() {
+        transcript = ""
+    }
+
+    private func appendTranscript(_ text: String) {
+        let timestamp = Date.now.formatted(date: .omitted, time: .shortened)
+        let line = "[\(timestamp)] \(text)"
+        transcript = transcript.isEmpty ? line : transcript + "\n\n" + line
     }
 
     private func send(text: String) async {

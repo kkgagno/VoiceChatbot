@@ -14,6 +14,13 @@ struct RootView: View {
             }
 
             NavigationStack {
+                TranscriptionView(model: model)
+            }
+            .tabItem {
+                Label("Transcribe", systemImage: "text.quote")
+            }
+
+            NavigationStack {
                 SettingsView(model: model)
             }
             .tabItem {
@@ -97,9 +104,83 @@ private struct ConversationView: View {
             }
         } else {
             Button("Start", systemImage: "mic.fill") {
-                Task { await model.startConversation() }
+                model.activeMode = .conversation
+                Task { await model.startSession() }
             }
         }
+    }
+}
+
+private struct TranscriptionView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Circle()
+                    .fill(isTranscribing ? .red : .secondary)
+                    .frame(width: 10, height: 10)
+                Text(isTranscribing ? model.conversationState.label : "Ready")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if isTranscribing {
+                    Button(model.conversationState == .paused ? "Resume" : "Pause") {
+                        if model.conversationState == .paused {
+                            model.resumeConversation()
+                        } else {
+                            model.pauseConversation()
+                        }
+                    }
+                    Button("Stop", role: .destructive) {
+                        model.stopConversation()
+                    }
+                }
+            }
+            .padding()
+            .background(.thinMaterial)
+
+            if model.transcript.isEmpty {
+                ContentUnavailableView(
+                    "No Transcript Yet",
+                    systemImage: "waveform.badge.mic",
+                    description: Text("Start transcription, then the phone can remain locked while audio segments are transcribed by Whisper on your PC.")
+                )
+            } else {
+                ScrollView {
+                    Text(model.transcript)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding()
+                }
+            }
+        }
+        .navigationTitle("Transcription")
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !model.transcript.isEmpty {
+                    ShareLink(item: model.transcript) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Button("Clear", systemImage: "trash", role: .destructive) {
+                        model.clearTranscript()
+                    }
+                }
+                if isTranscribing {
+                    Button("Stop", systemImage: "stop.fill", role: .destructive) {
+                        model.stopConversation()
+                    }
+                } else {
+                    Button("Start", systemImage: "record.circle") {
+                        model.activeMode = .transcription
+                        Task { await model.startSession() }
+                    }
+                }
+            }
+        }
+    }
+
+    private var isTranscribing: Bool {
+        model.isConversationActive && model.activeMode == .transcription
     }
 }
 
@@ -175,4 +256,3 @@ private struct SettingsView: View {
         }
     }
 }
-

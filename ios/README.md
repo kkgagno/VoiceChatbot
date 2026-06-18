@@ -13,6 +13,7 @@ ComfyUI, documents, and model control. The iPhone app is a secure LAN/VPN client
 - Voice activity detection and 16 kHz WAV uploads to PC Whisper.
 - Playback of speech returned by the PC.
 - Lock Screen play, pause, and stop commands.
+- Dedicated long-running transcription mode with timestamps and Share export.
 - Wi-Fi/VPN server profiles and imported certificate pinning.
 
 ## Generate the Xcode project
@@ -29,6 +30,9 @@ Choose your Apple development team and run on a physical iPhone. Background micr
 behavior must be validated on a device; Simulator is useful for UI and networking checks
 but is not authoritative for screen-lock audio behavior.
 
+Every push to the iOS branch is also compiled by `.github/workflows/ios-build.yml` on
+GitHub's macOS runner.
+
 ## PC setup
 
 1. Enable **Phone Remote** in the Windows app.
@@ -43,4 +47,3 @@ but is not authoritative for screen-lock audio behavior.
 - Force-quitting the app ends the session.
 - Phone calls, Siri, route changes, and OS resource pressure may interrupt audio.
 - The app must visibly indicate when a conversation is active and provide an immediate stop action.
-

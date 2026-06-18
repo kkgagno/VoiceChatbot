@@ -135,6 +135,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         heardSpeech = false
         silenceFrames = 0
         guard Double(completed.count) / sampleRate >= minimumSpeechSeconds else { return }
+        stopEngine()
         onSpeechSegment?(WAVEncoder.encode(samples: completed, sourceRate: sampleRate))
     }
 
@@ -184,10 +185,10 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         }
     }
 
-    private func updateNowPlaying(active: Bool) {
+    func updateNowPlaying(active: Bool, title: String = "Active conversation") {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = active ? [
             MPMediaItemPropertyTitle: "Voice Chatbot",
-            MPMediaItemPropertyArtist: "Active conversation",
+            MPMediaItemPropertyArtist: title,
             MPNowPlayingInfoPropertyPlaybackRate: 1
         ] : nil
     }

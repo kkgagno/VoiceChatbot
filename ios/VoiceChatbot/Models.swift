@@ -73,3 +73,9 @@ enum ConversationState: Equatable {
     }
 }
 
+enum ActiveSessionMode: String, CaseIterable, Identifiable {
+    case conversation = "Conversation"
+    case transcription = "Transcription"
+
+    var id: Self { self }
+}
