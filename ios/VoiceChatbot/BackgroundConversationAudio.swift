@@ -13,6 +13,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private let engine = AVAudioEngine()
     private var player: AVAudioPlayer?
     private var isPaused = false
+    private var inputTapInstalled = false
     private lazy var speechDetector = BackgroundSpeechDetector { [weak self] data in
         Task { @MainActor in
             self?.onSpeechSegment?(data)
@@ -34,19 +35,30 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try configureSession()
 
         let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw AudioError.invalidInputFormat
+        }
         speechDetector.resume(sampleRate: inputFormat.sampleRate)
         guard !engine.isRunning else { return }
 
+        removeInputTap()
+        engine.reset()
         let detector = speechDetector
         input.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { buffer, _ in
             guard let channel = buffer.floatChannelData?.pointee else { return }
             let values = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             detector.consume(values)
         }
+        inputTapInstalled = true
 
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            removeInputTap()
+            throw error
+        }
         updateNowPlaying(active: true)
     }
 
@@ -110,9 +122,17 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     private func stopEngine() {
-        guard engine.isRunning else { return }
+        removeInputTap()
+        if engine.isRunning {
+            engine.stop()
+        }
+        engine.reset()
+    }
+
+    private func removeInputTap() {
+        guard inputTapInstalled else { return }
         engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        inputTapInstalled = false
     }
 
     private func observeInterruptions() {
@@ -261,9 +281,15 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
 
 private enum AudioError: LocalizedError {
     case playbackFailed
+    case invalidInputFormat
 
     var errorDescription: String? {
-        "The response audio could not start playing."
+        switch self {
+        case .playbackFailed:
+            "The response audio could not start playing."
+        case .invalidInputFormat:
+            "The microphone audio route is temporarily unavailable. Reconnect the headset or resume the session."
+        }
     }
 }
 
