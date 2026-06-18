@@ -35,20 +35,16 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try configureSession()
 
         let input = engine.inputNode
-        let inputFormat = input.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw AudioError.invalidInputFormat
-        }
-        speechDetector.resume(sampleRate: inputFormat.sampleRate)
+        speechDetector.resume()
         guard !engine.isRunning else { return }
 
         removeInputTap()
         engine.reset()
         let detector = speechDetector
-        input.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 2_048, format: nil) { buffer, _ in
             guard let channel = buffer.floatChannelData?.pointee else { return }
             let values = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
-            detector.consume(values)
+            detector.consume(values, sampleRate: buffer.format.sampleRate)
         }
         inputTapInstalled = true
 
@@ -215,9 +211,8 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
         self.onSegment = onSegment
     }
 
-    func resume(sampleRate: Double) {
+    func resume() {
         queue.sync {
-            self.sampleRate = sampleRate
             suspended = false
             reset(keepingCapacity: true)
         }
@@ -230,9 +225,10 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
         }
     }
 
-    func consume(_ buffer: [Float]) {
+    func consume(_ buffer: [Float], sampleRate: Double) {
         queue.async { [self] in
-            guard !suspended, !buffer.isEmpty else { return }
+            guard !suspended, !buffer.isEmpty, sampleRate > 0 else { return }
+            self.sampleRate = sampleRate
             let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
 
             if !heardSpeech {
@@ -281,15 +277,9 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
 
 private enum AudioError: LocalizedError {
     case playbackFailed
-    case invalidInputFormat
 
     var errorDescription: String? {
-        switch self {
-        case .playbackFailed:
-            "The response audio could not start playing."
-        case .invalidInputFormat:
-            "The microphone audio route is temporarily unavailable. Reconnect the headset or resume the session."
-        }
+        "The response audio could not start playing."
     }
 }
 
