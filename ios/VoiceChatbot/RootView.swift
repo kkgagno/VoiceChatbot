@@ -28,6 +28,7 @@ struct RootView: View {
 
 private struct ConversationView: View {
     @Bindable var model: AppModel
+    @FocusState private var messageFieldFocused: Bool
 
     var body: some View {
         ZStack {
@@ -47,6 +48,7 @@ private struct ConversationView: View {
                         }
                         .padding()
                     }
+                    .scrollDismissesKeyboard(.interactively)
                 }
 
                 composer
@@ -58,6 +60,12 @@ private struct ConversationView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SessionToolbarButton(model: model, mode: .conversation)
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    messageFieldFocused = false
+                }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -71,11 +79,22 @@ private struct ConversationView: View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("Message your PC model", text: $model.typedMessage, axis: .vertical)
                 .lineLimit(1...5)
+                .focused($messageFieldFocused)
+                .submitLabel(.send)
+                .onSubmit {
+                    guard !model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        messageFieldFocused = false
+                        return
+                    }
+                    messageFieldFocused = false
+                    Task { await model.sendTypedMessage() }
+                }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
 
             Button {
+                messageFieldFocused = false
                 Task { await model.sendTypedMessage() }
             } label: {
                 Image(systemName: "arrow.up")
