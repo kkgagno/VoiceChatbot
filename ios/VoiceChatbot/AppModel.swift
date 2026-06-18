@@ -20,13 +20,15 @@ final class AppModel {
     private var processingSegment = false
 
     init() {
+        let initialProfile: ServerProfile
         if let data = UserDefaults.standard.data(forKey: "serverProfile"),
            let saved = try? JSONDecoder().decode(ServerProfile.self, from: data) {
-            profile = saved
+            initialProfile = saved
         } else {
-            profile = ServerProfile()
+            initialProfile = ServerProfile()
         }
-        api = VoiceChatAPI(profile: profile)
+        profile = initialProfile
+        api = VoiceChatAPI(profile: initialProfile)
 
         audio.onSpeechSegment = { [weak self] wav in
             Task { @MainActor in
