@@ -295,8 +295,15 @@ private struct ChatBubble: View {
 }
 
 private struct ConnectionView: View {
+    private enum Field: Hashable {
+        case profileName
+        case serverURL
+        case pin
+    }
+
     @Bindable var model: AppModel
     @State private var importingCertificate = false
+    @FocusState private var focusedField: Field?
 
     var body: some View {
         ZStack {
@@ -310,9 +317,18 @@ private struct ConnectionView: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .navigationTitle("Connection")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    focusedField = nil
+                }
+            }
+        }
         .fileImporter(
             isPresented: $importingCertificate,
             allowedContentTypes: [.x509Certificate],
@@ -355,13 +371,24 @@ private struct ConnectionView: View {
                 .font(.headline)
             TextField("Profile name", text: $model.profile.name)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .profileName)
+                .submitLabel(.next)
+                .onSubmit { focusedField = .serverURL }
             TextField("https://192.168.1.50:5100", text: $model.profile.baseURL)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .keyboardType(.URL)
+                .focused($focusedField, equals: .serverURL)
+                .submitLabel(.next)
+                .onSubmit { focusedField = .pin }
             SecureField("PIN (optional)", text: $model.profile.pin)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .pin)
+                .submitLabel(.done)
+                .onSubmit { focusedField = nil }
             Button {
+                focusedField = nil
                 Task { await model.applyProfile() }
             } label: {
                 HStack {

@@ -13,14 +13,16 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private let engine = AVAudioEngine()
     private var player: AVAudioPlayer?
     private var samples = [Float]()
+    private var preRollSamples = [Float]()
     private var sampleRate = 16_000.0
     private var heardSpeech = false
     private var silenceFrames = 0
     private var isPaused = false
 
-    private let startThreshold: Float = 0.018
-    private let stopThreshold: Float = 0.012
-    private let silenceSeconds = 1.2
+    private let startThreshold: Float = 0.014
+    private let stopThreshold: Float = 0.009
+    private let preRollSeconds = 0.65
+    private let silenceSeconds = 2.4
     private let minimumSpeechSeconds = 0.35
     private let maximumSegmentSeconds = 300.0
 
@@ -58,6 +60,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func pause() {
         isPaused = true
         stopEngine()
+        clearCapture()
         updateNowPlaying(active: false)
     }
 
@@ -68,9 +71,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func stop() {
         isPaused = false
         stopEngine()
-        samples.removeAll(keepingCapacity: false)
-        heardSpeech = false
-        silenceFrames = 0
+        clearCapture(keepingCapacity: false)
         player?.stop()
         player = nil
         updateNowPlaying(active: false)
@@ -79,11 +80,16 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func play(_ data: Data) throws {
         stopEngine()
+        clearCapture()
+        try configurePlaybackSession()
         let audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer.delegate = self
+        audioPlayer.volume = 1
         audioPlayer.prepareToPlay()
         player = audioPlayer
-        audioPlayer.play()
+        guard audioPlayer.play() else {
+            throw AudioError.playbackFailed
+        }
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -104,6 +110,12 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try session.setActive(true)
     }
 
+    private func configurePlaybackSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .spokenAudio, options: [])
+        try session.setActive(true)
+    }
+
     private func stopEngine() {
         guard engine.isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
@@ -115,12 +127,15 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
 
         if !heardSpeech {
+            appendToPreRoll(buffer)
             guard rms >= startThreshold else { return }
             heardSpeech = true
-            samples.removeAll(keepingCapacity: true)
+            samples = preRollSamples
+            preRollSamples.removeAll(keepingCapacity: true)
+        } else {
+            samples.append(contentsOf: buffer)
         }
 
-        samples.append(contentsOf: buffer)
         silenceFrames = rms < stopThreshold ? silenceFrames + buffer.count : 0
 
         let recordedSeconds = Double(samples.count) / sampleRate
@@ -134,11 +149,27 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private func finishSegment() {
         let completed = samples
         samples.removeAll(keepingCapacity: true)
+        preRollSamples.removeAll(keepingCapacity: true)
         heardSpeech = false
         silenceFrames = 0
         guard Double(completed.count) / sampleRate >= minimumSpeechSeconds else { return }
         stopEngine()
         onSpeechSegment?(WAVEncoder.encode(samples: completed, sourceRate: sampleRate))
+    }
+
+    private func appendToPreRoll(_ buffer: [Float]) {
+        preRollSamples.append(contentsOf: buffer)
+        let maximumCount = max(1, Int(sampleRate * preRollSeconds))
+        if preRollSamples.count > maximumCount {
+            preRollSamples.removeFirst(preRollSamples.count - maximumCount)
+        }
+    }
+
+    private func clearCapture(keepingCapacity: Bool = true) {
+        samples.removeAll(keepingCapacity: keepingCapacity)
+        preRollSamples.removeAll(keepingCapacity: keepingCapacity)
+        heardSpeech = false
+        silenceFrames = 0
     }
 
     private func observeInterruptions() {
@@ -193,6 +224,14 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             MPMediaItemPropertyArtist: title,
             MPNowPlayingInfoPropertyPlaybackRate: 1
         ] : nil
+    }
+}
+
+private enum AudioError: LocalizedError {
+    case playbackFailed
+
+    var errorDescription: String? {
+        "The response audio could not start playing."
     }
 }
 
