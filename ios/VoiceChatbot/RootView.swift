@@ -264,14 +264,16 @@ private struct TranscriptionView: View {
             ToolbarItem(placement: .topBarLeading) {
                 SessionToolbarButton(model: model, mode: .transcription)
             }
-            if !model.transcript.isEmpty {
-                ShareLink(item: model.transcript) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                Button(role: .destructive) {
-                    model.clearTranscript()
-                } label: {
-                    Image(systemName: "trash")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !model.transcript.isEmpty {
+                    ShareLink(item: model.transcript) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Button(role: .destructive) {
+                        model.clearTranscript()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
                 }
             }
         }
