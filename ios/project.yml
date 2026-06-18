@@ -16,6 +16,20 @@ targets:
       - path: VoiceChatbot
     info:
       path: VoiceChatbot/Info.plist
+      properties:
+        CFBundleDisplayName: Voice Chatbot
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        NSMicrophoneUsageDescription: Voice Chatbot uses the microphone during conversations and transcription sessions you start.
+        NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIBackgroundModes:
+          - audio
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.keithgagnon.VoiceChatbot
@@ -24,8 +38,5 @@ targets:
         CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: VoiceChatbot/Info.plist
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: Voice Chatbot uses the microphone during conversations and transcription sessions you start.
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
-        INFOPLIST_KEY_UIBackgroundModes: audio
     scheme:
       testTargets: []
