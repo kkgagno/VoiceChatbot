@@ -81,8 +81,6 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
-        stopEngine()
-        try configurePlaybackSession()
         let audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer.delegate = self
         audioPlayer.volume = 1
@@ -104,16 +102,10 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
             .playAndRecord,
-            mode: .voiceChat,
+            mode: .default,
             options: [.defaultToSpeaker, .allowBluetooth]
         )
         try session.setPreferredSampleRate(48_000)
-        try session.setActive(true)
-    }
-
-    private func configurePlaybackSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .spokenAudio, options: [])
         try session.setActive(true)
     }
 
