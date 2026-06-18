@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
@@ -41,4 +41,27 @@ jobs:
             -configuration Debug \
             -destination "generic/platform=iOS Simulator" \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            build 2>&1 | tee xcodebuild.log
+
+      - name: Publish compiler errors
+        if: failure()
+        working-directory: ios
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+
+          workspace = os.environ["GITHUB_WORKSPACE"] + os.sep
+          pattern = re.compile(r"^(.*?\.swift):(\d+):(\d+): (error|warning): (.*)$")
+
+          with open("xcodebuild.log", encoding="utf-8", errors="replace") as log:
+              for raw_line in log:
+                  match = pattern.match(raw_line.strip())
+                  if not match:
+                      continue
+                  path, line, column, level, message = match.groups()
+                  if path.startswith(workspace):
+                      path = path[len(workspace):]
+                  message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::{level} file={path},line={line},col={column}::{message}")
+          PY
