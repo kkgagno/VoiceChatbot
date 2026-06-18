@@ -9,27 +9,20 @@ struct RootView: View {
             NavigationStack {
                 ConversationView(model: model)
             }
-            .tabItem {
-                Label("Conversation", systemImage: "waveform")
-            }
+            .tabItem { Label("Chat", systemImage: "message.fill") }
 
             NavigationStack {
                 TranscriptionView(model: model)
             }
-            .tabItem {
-                Label("Transcribe", systemImage: "text.quote")
-            }
+            .tabItem { Label("Transcribe", systemImage: "waveform") }
 
             NavigationStack {
-                SettingsView(model: model)
+                ConnectionView(model: model)
             }
-            .tabItem {
-                Label("Connection", systemImage: "network")
-            }
+            .tabItem { Label("Connection", systemImage: "desktopcomputer") }
         }
-        .task {
-            await model.refreshStatus()
-        }
+        .tint(.cyan)
+        .task { await model.refreshStatus() }
     }
 }
 
@@ -37,77 +30,178 @@ private struct ConversationView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            statusHeader
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(model.messages) { message in
-                        ChatBubble(entry: message)
+        ZStack {
+            AppBackground()
+
+            VStack(spacing: 0) {
+                ConnectionBanner(model: model)
+
+                if model.messages.isEmpty {
+                    Spacer()
+                    EmptyConversation(model: model)
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 14) {
+                            ForEach(model.messages) { ChatBubble(entry: $0) }
+                        }
+                        .padding()
                     }
                 }
-                .padding()
-            }
 
-            HStack(alignment: .bottom) {
-                TextField("Message", text: $model.typedMessage, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
-                Button {
-                    Task { await model.sendTypedMessage() }
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title)
-                }
-                .disabled(model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                composer
             }
-            .padding()
         }
         .navigationTitle("Voice Chatbot")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                conversationButton
-            }
-        }
-    }
-
-    private var statusHeader: some View {
-        HStack {
-            Circle()
-                .fill(model.isConversationActive ? .green : .secondary)
-                .frame(width: 10, height: 10)
-            Text(model.conversationState.label)
-                .font(.subheadline.weight(.semibold))
-            Spacer()
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .safeAreaInset(edge: .bottom) {
             if model.isConversationActive {
-                Button(model.conversationState == .paused ? "Resume" : "Pause") {
-                    if model.conversationState == .paused {
-                        model.resumeConversation()
-                    } else {
-                        model.pauseConversation()
-                    }
-                }
-                Button("Stop", role: .destructive) {
-                    model.stopConversation()
-                }
+                ActiveSessionBar(model: model)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .background(.thinMaterial)
     }
 
-    @ViewBuilder
-    private var conversationButton: some View {
-        if model.isConversationActive {
-            Button("Stop", systemImage: "stop.fill", role: .destructive) {
-                model.stopConversation()
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Message your PC model", text: $model.typedMessage, axis: .vertical)
+                .lineLimit(1...5)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+
+            Button {
+                Task { await model.sendTypedMessage() }
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.headline.bold())
+                    .frame(width: 44, height: 44)
+                    .background(.cyan, in: Circle())
+                    .foregroundStyle(.black)
             }
-        } else {
-            Button("Start", systemImage: "mic.fill") {
+            .disabled(model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(model.typedMessage.isEmpty ? 0.45 : 1)
+        }
+        .padding()
+    }
+}
+
+private struct EmptyConversation: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(.cyan.opacity(0.14))
+                    .frame(width: 116, height: 116)
+                Image(systemName: "waveform.and.mic")
+                    .font(.system(size: 48, weight: .medium))
+                    .foregroundStyle(.cyan)
+            }
+
+            VStack(spacing: 7) {
+                Text("Talk to your PC")
+                    .font(.title2.bold())
+                Text("Your models, Whisper, and speech stay on the PC. The iPhone is your private voice remote.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 30)
+            }
+
+            Button {
                 model.activeMode = .conversation
                 Task { await model.startSession() }
+            } label: {
+                Label("Start Conversation", systemImage: "mic.fill")
+                    .font(.headline)
+                    .frame(maxWidth: 260)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.cyan)
+            .foregroundStyle(.black)
+            .disabled(model.status?.ok != true)
+
+            if model.status?.ok != true {
+                Text("Connect to your PC first")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
         }
+    }
+}
+
+private struct ConnectionBanner: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(model.status?.ok == true ? .green : .orange)
+                .frame(width: 9, height: 9)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.status?.ok == true ? "PC connected" : "PC not connected")
+                    .font(.subheadline.weight(.semibold))
+                if let status = model.status, !status.activeModel.isEmpty {
+                    Text(status.activeModel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            if model.isConnecting {
+                ProgressView()
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(.thinMaterial)
+    }
+}
+
+private struct ActiveSessionBar: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(.red.opacity(0.18)).frame(width: 42, height: 42)
+                Image(systemName: model.conversationState == .paused ? "pause.fill" : "waveform")
+                    .foregroundStyle(.red)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.activeMode.rawValue)
+                    .font(.subheadline.bold())
+                Text(model.conversationState.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(model.conversationState == .paused ? "Resume" : "Pause") {
+                if model.conversationState == .paused {
+                    model.resumeConversation()
+                } else {
+                    model.pauseConversation()
+                }
+            }
+            .buttonStyle(.bordered)
+
+            Button(role: .destructive) {
+                model.stopConversation()
+            } label: {
+                Image(systemName: "stop.fill")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding()
+        .background(.regularMaterial)
     }
 }
 
@@ -115,72 +209,69 @@ private struct TranscriptionView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Circle()
-                    .fill(isTranscribing ? .red : .secondary)
-                    .frame(width: 10, height: 10)
-                Text(isTranscribing ? model.conversationState.label : "Ready")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                if isTranscribing {
-                    Button(model.conversationState == .paused ? "Resume" : "Pause") {
-                        if model.conversationState == .paused {
-                            model.resumeConversation()
-                        } else {
-                            model.pauseConversation()
-                        }
-                    }
-                    Button("Stop", role: .destructive) {
-                        model.stopConversation()
-                    }
-                }
-            }
-            .padding()
-            .background(.thinMaterial)
+        ZStack {
+            AppBackground()
+            VStack(spacing: 0) {
+                ConnectionBanner(model: model)
 
-            if model.transcript.isEmpty {
-                ContentUnavailableView(
-                    "No Transcript Yet",
-                    systemImage: "waveform.badge.mic",
-                    description: Text("Start transcription, then the phone can remain locked while audio segments are transcribed by Whisper on your PC.")
-                )
-            } else {
-                ScrollView {
-                    Text(model.transcript)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding()
+                if model.transcript.isEmpty {
+                    Spacer()
+                    VStack(spacing: 18) {
+                        Image(systemName: "quote.bubble.fill")
+                            .font(.system(size: 54))
+                            .foregroundStyle(.cyan)
+                        Text("Background Transcription")
+                            .font(.title2.bold())
+                        Text("Start a session, lock the screen, and Whisper on your PC will transcribe speech in timestamped segments.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                        Button {
+                            model.activeMode = .transcription
+                            Task { await model.startSession() }
+                        } label: {
+                            Label("Start Transcribing", systemImage: "record.circle")
+                                .font(.headline)
+                                .frame(maxWidth: 260)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.cyan)
+                        .foregroundStyle(.black)
+                        .disabled(model.status?.ok != true)
+                    }
+                    Spacer()
+                } else {
+                    ScrollView {
+                        Text(model.transcript)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding()
+                    }
                 }
             }
         }
         .navigationTitle("Transcription")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if !model.transcript.isEmpty {
-                    ShareLink(item: model.transcript) {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    Button("Clear", systemImage: "trash", role: .destructive) {
-                        model.clearTranscript()
-                    }
+            if !model.transcript.isEmpty {
+                ShareLink(item: model.transcript) {
+                    Image(systemName: "square.and.arrow.up")
                 }
-                if isTranscribing {
-                    Button("Stop", systemImage: "stop.fill", role: .destructive) {
-                        model.stopConversation()
-                    }
-                } else {
-                    Button("Start", systemImage: "record.circle") {
-                        model.activeMode = .transcription
-                        Task { await model.startSession() }
-                    }
+                Button(role: .destructive) {
+                    model.clearTranscript()
+                } label: {
+                    Image(systemName: "trash")
                 }
             }
         }
-    }
-
-    private var isTranscribing: Bool {
-        model.isConversationActive && model.activeMode == .transcription
+        .safeAreaInset(edge: .bottom) {
+            if model.isConversationActive {
+                ActiveSessionBar(model: model)
+            }
+        }
     }
 }
 
@@ -189,61 +280,39 @@ private struct ChatBubble: View {
 
     var body: some View {
         HStack {
-            if entry.role == .user { Spacer(minLength: 48) }
+            if entry.role == .user { Spacer(minLength: 52) }
             Text(entry.text)
-                .padding(12)
-                .foregroundStyle(entry.role == .user ? .white : .primary)
-                .background(entry.role == .user ? Color.accentColor : Color.secondary.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-            if entry.role != .user { Spacer(minLength: 48) }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 11)
+                .foregroundStyle(entry.role == .user ? .black : .primary)
+                .background(
+                    entry.role == .user ? Color.cyan : Color.secondary.opacity(0.16),
+                    in: RoundedRectangle(cornerRadius: 18)
+                )
+            if entry.role != .user { Spacer(minLength: 52) }
         }
     }
 }
 
-private struct SettingsView: View {
+private struct ConnectionView: View {
     @Bindable var model: AppModel
     @State private var importingCertificate = false
 
     var body: some View {
-        Form {
-            Section("PC server") {
-                TextField("Profile name", text: $model.profile.name)
-                TextField("https://host:5100", text: $model.profile.baseURL)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                SecureField("PIN (optional)", text: $model.profile.pin)
-            }
-
-            Section {
-                LabeledContent(
-                    "Pinned certificate",
-                    value: model.profile.pinnedCertificateDER == nil ? "Not imported" : "Imported"
-                )
-                Button("Import .cer certificate") {
-                    importingCertificate = true
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(spacing: 18) {
+                    connectionCard
+                    serverCard
+                    certificateCard
+                    helpCard
                 }
-            } header: {
-                Text("Certificate")
-            } footer: {
-                Text("Export the certificate from VoiceChatbot on your PC and import it here. The app will only trust a server presenting that certificate.")
-            }
-
-            Section("Connection") {
-                if let status = model.status {
-                    LabeledContent("Provider", value: status.activeProvider)
-                    LabeledContent("Model", value: status.activeModel)
-                    LabeledContent("Endpoint", value: status.activeEndpoint)
-                }
-                Button("Save and test connection") {
-                    Task { await model.applyProfile() }
-                }
-            }
-
-            Section("Background conversation") {
-                Text("When you start a conversation, microphone capture uses iOS background audio mode so it can continue while the app is minimized or the screen is locked. Pause or stop from the app or Lock Screen controls.")
+                .padding()
             }
         }
         .navigationTitle("Connection")
+        .navigationBarTitleDisplayMode(.inline)
         .fileImporter(
             isPresented: $importingCertificate,
             allowedContentTypes: [.x509Certificate],
@@ -256,5 +325,108 @@ private struct SettingsView: View {
                 model.importCertificate(data)
             }
         }
+    }
+
+    private var connectionCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: model.status?.ok == true ? "checkmark.circle.fill" : "desktopcomputer.trianglebadge.exclamationmark")
+                .font(.system(size: 44))
+                .foregroundStyle(model.status?.ok == true ? .green : .orange)
+            Text(model.status?.ok == true ? "Connected to PC" : "Set up your PC")
+                .font(.title3.bold())
+            Text(model.connectionMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if let status = model.status {
+                Text([status.activeProvider, status.activeModel].filter { !$0.isEmpty }.joined(separator: " • "))
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(22)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    private var serverCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("PC Server", systemImage: "network")
+                .font(.headline)
+            TextField("Profile name", text: $model.profile.name)
+                .textFieldStyle(.roundedBorder)
+            TextField("https://192.168.1.50:5100", text: $model.profile.baseURL)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+            SecureField("PIN (optional)", text: $model.profile.pin)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                Task { await model.applyProfile() }
+            } label: {
+                HStack {
+                    if model.isConnecting { ProgressView().tint(.black) }
+                    Text(model.isConnecting ? "Connecting…" : "Save and Test")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.cyan)
+            .foregroundStyle(.black)
+            .disabled(model.isConnecting)
+        }
+        .cardStyle()
+    }
+
+    private var certificateCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Secure Certificate", systemImage: "lock.shield")
+                .font(.headline)
+            HStack {
+                Text(model.profile.pinnedCertificateDER == nil ? "Not imported" : "Certificate imported")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: model.profile.pinnedCertificateDER == nil ? "xmark.circle" : "checkmark.circle.fill")
+                    .foregroundStyle(model.profile.pinnedCertificateDER == nil ? .orange : .green)
+            }
+            Button("Import .cer Certificate") {
+                importingCertificate = true
+            }
+            .buttonStyle(.bordered)
+        }
+        .cardStyle()
+    }
+
+    private var helpCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Before connecting", systemImage: "info.circle")
+                .font(.headline)
+            Text("1. Start VoiceChatbot on the Windows PC.")
+            Text("2. Enable Phone Remote.")
+            Text("3. Use its HTTPS address and matching PIN.")
+            Text("4. Import the public .cer certificate.")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .cardStyle()
+    }
+}
+
+private struct AppBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [Color(.systemBackground), Color.cyan.opacity(0.07), Color(.systemBackground)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+}
+
+private extension View {
+    func cardStyle() -> some View {
+        padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
     }
 }

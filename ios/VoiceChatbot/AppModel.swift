@@ -14,6 +14,8 @@ final class AppModel {
     var isConversationActive = false
     var activeMode: ActiveSessionMode = .conversation
     var transcript = ""
+    var isConnecting = false
+    var connectionMessage = "Not connected"
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -69,14 +71,22 @@ final class AppModel {
     }
 
     func refreshStatus() async {
+        isConnecting = true
+        defer { isConnecting = false }
         do {
             status = try await api.status()
+            connectionMessage = "Connected"
         } catch {
-            fail(error)
+            status = nil
+            connectionMessage = error.localizedDescription
         }
     }
 
     func startSession() async {
+        guard status?.ok == true else {
+            failMessage("Connect to your PC in the Connection tab before starting.")
+            return
+        }
         guard await audio.requestPermission() else {
             failMessage("Microphone permission is required.")
             return

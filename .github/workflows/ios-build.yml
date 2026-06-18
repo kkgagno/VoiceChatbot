@@ -65,3 +65,12 @@ jobs:
                   message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                   print(f"::{level} file={path},line={line},col={column}::{message}")
           PY
+
+      - name: Verify runtime privacy configuration
+        working-directory: ios
+        run: |
+          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -path '*Build/Products/Debug-iphonesimulator/VoiceChatbot.app' -print -quit)"
+          test -n "$APP_PATH"
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes:0" "$APP_PATH/Info.plist" | grep -Fx audio
