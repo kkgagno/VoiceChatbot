@@ -86,9 +86,11 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         audioPlayer.play()
     }
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        self.player = nil
-        onPlaybackFinished?()
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in
+            self?.player = nil
+            self?.onPlaybackFinished?()
+        }
     }
 
     private func configureSession() throws {

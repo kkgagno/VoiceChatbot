@@ -214,7 +214,7 @@ private struct SettingsView: View {
                 SecureField("PIN (optional)", text: $model.profile.pin)
             }
 
-            Section("Certificate") {
+            Section {
                 LabeledContent(
                     "Pinned certificate",
                     value: model.profile.pinnedCertificateDER == nil ? "Not imported" : "Imported"
@@ -222,6 +222,8 @@ private struct SettingsView: View {
                 Button("Import .cer certificate") {
                     importingCertificate = true
                 }
+            } header: {
+                Text("Certificate")
             } footer: {
                 Text("Export the certificate from VoiceChatbot on your PC and import it here. The app will only trust a server presenting that certificate.")
             }
