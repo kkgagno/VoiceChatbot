@@ -72,6 +72,17 @@ jobs:
         run: |
           APP_PATH="$PWD/build/Build/Products/Debug-iphonesimulator/VoiceChatbot.app"
           test -d "$APP_PATH"
-          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP_PATH/Info.plist"
-          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$APP_PATH/Info.plist"
-          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes:0" "$APP_PATH/Info.plist" | grep -Fx audio
+          PLIST="$APP_PATH/Info.plist"
+          plutil -p "$PLIST"
+
+          verify_key() {
+            local key="$1"
+            if ! /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST"; then
+              echo "::error file=ios/VoiceChatbot/Info.plist::Compiled app is missing $key"
+              exit 1
+            fi
+          }
+
+          verify_key "NSMicrophoneUsageDescription"
+          verify_key "NSLocalNetworkUsageDescription"
+          verify_key "UIBackgroundModes"
