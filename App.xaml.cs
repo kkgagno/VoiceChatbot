@@ -7,6 +7,15 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length == 1 && e.Args[0].Equals("--vad-self-test", StringComparison.OrdinalIgnoreCase))
+        {
+            var modelPath = Path.Combine(AppContext.BaseDirectory, "Resources", "Models", "silero_vad.onnx");
+            using var vad = new SileroVad(modelPath);
+            Console.WriteLine($"SILERO_VAD_OK:{vad.SelfTest():0.000000}");
+            Shutdown(0);
+            return;
+        }
+
         base.OnStartup(e);
 
         // Catch unhandled exceptions on UI thread

@@ -31,6 +31,8 @@ public sealed class SileroVad : IDisposable
         _context = new float[64];
     }
 
+    public float SelfTest() => ProcessFrame(new float[FrameSamples]);
+
     public float ProcessPcm16(byte[] buffer, int count)
     {
         for (var index = 0; index + 1 < count; index += 2)

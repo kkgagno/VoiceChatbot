@@ -43,6 +43,8 @@ public class SpeechEngine : IDisposable
     private SileroVad? _voiceActivityDetector;
     private SileroVad? _remoteVoiceActivityDetector;
     private readonly object _remoteVadLock = new();
+    private bool _localVadFailed;
+    private bool _remoteVadFailed;
     private MemoryStream? _audioBuffer;
     private NAudio.Wave.WaveOutEvent? _waveOut;
     private ManualResetEvent? _playbackStopSignal;
@@ -426,7 +428,19 @@ public class SpeechEngine : IDisposable
 
         // Neural VAD distinguishes human speech from steady AC, typing, footsteps,
         // and most animal/mechanical sounds. RMS remains only as a fallback.
-        var speechProbability = _voiceActivityDetector?.ProcessPcm16(e.Buffer, e.BytesRecorded) ?? -1f;
+        var speechProbability = -1f;
+        if (_voiceActivityDetector != null && !_localVadFailed)
+        {
+            try
+            {
+                speechProbability = _voiceActivityDetector.ProcessPcm16(e.Buffer, e.BytesRecorded);
+            }
+            catch (Exception ex)
+            {
+                _localVadFailed = true;
+                Log?.Invoke($"Silero voice detection failed; using audio-level fallback: {ex.Message}");
+            }
+        }
         var voiceThreshold = Math.Max(0.004f, NoiseGate / 5000f);
         bool isVoice = speechProbability >= 0
             ? speechProbability >= 0.55f
@@ -474,7 +488,7 @@ public class SpeechEngine : IDisposable
 
     public async Task<bool> ContainsSpeechWavAsync(Stream stream, CancellationToken ct)
     {
-        if (_remoteVoiceActivityDetector == null)
+        if (_remoteVoiceActivityDetector == null || _remoteVadFailed)
             return true;
 
         using var memory = new MemoryStream();
@@ -484,23 +498,32 @@ public class SpeechEngine : IDisposable
         if (dataOffset < 0 || dataOffset >= wav.Length)
             return false;
 
-        lock (_remoteVadLock)
+        try
         {
-            _remoteVoiceActivityDetector.Reset();
-            var speechFrames = 0;
-            const int bytesPerFrame = SileroVad.FrameSamples * 2;
-            for (var offset = dataOffset; offset + bytesPerFrame <= wav.Length; offset += bytesPerFrame)
+            lock (_remoteVadLock)
             {
-                var frame = new byte[bytesPerFrame];
-                Buffer.BlockCopy(wav, offset, frame, 0, bytesPerFrame);
-                if (_remoteVoiceActivityDetector.ProcessPcm16(frame, frame.Length) >= 0.55f)
+                _remoteVoiceActivityDetector.Reset();
+                var speechFrames = 0;
+                const int bytesPerFrame = SileroVad.FrameSamples * 2;
+                for (var offset = dataOffset; offset + bytesPerFrame <= wav.Length; offset += bytesPerFrame)
                 {
-                    speechFrames++;
-                    if (speechFrames >= 3)
-                        return true;
+                    var frame = new byte[bytesPerFrame];
+                    Buffer.BlockCopy(wav, offset, frame, 0, bytesPerFrame);
+                    if (_remoteVoiceActivityDetector.ProcessPcm16(frame, frame.Length) >= 0.55f)
+                    {
+                        speechFrames++;
+                        if (speechFrames >= 3)
+                            return true;
+                    }
                 }
+                return false;
             }
-            return false;
+        }
+        catch (Exception ex)
+        {
+            _remoteVadFailed = true;
+            Log?.Invoke($"Remote Silero voice detection failed; allowing audio through: {ex.Message}");
+            return true;
         }
     }
 
@@ -864,7 +887,10 @@ public class SpeechEngine : IDisposable
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                // Keep the external AMD/Vitis process away from VoiceChatbot's
+                // bundled ONNX Runtime DLL, which is used only by Silero VAD.
+                WorkingDirectory = tempDir
             };
 
             var stdout = new StringBuilder();

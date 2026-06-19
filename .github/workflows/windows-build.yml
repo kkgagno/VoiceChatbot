@@ -55,6 +55,17 @@ jobs:
           --self-contained true
           --output artifacts/VoiceChatbot-VAD-Test
 
+      - name: Run Silero model
+        shell: pwsh
+        run: |
+          $process = Start-Process `
+            -FilePath "artifacts/VoiceChatbot-VAD-Test/VoiceChatbot.exe" `
+            -ArgumentList "--vad-self-test" `
+            -Wait -PassThru -NoNewWindow
+          if ($process.ExitCode -ne 0) {
+            throw "Silero VAD runtime self-test failed with exit code $($process.ExitCode)."
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: VoiceChatbot-VAD-Test-win-x64
