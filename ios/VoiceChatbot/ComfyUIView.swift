@@ -1,5 +1,6 @@
 import AVKit
 import CoreTransferable
+import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -13,6 +14,7 @@ struct ComfyUIView: View {
     @State private var selectedPhotos = [PhotosPickerItem]()
     @State private var attachments = [PendingAttachment]()
     @State private var importingAudio = false
+    @State private var saveMessage: String?
 
     var body: some View {
         Form {
@@ -62,7 +64,16 @@ struct ComfyUIView: View {
 
                     ForEach(attachments) { attachment in
                         HStack {
-                            Image(systemName: attachment.kind == .audio ? "waveform" : "photo")
+                            if attachment.kind == .image, let image = UIImage(data: attachment.data) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 54, height: 54)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            } else {
+                                Image(systemName: "waveform")
+                                    .frame(width: 54, height: 54)
+                            }
                             Text(attachment.name).lineLimit(1)
                             Spacer()
                             Text(attachment.sizeLabel).foregroundStyle(.secondary)
@@ -104,11 +115,16 @@ struct ComfyUIView: View {
                             .resizable()
                             .scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 16))
+                        Button {
+                            Task { await saveImageToPhotos(data) }
+                        } label: {
+                            Label("Save to Photos", systemImage: "photo.badge.arrow.down")
+                        }
                         ShareLink(
                             item: ImageTransferable(data: data),
                             preview: SharePreview("VoiceChatbot image", image: Image(uiImage: image))
                         ) {
-                            Label("Save or Share Image", systemImage: "square.and.arrow.up")
+                            Label("Share or Save to Files", systemImage: "square.and.arrow.up")
                         }
                     }
 
@@ -129,7 +145,19 @@ struct ComfyUIView: View {
             attachments = []
         }
         .onChange(of: selectedPhotos) { _, items in
+            guard !items.isEmpty else { return }
             Task { await loadPhotos(items) }
+        }
+        .alert(
+            "Photos",
+            isPresented: Binding(
+                get: { saveMessage != nil },
+                set: { if !$0 { saveMessage = nil } }
+            )
+        ) {
+            Button("OK") { saveMessage = nil }
+        } message: {
+            Text(saveMessage ?? "")
         }
         .fileImporter(
             isPresented: $importingAudio,
@@ -185,13 +213,32 @@ struct ComfyUIView: View {
             )
         }
     }
+
+    @MainActor
+    private func saveImageToPhotos(_ data: Data) async {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            saveMessage = "Allow Voice Chatbot to add photos in Settings, then try again."
+            return
+        }
+
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                request.addResource(with: .photo, data: data, options: nil)
+            }
+            saveMessage = "Image saved to Photos."
+        } catch {
+            saveMessage = "Could not save the image: \(error.localizedDescription)"
+        }
+    }
 }
 
 struct ImageTransferable: Transferable {
     let data: Data
 
     static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(exportedContentType: .png) { item in
+        DataRepresentation(exportedContentType: .jpeg) { item in
             item.data
         }
     }

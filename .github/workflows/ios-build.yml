@@ -85,5 +85,6 @@ jobs:
 
           verify_key "NSMicrophoneUsageDescription"
           verify_key "NSCameraUsageDescription"
+          verify_key "NSPhotoLibraryAddUsageDescription"
           verify_key "NSLocalNetworkUsageDescription"
           verify_key "UIBackgroundModes"
