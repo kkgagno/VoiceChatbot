@@ -215,8 +215,8 @@ private final class SystemSpeechClassifier: NSObject, SNResultsObserving, @unche
         }
         let position = framePosition
         framePosition += AVAudioFramePosition(buffer.frameLength)
-        analyzer.analyze(buffer, atAudioFramePosition: position)
         lock.unlock()
+        analyzer.analyze(buffer, atAudioFramePosition: position)
     }
 
     func stop() {
