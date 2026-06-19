@@ -40,6 +40,9 @@ public class SpeechEngine : IDisposable
     private WhisperFactory? _whisperFactory;
     private WhisperProcessor? _whisperProcessor;
     private WaveInEvent? _waveIn;
+    private SileroVad? _voiceActivityDetector;
+    private SileroVad? _remoteVoiceActivityDetector;
+    private readonly object _remoteVadLock = new();
     private MemoryStream? _audioBuffer;
     private NAudio.Wave.WaveOutEvent? _waveOut;
     private ManualResetEvent? _playbackStopSignal;
@@ -110,6 +113,22 @@ public class SpeechEngine : IDisposable
         try
         {
             InitWhisper();
+        }
+
+        try
+        {
+            var vadPath = Path.Combine(AppContext.BaseDirectory, "Resources", "Models", "silero_vad.onnx");
+            if (File.Exists(vadPath))
+            {
+                _voiceActivityDetector = new SileroVad(vadPath);
+                _remoteVoiceActivityDetector = new SileroVad(vadPath);
+            }
+            else
+                InitError += "Silero voice detector model was not found. ";
+        }
+        catch (Exception ex)
+        {
+            InitError += $"Silero voice detector failed: {ex.Message}. ";
         }
         catch (Exception ex)
         {
@@ -310,6 +329,7 @@ public class SpeechEngine : IDisposable
         _silenceBucketCount = 0;
         _voiceBucketCount = 0;
         _voiceDetected = false;
+        _voiceActivityDetector?.Reset();
         _logThrottle = 0;
 
         // Audio buffer to store PCM data
@@ -404,11 +424,13 @@ public class SpeechEngine : IDisposable
         // Volume meter uses peak
         VolumeLevelChanged?.Invoke(peak * 100);
 
-        // Voice detection: use RMS which is much more reliable than peak
-        // RMS of 0.01-0.05 is typical quiet speech, 0.05+ is normal speech.
-        // Keep the gate modest so short/quiet phrases do not sit in the buffer until the next utterance.
+        // Neural VAD distinguishes human speech from steady AC, typing, footsteps,
+        // and most animal/mechanical sounds. RMS remains only as a fallback.
+        var speechProbability = _voiceActivityDetector?.ProcessPcm16(e.Buffer, e.BytesRecorded) ?? -1f;
         var voiceThreshold = Math.Max(0.004f, NoiseGate / 5000f);
-        bool isVoice = rmsNorm > voiceThreshold;
+        bool isVoice = speechProbability >= 0
+            ? speechProbability >= 0.55f
+            : rmsNorm > voiceThreshold;
 
         // Log audio levels periodically (every 20 chunks = ~2 seconds)
         _logThrottle++;
@@ -448,6 +470,51 @@ public class SpeechEngine : IDisposable
                 ? Math.Min(configured, SHORT_UTTERANCE_SILENCE_BUCKETS)
                 : configured;
         }
+    }
+
+    public async Task<bool> ContainsSpeechWavAsync(Stream stream, CancellationToken ct)
+    {
+        if (_remoteVoiceActivityDetector == null)
+            return true;
+
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory, ct);
+        var wav = memory.ToArray();
+        var dataOffset = FindWavDataOffset(wav);
+        if (dataOffset < 0 || dataOffset >= wav.Length)
+            return false;
+
+        lock (_remoteVadLock)
+        {
+            _remoteVoiceActivityDetector.Reset();
+            var speechFrames = 0;
+            const int bytesPerFrame = SileroVad.FrameSamples * 2;
+            for (var offset = dataOffset; offset + bytesPerFrame <= wav.Length; offset += bytesPerFrame)
+            {
+                var frame = new byte[bytesPerFrame];
+                Buffer.BlockCopy(wav, offset, frame, 0, bytesPerFrame);
+                if (_remoteVoiceActivityDetector.ProcessPcm16(frame, frame.Length) >= 0.55f)
+                {
+                    speechFrames++;
+                    if (speechFrames >= 3)
+                        return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private static int FindWavDataOffset(byte[] wav)
+    {
+        for (var index = 12; index + 8 <= wav.Length;)
+        {
+            var chunkSize = BitConverter.ToInt32(wav, index + 4);
+            if (wav[index] == (byte)'d' && wav[index + 1] == (byte)'a' &&
+                wav[index + 2] == (byte)'t' && wav[index + 3] == (byte)'a')
+                return index + 8;
+            index += 8 + Math.Max(0, chunkSize);
+        }
+        return -1;
     }
 
     private void StopRecordingAndProcess()
@@ -1521,6 +1588,8 @@ public class SpeechEngine : IDisposable
         _waveIn?.Dispose();
         _whisperProcessor?.Dispose();
         _whisperFactory?.Dispose();
+        _voiceActivityDetector?.Dispose();
+        _remoteVoiceActivityDetector?.Dispose();
         _listenCts?.Dispose();
     }
 }

@@ -1,0 +1,29 @@
+name: Build Windows client
+
+on:
+  push:
+    branches:
+      - codex/ios-native-client
+    paths:
+      - "**/*.cs"
+      - "VoiceChatbot.csproj"
+      - "Resources/Models/**"
+      - ".github/workflows/windows-build.yml"
+  pull_request:
+    paths:
+      - "**/*.cs"
+      - "VoiceChatbot.csproj"
+      - "Resources/Models/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore
+      - run: dotnet build --configuration Release --no-restore

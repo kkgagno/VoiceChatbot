@@ -24,6 +24,7 @@ namespace VoiceChatbot;
 public sealed class PhoneRemoteServer : IAsyncDisposable
 {
     private readonly Func<Stream, CancellationToken, Task<string>> _transcribeAsync;
+    private readonly Func<Stream, CancellationToken, Task<bool>> _detectSpeechAsync;
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
@@ -36,11 +37,13 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
     public PhoneRemoteServer(
         Func<Stream, CancellationToken, Task<string>> transcribeAsync,
+        Func<Stream, CancellationToken, Task<bool>> detectSpeechAsync,
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
     {
         _transcribeAsync = transcribeAsync;
+        _detectSpeechAsync = detectSpeechAsync;
         _chatAsync = chatAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
@@ -135,6 +138,20 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             {
                 transcript = transcript.Trim()
             });
+        });
+
+        app.MapPost("/api/vad", async (HttpRequest request, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request))
+                return Results.Unauthorized();
+            if (!request.HasFormContentType)
+                return Results.BadRequest(new { error = "Expected form data." });
+            var form = await request.ReadFormAsync(ct);
+            var audio = form.Files.GetFile("audio");
+            if (audio == null || audio.Length == 0)
+                return Results.Json(new { speech = false });
+            await using var stream = audio.OpenReadStream();
+            return Results.Json(new { speech = await _detectSpeechAsync(stream, ct) });
         });
 
         app.MapPost("/api/respond", async (PhoneRemoteTextRequest request, HttpRequest httpRequest, CancellationToken ct) =>
@@ -666,6 +683,7 @@ let meetingRecording = false, meetingChunks = [], meetingBlob = null, meetingSta
 let livePlaybackSource = null;
 let livePlayer, liveAudioUnlocked = false;
 let liveMode = false, liveSending = false, liveArmed = false, liveSpeechStarted = false;
+let liveSpeechConfirmed = false, liveVadPending = false, liveVadLastCheck = 0, liveCandidateId = 0;
 let longTalkMode = false;
 let liveSilenceMs = 0, liveVoiceMs = 0, liveLastTick = 0;
 const liveStartThreshold = 0.012;
@@ -1217,6 +1235,10 @@ function handleLiveAudio(input) {
       clearSpeechChunks();
       recording = true;
       liveSpeechStarted = true;
+      liveSpeechConfirmed = false;
+      liveVadPending = false;
+      liveVadLastCheck = 0;
+      liveCandidateId++;
       liveSilenceMs = 0;
       liveVoiceMs = 0;
       statusEl.textContent = 'Live: heard you';
@@ -1232,6 +1254,10 @@ function handleLiveAudio(input) {
   }
 
   const clipMs = recordedSamples / audioContext.sampleRate * 1000;
+  if (!liveSpeechConfirmed && !liveVadPending && clipMs >= 800 && now - liveVadLastCheck >= 700) {
+    liveVadLastCheck = now;
+    confirmLiveSpeech(liveCandidateId, clipMs);
+  }
   if (liveVoiceMs < liveMinVoiceMs && liveSilenceMs >= noiseResetSilenceMs) {
     clearSpeechChunks();
     recording = false;
@@ -1252,8 +1278,42 @@ function handleLiveAudio(input) {
       ? 'Long Talk reached its 20-minute safety limit. Sending what was recorded.'
       : 'Live speech reached its 5-minute safety limit. Sending what was recorded.');
     finishLiveUtterance();
-  } else if (liveVoiceMs >= liveMinVoiceMs && liveSilenceMs >= silenceLimit) {
+  } else if (liveSpeechConfirmed && liveVoiceMs >= liveMinVoiceMs && liveSilenceMs >= silenceLimit) {
     finishLiveUtterance();
+  }
+}
+
+async function confirmLiveSpeech(candidateId, clipMs) {
+  liveVadPending = true;
+  try {
+    const wav = encodeWav(chunks.slice(), audioContext.sampleRate);
+    const form = new FormData();
+    form.append('audio', wav, 'vad.wav');
+    const response = await fetch('/api/vad', {
+      method: 'POST',
+      headers: { 'X-Phone-Remote-Pin': pin.value },
+      body: form
+    });
+    if (!response.ok) throw new Error('VAD error ' + response.status);
+    const result = await response.json();
+    if (candidateId !== liveCandidateId || !liveSpeechStarted) return;
+    if (result.speech) {
+      liveSpeechConfirmed = true;
+      statusEl.textContent = 'Live: heard speech';
+    } else if (clipMs >= 1200) {
+      clearSpeechChunks();
+      recording = false;
+      liveSpeechStarted = false;
+      liveSilenceMs = 0;
+      liveVoiceMs = 0;
+      liveLastTick = 0;
+      statusEl.textContent = 'Live: listening';
+    }
+  } catch {
+    // If VAD is unavailable, preserve the old behavior rather than breaking voice input.
+    liveSpeechConfirmed = true;
+  } finally {
+    liveVadPending = false;
   }
 }
 

@@ -1,6 +1,7 @@
 import AVFAudio
 import Foundation
 import MediaPlayer
+import SoundAnalysis
 
 @MainActor
 final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
@@ -14,6 +15,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private var player: AVAudioPlayer?
     private var isPaused = false
     private var inputTapInstalled = false
+    private let soundClassifier = SystemSpeechClassifier()
     private lazy var speechDetector = BackgroundSpeechDetector { [weak self] data in
         Task { @MainActor in
             self?.onSpeechSegment?(data)
@@ -35,13 +37,18 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try configureSession()
 
         let input = engine.inputNode
+        let detector = speechDetector
+        try soundClassifier.start(format: input.outputFormat(forBus: 0)) { confidence in
+            detector.updateSpeechConfidence(confidence)
+        }
         speechDetector.resume()
         guard !engine.isRunning else { return }
 
         removeInputTap()
         engine.reset()
-        let detector = speechDetector
+        let classifier = soundClassifier
         input.installTap(onBus: 0, bufferSize: 2_048, format: nil) { buffer, _ in
+            classifier.analyze(buffer)
             guard let channel = buffer.floatChannelData?.pointee else { return }
             let values = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             detector.consume(values, sampleRate: buffer.format.sampleRate)
@@ -110,6 +117,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     private func stopEngine() {
+        soundClassifier.stop()
         removeInputTap()
         if engine.isRunning {
             engine.stop()
@@ -178,6 +186,68 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 }
 
+private final class SystemSpeechClassifier: NSObject, SNResultsObserving, @unchecked Sendable {
+    private let lock = NSLock()
+    private var analyzer: SNAudioStreamAnalyzer?
+    private var framePosition: AVAudioFramePosition = 0
+    private var onConfidence: (@Sendable (Float) -> Void)?
+
+    func start(
+        format: AVAudioFormat,
+        onConfidence: @escaping @Sendable (Float) -> Void
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        analyzer?.removeAllRequests()
+        let analyzer = SNAudioStreamAnalyzer(format: format)
+        let request = try SNClassifySoundRequest(classifierIdentifier: .version1)
+        try analyzer.add(request, withObserver: self)
+        self.analyzer = analyzer
+        self.framePosition = 0
+        self.onConfidence = onConfidence
+    }
+
+    func analyze(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        guard let analyzer else {
+            lock.unlock()
+            return
+        }
+        let position = framePosition
+        framePosition += AVAudioFramePosition(buffer.frameLength)
+        analyzer.analyze(buffer, atAudioFramePosition: position)
+        lock.unlock()
+    }
+
+    func stop() {
+        lock.lock()
+        analyzer?.removeAllRequests()
+        analyzer = nil
+        framePosition = 0
+        onConfidence = nil
+        lock.unlock()
+    }
+
+    func request(_ request: SNRequest, didProduce result: SNResult) {
+        guard let result = result as? SNClassificationResult else { return }
+        let confidence = result.classifications.reduce(Float.zero) { current, classification in
+            let identifier = classification.identifier.lowercased()
+            let isSpeech = identifier.contains("speech")
+                || identifier.contains("conversation")
+                || identifier.contains("narration")
+                || identifier.contains("talking")
+            return isSpeech ? max(current, Float(classification.confidence)) : current
+        }
+        lock.lock()
+        let callback = onConfidence
+        lock.unlock()
+        callback?(confidence)
+    }
+
+    func request(_ request: SNRequest, didFailWithError error: Error) {}
+    func requestDidComplete(_ request: SNRequest) {}
+}
+
 private final class BackgroundSpeechDetector: @unchecked Sendable {
     private let queue = DispatchQueue(
         label: "com.keithgagnon.VoiceChatbot.speech-detector",
@@ -191,10 +261,11 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
     private var heardSpeech = false
     private var silenceFrames = 0
     private var suspended = true
+    private var speechConfidence: Float = 0
 
     private let startThreshold: Float = 0.014
     private let stopThreshold: Float = 0.009
-    private let preRollSeconds = 0.65
+    private let preRollSeconds = 1.5
     private let silenceSeconds = 2.4
     private let minimumSpeechSeconds = 0.35
     private let maximumSegmentSeconds = 300.0
@@ -225,7 +296,7 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
 
             if !heardSpeech {
                 appendToPreRoll(buffer)
-                guard rms >= startThreshold else { return }
+                guard rms >= startThreshold, speechConfidence >= 0.25 else { return }
                 heardSpeech = true
                 samples = preRollSamples
                 preRollSamples.removeAll(keepingCapacity: true)
@@ -233,13 +304,20 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
                 samples.append(contentsOf: buffer)
             }
 
-            silenceFrames = rms < stopThreshold ? silenceFrames + buffer.count : 0
+            let containsSpeech = speechConfidence >= 0.18 && rms >= stopThreshold
+            silenceFrames = containsSpeech ? 0 : silenceFrames + buffer.count
             let recordedSeconds = Double(samples.count) / sampleRate
             let silentSeconds = Double(silenceFrames) / sampleRate
             if recordedSeconds >= maximumSegmentSeconds ||
                 (recordedSeconds >= minimumSpeechSeconds && silentSeconds >= silenceSeconds) {
                 finishSegment()
             }
+        }
+    }
+
+    func updateSpeechConfidence(_ confidence: Float) {
+        queue.async { [self] in
+            speechConfidence = confidence
         }
     }
 
@@ -264,6 +342,7 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
         preRollSamples.removeAll(keepingCapacity: keepingCapacity)
         heardSpeech = false
         silenceFrames = 0
+        speechConfidence = 0
     }
 }
 
