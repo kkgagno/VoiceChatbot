@@ -48,8 +48,11 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
         let input = engine.inputNode
         let detector = speechDetector
-        speechDetector.resume()
-        guard !engine.isRunning else { return }
+        detector.resume()
+        if engine.isRunning {
+            updateNowPlaying(active: true)
+            return
+        }
 
         removeInputTap()
         engine.reset()
@@ -105,8 +108,13 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor [weak self] in
-            self?.player = nil
-            self?.onPlaybackFinished?()
+            guard let self else { return }
+            self.player = nil
+            if !self.isPaused, self.engine.isRunning {
+                self.speechDetector.resume()
+                self.updateNowPlaying(active: true)
+            }
+            self.onPlaybackFinished?()
         }
     }
 
