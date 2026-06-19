@@ -104,8 +104,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
         let session = AVAudioSession.sharedInstance()
-        usingSplitPlaybackSession =
-            UIDevice.current.userInterfaceIdiom == .pad && !isApplicationBackgrounded
+        usingSplitPlaybackSession = false
         if usingSplitPlaybackSession {
             stopEngine()
             try? engine.inputNode.setVoiceProcessingEnabled(false)
@@ -162,6 +161,13 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     }
 
     private func enableVoiceProcessingIfAvailable() {
+        // Voice Processing I/O is reliable on iPhone, but several iPad routes
+        // fail or stop after lock/playback transitions. iPad still uses PC
+        // Silero VAD, so keep its Core Audio graph simple and continuous.
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            voiceProcessingEnabled = false
+            return
+        }
         guard !voiceProcessingEnabled else { return }
         let input = engine.inputNode
         do {
