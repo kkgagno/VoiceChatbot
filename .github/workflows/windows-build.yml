@@ -48,3 +48,15 @@ jobs:
               Write-Output "::error file=.github/workflows/windows-build.yml,line=1::$message"
             }
           }
+
+      - name: Create portable test build
+        run: >
+          dotnet publish --configuration Release --runtime win-x64
+          --self-contained true --no-restore
+          --output artifacts/VoiceChatbot-VAD-Test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceChatbot-VAD-Test-win-x64
+          path: artifacts/VoiceChatbot-VAD-Test
+          retention-days: 14
