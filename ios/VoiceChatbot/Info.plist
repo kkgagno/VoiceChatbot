@@ -12,6 +12,8 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Voice Chatbot uses the microphone during conversations and transcription sessions you start.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Voice Chatbot uses the camera only when you choose to take a photo for your PC model to examine.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.</string>
     <key>NSAppTransportSecurity</key>
@@ -31,4 +33,3 @@
     </array>
 </dict>
 </plist>
-

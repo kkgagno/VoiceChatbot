@@ -22,6 +22,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         NSMicrophoneUsageDescription: Voice Chatbot uses the microphone during conversations and transcription sessions you start.
+        NSCameraUsageDescription: Voice Chatbot uses the camera only when you choose to take a photo for your PC model to examine.
         NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

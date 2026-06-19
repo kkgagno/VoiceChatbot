@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct RootView: View {
@@ -32,6 +33,8 @@ private struct ConversationView: View {
     @FocusState private var messageFieldFocused: Bool
     @State private var selectedPhotos = [PhotosPickerItem]()
     @State private var importingDocuments = false
+    @State private var showingAttachmentOptions = false
+    @State private var showingCamera = false
 
     var body: some View {
         ZStack {
@@ -54,7 +57,6 @@ private struct ConversationView: View {
                     .scrollDismissesKeyboard(.interactively)
                 }
 
-                composer
             }
         }
         .navigationTitle("Voice Chatbot")
@@ -72,8 +74,11 @@ private struct ConversationView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if model.isConversationActive {
-                ActiveSessionBar(model: model)
+            VStack(spacing: 0) {
+                if model.isConversationActive {
+                    ActiveSessionBar(model: model)
+                }
+                composer
             }
         }
         .fileImporter(
@@ -85,6 +90,12 @@ private struct ConversationView: View {
         .onChange(of: selectedPhotos) { _, items in
             guard !items.isEmpty else { return }
             Task { await importPhotos(items) }
+        }
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraPicker(isPresented: $showingCamera) { image in
+                addJPEG(image, name: "Camera-\(UUID().uuidString).jpg")
+            }
+            .ignoresSafeArea()
         }
     }
 
@@ -126,26 +137,46 @@ private struct ConversationView: View {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
-                Menu {
+            if showingAttachmentOptions {
+                HStack(spacing: 12) {
                     PhotosPicker(
                         selection: $selectedPhotos,
                         maxSelectionCount: 8,
                         matching: .images
                     ) {
-                        Label("Photo Library", systemImage: "photo.on.rectangle")
+                        AttachmentOptionLabel(title: "Photos", systemImage: "photo.on.rectangle")
                     }
 
                     Button {
+                        messageFieldFocused = false
+                        showingCamera = true
+                    } label: {
+                        AttachmentOptionLabel(title: "Camera", systemImage: "camera")
+                    }
+                    .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+
+                    Button {
+                        messageFieldFocused = false
                         importingDocuments = true
                     } label: {
-                        Label("Choose Documents", systemImage: "doc")
+                        AttachmentOptionLabel(title: "Files", systemImage: "doc")
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                Button {
+                    messageFieldFocused = false
+                    withAnimation(.snappy) {
+                        showingAttachmentOptions.toggle()
                     }
                 } label: {
                     Image(systemName: "paperclip")
                         .font(.headline)
                         .frame(width: 44, height: 44)
                         .background(.thinMaterial, in: Circle())
+                        .rotationEffect(.degrees(showingAttachmentOptions ? 45 : 0))
                 }
                 .accessibilityLabel("Attach photos or documents")
 
@@ -179,7 +210,10 @@ private struct ConversationView: View {
                 .opacity(canSend ? 1 : 0.45)
             }
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.regularMaterial)
     }
 
     private var canSend: Bool {
@@ -193,6 +227,7 @@ private struct ConversationView: View {
     }()
 
     private func importDocuments(_ result: Result<[URL], Error>) {
+        showingAttachmentOptions = false
         guard case .success(let urls) = result else { return }
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
@@ -222,20 +257,53 @@ private struct ConversationView: View {
         for (index, item) in items.enumerated() {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { continue }
-                let type = item.supportedContentTypes.first ?? .jpeg
-                let fileExtension = type.preferredFilenameExtension ?? "jpg"
-                model.addAttachment(
-                    name: "Photo-\(index + 1).\(fileExtension)",
-                    mimeType: type.preferredMIMEType ?? "image/jpeg",
-                    data: data,
-                    kind: .image
-                )
+                guard let image = UIImage(data: data) else {
+                    throw PhotoImportError.couldNotDecode
+                }
+                addJPEG(image, name: "Photo-\(index + 1).jpg")
             } catch {
                 model.messages.append(
                     ChatEntry(role: .system, text: "A selected photo could not be loaded: \(error.localizedDescription)")
                 )
             }
         }
+    }
+
+    private func addJPEG(_ image: UIImage, name: String) {
+        guard let data = image.jpegData(compressionQuality: 0.88) else {
+            model.messages.append(
+                ChatEntry(role: .system, text: "The selected photo could not be converted for upload.")
+            )
+            return
+        }
+        model.addAttachment(
+            name: name.replacingOccurrences(of: ":", with: "-"),
+            mimeType: "image/jpeg",
+            data: data,
+            kind: .image
+        )
+        showingAttachmentOptions = false
+    }
+}
+
+private enum PhotoImportError: LocalizedError {
+    case couldNotDecode
+
+    var errorDescription: String? {
+        "The selected image format could not be decoded."
+    }
+}
+
+private struct AttachmentOptionLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
