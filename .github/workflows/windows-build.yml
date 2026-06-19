@@ -55,6 +55,14 @@ jobs:
           --self-contained true
           --output artifacts/VoiceChatbot-VAD-Test
 
+      - name: Bundle YouTube media tools
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          ./scripts/Download-MediaTools.ps1
+          -OutputDirectory artifacts/VoiceChatbot-VAD-Test/Tools/Media
+
       - name: Run Silero model
         shell: pwsh
         run: |
