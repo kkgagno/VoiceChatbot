@@ -21,6 +21,7 @@ final class AppModel {
     var pendingAttachments = [PendingAttachment]()
     var keepDocumentsActive = false
     var activeDocumentCount = 0
+    var playingMessageID: UUID?
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -236,6 +237,28 @@ final class AppModel {
         pendingAttachments.removeAll { $0.id == id }
     }
 
+    func playResponse(id: UUID) async {
+        guard let index = messages.firstIndex(where: { $0.id == id }),
+              messages[index].role == .assistant
+        else { return }
+
+        playingMessageID = id
+        defer { playingMessageID = nil }
+        do {
+            let audioPath: String
+            if let existing = messages[index].audioURL, !existing.isEmpty {
+                audioPath = existing
+            } else {
+                audioPath = try await api.speak(messages[index].text)
+                messages[index].audioURL = audioPath
+            }
+            let data = try await api.audioData(relativePath: audioPath)
+            try audio.play(data)
+        } catch {
+            fail(error)
+        }
+    }
+
     private func process(wav: Data) async {
         guard isConversationActive, !processingSegment else { return }
         processingSegment = true
@@ -297,7 +320,9 @@ final class AppModel {
                 )
             }
             activeDocumentCount = result.activeDocumentCount
-            messages.append(ChatEntry(role: .assistant, text: result.response))
+            messages.append(
+                ChatEntry(role: .assistant, text: result.response, audioURL: result.audioURL)
+            )
             if isConversationActive, let audioPath = result.audioURL, !audioPath.isEmpty {
                 conversationState = .speaking
                 let data = try await api.audioData(relativePath: audioPath)

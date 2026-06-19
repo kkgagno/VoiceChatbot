@@ -103,6 +103,7 @@ struct ChatEntry: Identifiable, Equatable {
     let id = UUID()
     let role: Role
     let text: String
+    var audioURL: String? = nil
 }
 
 enum ConversationState: Equatable {

@@ -144,6 +144,14 @@ actor VoiceChatAPI {
         return try await perform(request)
     }
 
+    func speak(_ text: String) async throws -> String {
+        var request = try makeRequest(path: "/api/speak", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(SpeakRequest(text: text))
+        let result: SpeakResponse = try await perform(request)
+        return result.audioURL
+    }
+
     func audioData(relativePath: String) async throws -> Data {
         let request = try makeRequest(path: relativePath, method: "GET")
         let (data, response) = try await session.data(for: request)
@@ -193,6 +201,18 @@ private struct TextRequest: Encodable {
 
 private struct SpeechDetectionResponse: Decodable {
     let speech: Bool
+}
+
+private struct SpeakRequest: Encodable {
+    let text: String
+}
+
+private struct SpeakResponse: Decodable {
+    let audioURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case audioURL = "audioUrl"
+    }
 }
 
 private extension Data {

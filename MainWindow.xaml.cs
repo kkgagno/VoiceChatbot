@@ -120,6 +120,14 @@ public partial class MainWindow : Window
             (stream, ct) => _speech.ContainsSpeechWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
+            async (text, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                var speechText = CleanSpeechText(text);
+                if (string.IsNullOrWhiteSpace(speechText))
+                    return null;
+                return await _speech.CreateSpeechAudioFileAsync(speechText, GetAssistantAudioDirectory());
+            },
             GetPhoneRemoteModelState);
         _faceIdentityManager = new FaceIdentityManager(
             FaceServiceFactory.CreateProfileStore(_settings.FaceFeatures.ModelOptions),

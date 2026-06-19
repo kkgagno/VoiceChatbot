@@ -27,6 +27,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<Stream, CancellationToken, Task<bool>> _detectSpeechAsync;
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
+    private readonly Func<string, CancellationToken, Task<string?>> _speakAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
     private readonly ConcurrentDictionary<string, string> _audioFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _imageFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -40,12 +41,14 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<Stream, CancellationToken, Task<bool>> detectSpeechAsync,
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
+        Func<string, CancellationToken, Task<string?>> speakAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
     {
         _transcribeAsync = transcribeAsync;
         _detectSpeechAsync = detectSpeechAsync;
         _chatAsync = chatAsync;
         _extractDocumentAsync = extractDocumentAsync;
+        _speakAsync = speakAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
     }
 
@@ -166,6 +169,26 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                 request.Text.Trim(),
                 keepDocumentsActive: request.KeepDocumentsActive), ct);
             return Results.Json(response);
+        });
+
+        app.MapPost("/api/speak", async (PhoneRemoteSpeakRequest request, HttpRequest httpRequest, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(httpRequest))
+                return Results.Unauthorized();
+
+            var text = request.Text?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(text))
+                return Results.BadRequest(new { error = "No text was provided." });
+            if (text.Length > 30000)
+                return Results.BadRequest(new { error = "Text is too long to speak." });
+
+            var audioPath = await _speakAsync(text, ct);
+            if (string.IsNullOrWhiteSpace(audioPath) || !File.Exists(audioPath))
+                return Results.Problem("Speech audio could not be created.");
+
+            var id = Guid.NewGuid().ToString("N");
+            _audioFiles[id] = audioPath;
+            return Results.Json(new { audioUrl = $"/audio/{id}" });
         });
 
         app.MapPost("/api/message", async (HttpRequest request, CancellationToken ct) =>
@@ -1445,6 +1468,7 @@ public sealed record PhoneRemoteAssistantResult(
 public sealed record PhoneRemoteModelState(string Provider, string Model, string Endpoint);
 
 public sealed record PhoneRemoteTextRequest(string Text, bool KeepDocumentsActive = false);
+public sealed record PhoneRemoteSpeakRequest(string Text);
 
 public sealed record PhoneRemoteDocument(string FileName, DocumentTextResult Document);
 

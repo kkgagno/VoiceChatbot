@@ -55,7 +55,9 @@ private struct ConversationView: View {
                         ScrollViewReader { proxy in
                             ScrollView {
                                 LazyVStack(spacing: 14) {
-                                    ForEach(model.messages) { ChatBubble(entry: $0) }
+                                    ForEach(model.messages) {
+                                        ChatBubble(entry: $0, model: model)
+                                    }
                                     Color.clear
                                         .frame(height: composerHeight + 12)
                                         .id(bottomAnchor)
@@ -571,18 +573,41 @@ private struct SessionToolbarButton: View {
 
 private struct ChatBubble: View {
     let entry: ChatEntry
+    @Bindable var model: AppModel
 
     var body: some View {
         HStack {
             if entry.role == .user { Spacer(minLength: 52) }
-            Text(entry.text)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 11)
-                .foregroundStyle(entry.role == .user ? .black : .primary)
-                .background(
-                    entry.role == .user ? Color.cyan : Color.secondary.opacity(0.16),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
+            VStack(alignment: .leading, spacing: 8) {
+                Text(entry.text)
+                if entry.role == .assistant {
+                    HStack(spacing: 16) {
+                        Button {
+                            Task { await model.playResponse(id: entry.id) }
+                        } label: {
+                            if model.playingMessageID == entry.id {
+                                ProgressView()
+                            } else {
+                                Label("Play", systemImage: "play.fill")
+                            }
+                        }
+                        .disabled(model.playingMessageID != nil)
+
+                        ShareLink(item: entry.text) {
+                            Label("Save", systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.cyan)
+                }
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
+            .foregroundStyle(entry.role == .user ? .black : .primary)
+            .background(
+                entry.role == .user ? Color.cyan : Color.secondary.opacity(0.16),
+                in: RoundedRectangle(cornerRadius: 18)
+            )
             if entry.role != .user { Spacer(minLength: 52) }
         }
     }
