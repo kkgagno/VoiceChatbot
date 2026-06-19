@@ -35,9 +35,12 @@ private struct ConversationView: View {
     @State private var importingDocuments = false
     @State private var showingAttachmentOptions = false
     @State private var showingCamera = false
+    @State private var composerHeight: CGFloat = 76
+
+    private let bottomAnchor = "conversation-bottom"
 
     var body: some View {
-        KeyboardPinnedContainer {
+        KeyboardPinnedContainer(accessoryHeight: $composerHeight) {
             ZStack {
                 AppBackground()
 
@@ -49,13 +52,29 @@ private struct ConversationView: View {
                         EmptyConversation(model: model)
                         Spacer()
                     } else {
-                        ScrollView {
-                            LazyVStack(spacing: 14) {
-                                ForEach(model.messages) { ChatBubble(entry: $0) }
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(spacing: 14) {
+                                    ForEach(model.messages) { ChatBubble(entry: $0) }
+                                    Color.clear
+                                        .frame(height: composerHeight + 12)
+                                        .id(bottomAnchor)
+                                }
+                                .padding()
                             }
-                            .padding()
+                            .scrollDismissesKeyboard(.interactively)
+                            .onAppear {
+                                proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                            }
+                            .onChange(of: model.messages.count) {
+                                withAnimation(.easeOut(duration: 0.25)) {
+                                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                                }
+                            }
+                            .onChange(of: composerHeight) {
+                                proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                            }
                         }
-                        .scrollDismissesKeyboard(.interactively)
                     }
                 }
             }

@@ -2,31 +2,43 @@ import SwiftUI
 import UIKit
 
 struct KeyboardPinnedContainer<Content: View, Accessory: View>: UIViewControllerRepresentable {
+    @Binding private var accessoryHeight: CGFloat
     private let content: Content
     private let accessory: Accessory
 
     init(
+        accessoryHeight: Binding<CGFloat>,
         @ViewBuilder content: () -> Content,
         @ViewBuilder accessory: () -> Accessory
     ) {
+        _accessoryHeight = accessoryHeight
         self.content = content()
         self.accessory = accessory()
     }
 
     func makeUIViewController(context: Context) -> KeyboardPinnedViewController {
         let controller = KeyboardPinnedViewController()
+        controller.onAccessoryHeightChange = { height in
+            accessoryHeight = height
+        }
         controller.update(content: AnyView(content), accessory: AnyView(accessory))
         return controller
     }
 
     func updateUIViewController(_ controller: KeyboardPinnedViewController, context: Context) {
+        controller.onAccessoryHeightChange = { height in
+            accessoryHeight = height
+        }
         controller.update(content: AnyView(content), accessory: AnyView(accessory))
     }
 }
 
 final class KeyboardPinnedViewController: UIViewController {
+    var onAccessoryHeightChange: ((CGFloat) -> Void)?
+
     private let contentHost = UIHostingController(rootView: AnyView(EmptyView()))
     private let accessoryHost = UIHostingController(rootView: AnyView(EmptyView()))
+    private var lastAccessoryHeight: CGFloat = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -64,5 +76,16 @@ final class KeyboardPinnedViewController: UIViewController {
         contentHost.rootView = content
         accessoryHost.rootView = accessory
         accessoryHost.view.invalidateIntrinsicContentSize()
+        view.setNeedsLayout()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let height = accessoryHost.view.bounds.height
+        guard abs(height - lastAccessoryHeight) > 0.5 else { return }
+        lastAccessoryHeight = height
+        DispatchQueue.main.async { [weak self] in
+            self?.onAccessoryHeightChange?(height)
+        }
     }
 }
