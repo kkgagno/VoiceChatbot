@@ -101,7 +101,21 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    func stopPlayback(notifyFinished: Bool = true) {
+        guard player != nil else { return }
+        player?.stop()
+        player = nil
+        if usingSplitPlaybackSession && !isApplicationBackgrounded {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        usingSplitPlaybackSession = false
+        if notifyFinished {
+            onPlaybackFinished?()
+        }
+    }
+
     func play(_ data: Data) throws {
+        stopPlayback(notifyFinished: false)
         speechDetector.suspendAndReset()
         let session = AVAudioSession.sharedInstance()
         usingSplitPlaybackSession = !engine.isRunning

@@ -612,12 +612,11 @@ private struct ChatBubble: View {
                             Task { await model.playResponse(id: entry.id) }
                         } label: {
                             if model.playingMessageID == entry.id {
-                                ProgressView()
+                                Label("Stop", systemImage: "stop.fill")
                             } else {
                                 Label("Play", systemImage: "play.fill")
                             }
                         }
-                        .disabled(model.playingMessageID != nil)
 
                         ShareLink(item: entry.text) {
                             Label("Save", systemImage: "square.and.arrow.down")

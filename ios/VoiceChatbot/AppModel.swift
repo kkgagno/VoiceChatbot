@@ -55,7 +55,9 @@ final class AppModel {
             return (try? await self.api.detectSpeech(wav: wav)) ?? true
         }
         audio.onPlaybackFinished = { [weak self] in
-            guard let self, self.isConversationActive else { return }
+            guard let self else { return }
+            self.playingMessageID = nil
+            guard self.isConversationActive else { return }
             Task { @MainActor in
                 await self.restartListeningAfterPlayback()
             }
@@ -240,12 +242,20 @@ final class AppModel {
     }
 
     func playResponse(id: UUID) async {
+        if playingMessageID == id {
+            audio.stopPlayback()
+            playingMessageID = nil
+            return
+        }
+
         guard let index = messages.firstIndex(where: { $0.id == id }),
               messages[index].role == .assistant
         else { return }
 
+        if playingMessageID != nil {
+            audio.stopPlayback(notifyFinished: false)
+        }
         playingMessageID = id
-        defer { playingMessageID = nil }
         do {
             let audioPath: String
             if let existing = messages[index].audioURL, !existing.isEmpty {
@@ -255,8 +265,10 @@ final class AppModel {
                 messages[index].audioURL = audioPath
             }
             let data = try await api.audioData(relativePath: audioPath)
+            guard playingMessageID == id else { return }
             try audio.play(data)
         } catch {
+            playingMessageID = nil
             fail(error)
         }
     }
