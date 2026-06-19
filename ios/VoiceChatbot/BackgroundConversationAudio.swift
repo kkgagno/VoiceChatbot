@@ -142,9 +142,11 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
+        let mode: AVAudioSession.Mode =
+            UIDevice.current.userInterfaceIdiom == .pad ? .videoChat : .default
         try session.setCategory(
             .playAndRecord,
-            mode: .default,
+            mode: mode,
             options: [.defaultToSpeaker, .allowBluetooth]
         )
         try session.setPreferredSampleRate(48_000)
@@ -339,7 +341,10 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
             guard !suspended, !buffer.isEmpty, sampleRate > 0 else { return }
             self.sampleRate = sampleRate
             let rms = sqrt(buffer.reduce(0) { $0 + $1 * $1 } / Float(buffer.count))
-            let startThreshold = max(0.009, noiseFloor * 2.4)
+            // This gate only decides when to ask Silero. Never let sustained
+            // room noise raise it high enough to make the detector permanently
+            // deaf; Silero remains the actual speech decision.
+            let startThreshold = min(0.018, max(0.007, noiseFloor * 1.8))
 
             if !heardSpeech {
                 appendToPreRoll(buffer)
@@ -362,7 +367,7 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
                 requestSpeechConfirmation()
             }
 
-            let stopThreshold = max(0.005, noiseFloor * 1.45)
+            let stopThreshold = min(0.012, max(0.004, noiseFloor * 1.25))
             let containsSpeech = speechConfirmed && rms >= stopThreshold
             silenceFrames = containsSpeech ? 0 : silenceFrames + buffer.count
             let silentSeconds = Double(silenceFrames) / sampleRate
