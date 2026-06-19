@@ -129,13 +129,6 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     let session = AVAudioSession.sharedInstance()
                     try? session.setActive(false, options: .notifyOthersOnDeactivation)
-                    try? await Task.sleep(for: .milliseconds(250))
-                    try? self.startListening()
-                } else if self.engine.isRunning {
-                    self.speechDetector.resume()
-                    self.updateNowPlaying(active: true)
-                } else {
-                    try? self.startListening()
                 }
             }
             self.onPlaybackFinished?()

@@ -50,11 +50,8 @@ final class AppModel {
         }
         audio.onPlaybackFinished = { [weak self] in
             guard let self, self.isConversationActive else { return }
-            do {
-                try self.audio.startListening()
-                self.conversationState = .listening
-            } catch {
-                self.fail(error)
+            Task { @MainActor in
+                await self.restartListeningAfterPlayback()
             }
         }
         audio.onRemotePause = { [weak self] in
@@ -174,6 +171,30 @@ final class AppModel {
         audio.stop()
         isConversationActive = false
         conversationState = .idle
+    }
+
+    private func restartListeningAfterPlayback() async {
+        // iPad needs time for the playback audio unit and route to fully release.
+        // Retrying also covers slower Bluetooth and external speaker transitions.
+        try? await Task.sleep(for: .milliseconds(400))
+        var lastError: Error?
+        for attempt in 0..<3 {
+            guard isConversationActive else { return }
+            do {
+                try audio.startListening()
+                conversationState = .listening
+                return
+            } catch {
+                lastError = error
+                if attempt < 2 {
+                    try? await Task.sleep(for: .milliseconds(400))
+                }
+            }
+        }
+
+        audio.stop()
+        isConversationActive = false
+        fail(lastError ?? AudioRestartError.failed)
     }
 
     func sendTypedMessage() async {
