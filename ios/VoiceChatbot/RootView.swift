@@ -24,6 +24,7 @@ struct RootView: View {
             .tabItem { Label("Connection", systemImage: "desktopcomputer") }
         }
         .tint(.cyan)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .task { await model.refreshStatus() }
     }
 }
@@ -70,7 +71,6 @@ private struct ConversationView: View {
                 .padding(.bottom, keyboardOverlap(in: geometry))
                 .animation(.easeOut(duration: 0.22), value: keyboardEndFrame)
             }
-            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .navigationTitle("Voice Chatbot")
         .navigationBarTitleDisplayMode(.inline)
@@ -78,12 +78,6 @@ private struct ConversationView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SessionToolbarButton(model: model, mode: .conversation)
-            }
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    messageFieldFocused = false
-                }
             }
         }
         .fileImporter(
