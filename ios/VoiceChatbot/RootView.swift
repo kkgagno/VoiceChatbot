@@ -35,29 +35,42 @@ private struct ConversationView: View {
     @State private var importingDocuments = false
     @State private var showingAttachmentOptions = false
     @State private var showingCamera = false
+    @State private var keyboardEndFrame: CGRect = .zero
 
     var body: some View {
-        ZStack {
-            AppBackground()
+        GeometryReader { geometry in
+            ZStack {
+                AppBackground()
 
-            VStack(spacing: 0) {
-                ConnectionBanner(model: model)
+                VStack(spacing: 0) {
+                    ConnectionBanner(model: model)
 
-                if model.messages.isEmpty {
-                    Spacer()
-                    EmptyConversation(model: model)
-                    Spacer()
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            ForEach(model.messages) { ChatBubble(entry: $0) }
+                    if model.messages.isEmpty {
+                        Spacer()
+                        EmptyConversation(model: model)
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 14) {
+                                ForEach(model.messages) { ChatBubble(entry: $0) }
+                            }
+                            .padding()
                         }
-                        .padding()
+                        .scrollDismissesKeyboard(.interactively)
                     }
-                    .scrollDismissesKeyboard(.interactively)
                 }
-
             }
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    if model.isConversationActive {
+                        ActiveSessionBar(model: model)
+                    }
+                    composer
+                }
+                .padding(.bottom, keyboardOverlap(in: geometry))
+                .animation(.easeOut(duration: 0.22), value: keyboardEndFrame)
+            }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .navigationTitle("Voice Chatbot")
         .navigationBarTitleDisplayMode(.inline)
@@ -71,14 +84,6 @@ private struct ConversationView: View {
                 Button("Done") {
                     messageFieldFocused = false
                 }
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 0) {
-                if model.isConversationActive {
-                    ActiveSessionBar(model: model)
-                }
-                composer
             }
         }
         .fileImporter(
@@ -96,6 +101,13 @@ private struct ConversationView: View {
                 addJPEG(image, name: "Camera-\(UUID().uuidString).jpg")
             }
             .ignoresSafeArea()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            guard let frame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            keyboardEndFrame = frame
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardEndFrame = .zero
         }
     }
 
@@ -286,6 +298,11 @@ private struct ConversationView: View {
         showingAttachmentOptions = false
     }
 
+    private func keyboardOverlap(in geometry: GeometryProxy) -> CGFloat {
+        guard keyboardEndFrame != .zero else { return 0 }
+        let localKeyboardFrame = geometry.frame(in: .global).intersection(keyboardEndFrame)
+        return max(0, localKeyboardFrame.height - geometry.safeAreaInsets.bottom)
+    }
 }
 
 private enum PhotoImportError: LocalizedError {
