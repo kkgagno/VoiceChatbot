@@ -81,6 +81,16 @@ actor VoiceChatAPI {
     }
 
     func transcribe(wav: Data) async throws -> String {
+        let result: TranscriptionResponse = try await uploadWav(wav, path: "/api/transcribe")
+        return result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func detectSpeech(wav: Data) async throws -> Bool {
+        let result: SpeechDetectionResponse = try await uploadWav(wav, path: "/api/vad")
+        return result.speech
+    }
+
+    private func uploadWav<T: Decodable>(_ wav: Data, path: String) async throws -> T {
         let boundary = UUID().uuidString
         var body = Data()
         body.append("--\(boundary)\r\n")
@@ -89,11 +99,10 @@ actor VoiceChatAPI {
         body.append(wav)
         body.append("\r\n--\(boundary)--\r\n")
 
-        var request = try makeRequest(path: "/api/transcribe", method: "POST")
+        var request = try makeRequest(path: path, method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let result: TranscriptionResponse = try await perform(request)
-        return result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try await perform(request)
     }
 
     func respond(to text: String) async throws -> AssistantResponse {
@@ -148,6 +157,10 @@ actor VoiceChatAPI {
 private struct TextRequest: Encodable {
     let text: String
     let keepDocumentsActive = false
+}
+
+private struct SpeechDetectionResponse: Decodable {
+    let speech: Bool
 }
 
 private extension Data {

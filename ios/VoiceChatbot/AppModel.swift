@@ -44,6 +44,10 @@ final class AppModel {
                 await self?.process(wav: wav)
             }
         }
+        audio.onSpeechCandidate = { [weak self] wav in
+            guard let self else { return false }
+            return (try? await self.api.detectSpeech(wav: wav)) ?? true
+        }
         audio.onPlaybackFinished = { [weak self] in
             guard let self, self.isConversationActive else { return }
             do {
