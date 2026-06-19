@@ -114,6 +114,10 @@ public class SpeechEngine : IDisposable
         {
             InitWhisper();
         }
+        catch (Exception ex)
+        {
+            InitError += $"Whisper init failed: {ex.Message}. ";
+        }
 
         try
         {
@@ -129,10 +133,6 @@ public class SpeechEngine : IDisposable
         catch (Exception ex)
         {
             InitError += $"Silero voice detector failed: {ex.Message}. ";
-        }
-        catch (Exception ex)
-        {
-            InitError += $"Whisper init failed: {ex.Message}. ";
         }
 
         // Init TTS voices - Kokoro voices (local, high quality)
