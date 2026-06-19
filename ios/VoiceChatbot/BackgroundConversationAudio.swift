@@ -1,6 +1,7 @@
 import AVFAudio
 import Foundation
 import MediaPlayer
+import UIKit
 
 @MainActor
 final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
@@ -37,6 +38,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         super.init()
         configureRemoteCommands()
         observeInterruptions()
+        observeRouteChanges()
     }
 
     func requestPermission() async -> Bool {
@@ -98,6 +100,8 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
+        let session = AVAudioSession.sharedInstance()
+        try session.overrideOutputAudioPort(.speaker)
         let audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer.delegate = self
         audioPlayer.volume = 1
@@ -112,9 +116,17 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.player = nil
-            if !self.isPaused, self.engine.isRunning {
-                self.speechDetector.resume()
-                self.updateNowPlaying(active: true)
+            if !self.isPaused {
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    self.stopEngine()
+                    try? await Task.sleep(for: .milliseconds(150))
+                    try? self.startListening()
+                } else if self.engine.isRunning {
+                    self.speechDetector.resume()
+                    self.updateNowPlaying(active: true)
+                } else {
+                    try? self.startListening()
+                }
             }
             self.onPlaybackFinished?()
         }
@@ -129,6 +141,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         )
         try session.setPreferredSampleRate(48_000)
         try session.setActive(true)
+        try session.overrideOutputAudioPort(.speaker)
     }
 
     private func stopEngine() {
@@ -176,6 +189,30 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
                 } else if type == .began {
                     self.stopEngine()
                 }
+            }
+        }
+    }
+
+    private func observeRouteChanges() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self, !self.isPaused, self.player == nil else { return }
+            let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            switch reason {
+            case .newDeviceAvailable, .oldDeviceUnavailable, .noSuitableRouteForCategory, .wakeFromSleep:
+                break
+            default:
+                return
+            }
+
+            Task { @MainActor in
+                self.stopEngine()
+                try? await Task.sleep(for: .milliseconds(150))
+                try? self.startListening()
             }
         }
     }
