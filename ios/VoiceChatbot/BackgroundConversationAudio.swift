@@ -17,6 +17,8 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private var isPaused = false
     private var inputTapInstalled = false
     private var voiceProcessingEnabled = false
+    private var isApplicationBackgrounded = false
+    private var usingSplitPlaybackSession = false
     private lazy var speechDetector = BackgroundSpeechDetector(
         onCandidate: { [weak self] data, completion in
             Task { @MainActor in
@@ -39,6 +41,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         configureRemoteCommands()
         observeInterruptions()
         observeRouteChanges()
+        observeApplicationLifecycle()
     }
 
     func requestPermission() async -> Bool {
@@ -101,7 +104,9 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
         let session = AVAudioSession.sharedInstance()
-        if UIDevice.current.userInterfaceIdiom == .pad {
+        usingSplitPlaybackSession =
+            UIDevice.current.userInterfaceIdiom == .pad && !isApplicationBackgrounded
+        if usingSplitPlaybackSession {
             stopEngine()
             try? engine.inputNode.setVoiceProcessingEnabled(false)
             voiceProcessingEnabled = false
@@ -126,11 +131,12 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             guard let self else { return }
             self.player = nil
             if !self.isPaused {
-                if UIDevice.current.userInterfaceIdiom == .pad {
+                if self.usingSplitPlaybackSession && !self.isApplicationBackgrounded {
                     let session = AVAudioSession.sharedInstance()
                     try? session.setActive(false, options: .notifyOthersOnDeactivation)
                 }
             }
+            self.usingSplitPlaybackSession = false
             self.onPlaybackFinished?()
         }
     }
@@ -202,7 +208,11 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let self, !self.isPaused, self.player == nil else { return }
+            guard let self,
+                  !self.isPaused,
+                  !self.isApplicationBackgrounded,
+                  self.player == nil
+            else { return }
             let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
             switch reason {
@@ -217,6 +227,24 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
                 try? await Task.sleep(for: .milliseconds(150))
                 try? self.startListening()
             }
+        }
+    }
+
+    private func observeApplicationLifecycle() {
+        isApplicationBackgrounded = UIApplication.shared.applicationState != .active
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.isApplicationBackgrounded = true
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.isApplicationBackgrounded = false
         }
     }
 
