@@ -15,6 +15,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private var player: AVAudioPlayer?
     private var isPaused = false
     private var inputTapInstalled = false
+    private var voiceProcessingEnabled = false
     private lazy var speechDetector = BackgroundSpeechDetector(
         onCandidate: { [weak self] data, completion in
             Task { @MainActor in
@@ -47,6 +48,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         try configureSession()
 
         let input = engine.inputNode
+        try enableVoiceProcessingIfAvailable()
         let detector = speechDetector
         detector.resume()
         if engine.isRunning {
@@ -135,6 +137,23 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             engine.stop()
         }
         engine.reset()
+    }
+
+    private func enableVoiceProcessingIfAvailable() {
+        guard !voiceProcessingEnabled else { return }
+        let input = engine.inputNode
+        let output = engine.outputNode
+        do {
+            try input.setVoiceProcessingEnabled(true)
+            try output.setVoiceProcessingEnabled(true)
+            voiceProcessingEnabled = true
+        } catch {
+            // Some Bluetooth and external audio routes do not support Apple's
+            // voice-processing unit. Continue with the native route there.
+            try? input.setVoiceProcessingEnabled(false)
+            try? output.setVoiceProcessingEnabled(false)
+            voiceProcessingEnabled = false
+        }
     }
 
     private func removeInputTap() {
