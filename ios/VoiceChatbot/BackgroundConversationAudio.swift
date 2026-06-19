@@ -306,9 +306,13 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
     private var speechConfirmed = false
     private var candidatePending = false
     private var candidateGeneration = 0
+    private var lastVadCheckSampleCount = 0
+    private var vadNonSpeechSeconds = 0.0
 
     private let preRollSeconds = 1.0
     private let silenceSeconds = 2.4
+    private let vadCheckIntervalSeconds = 0.6
+    private let vadWindowSeconds = 1.0
     private let minimumSpeechSeconds = 0.35
     private let maximumSegmentSeconds = 300.0
 
@@ -351,6 +355,8 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
                 speechConfirmed = false
                 candidatePending = false
                 candidateGeneration += 1
+                lastVadCheckSampleCount = 0
+                vadNonSpeechSeconds = 0
                 samples = preRollSamples
                 preRollSamples.removeAll(keepingCapacity: true)
             } else {
@@ -360,14 +366,16 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
             let recordedSeconds = Double(samples.count) / sampleRate
             if !speechConfirmed, !candidatePending, recordedSeconds >= 0.75 {
                 requestSpeechConfirmation()
+            } else if speechConfirmed,
+                      !candidatePending,
+                      Double(samples.count - lastVadCheckSampleCount) / sampleRate >= vadCheckIntervalSeconds {
+                requestContinuationCheck()
             }
 
-            let stopThreshold = max(0.005, noiseFloor * 1.45)
-            let containsSpeech = speechConfirmed && rms >= stopThreshold
-            silenceFrames = containsSpeech ? 0 : silenceFrames + buffer.count
-            let silentSeconds = Double(silenceFrames) / sampleRate
             if recordedSeconds >= maximumSegmentSeconds ||
-                (speechConfirmed && recordedSeconds >= minimumSpeechSeconds && silentSeconds >= silenceSeconds) {
+                (speechConfirmed &&
+                 recordedSeconds >= minimumSpeechSeconds &&
+                 vadNonSpeechSeconds >= silenceSeconds) {
                 finishSegment()
             }
         }
@@ -398,11 +406,52 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
                 if containsSpeech {
                     self.speechConfirmed = true
                     self.silenceFrames = 0
+                    self.lastVadCheckSampleCount = self.samples.count
+                    self.vadNonSpeechSeconds = 0
                 } else {
                     // Silero explicitly rejected this sound as non-speech.
                     // Drop it immediately instead of waiting for AC/typing to stop.
                     self.reset(keepingCapacity: true)
                     self.candidateGeneration += 1
+                }
+            }
+        }
+    }
+
+    private func requestContinuationCheck() {
+        candidatePending = true
+        lastVadCheckSampleCount = samples.count
+        let generation = candidateGeneration
+        let windowCount = max(1, Int(sampleRate * vadWindowSeconds))
+        let recentSamples = Array(samples.suffix(windowCount))
+        let candidate = WAVEncoder.encode(samples: recentSamples, sourceRate: sampleRate)
+
+        queue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self,
+                  generation == self.candidateGeneration,
+                  self.heardSpeech,
+                  self.speechConfirmed,
+                  self.candidatePending
+            else { return }
+            self.candidatePending = false
+        }
+
+        onCandidate(candidate) { [weak self] containsSpeech in
+            self?.queue.async { [weak self] in
+                guard let self,
+                      generation == self.candidateGeneration,
+                      self.heardSpeech,
+                      self.speechConfirmed
+                else { return }
+
+                self.candidatePending = false
+                if containsSpeech {
+                    self.vadNonSpeechSeconds = 0
+                } else {
+                    self.vadNonSpeechSeconds += self.vadCheckIntervalSeconds
+                    if self.vadNonSpeechSeconds >= self.silenceSeconds {
+                        self.finishSegment()
+                    }
                 }
             }
         }
@@ -431,6 +480,8 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
         silenceFrames = 0
         speechConfirmed = false
         candidatePending = false
+        lastVadCheckSampleCount = 0
+        vadNonSpeechSeconds = 0
     }
 }
 
