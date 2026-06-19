@@ -24,7 +24,6 @@ struct RootView: View {
             .tabItem { Label("Connection", systemImage: "desktopcomputer") }
         }
         .tint(.cyan)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .task { await model.refreshStatus() }
     }
 }
@@ -36,10 +35,9 @@ private struct ConversationView: View {
     @State private var importingDocuments = false
     @State private var showingAttachmentOptions = false
     @State private var showingCamera = false
-    @State private var keyboardEndFrame: CGRect = .zero
 
     var body: some View {
-        GeometryReader { geometry in
+        KeyboardPinnedContainer {
             ZStack {
                 AppBackground()
 
@@ -61,15 +59,12 @@ private struct ConversationView: View {
                     }
                 }
             }
-            .overlay(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    if model.isConversationActive {
-                        ActiveSessionBar(model: model)
-                    }
-                    composer
+        } accessory: {
+            VStack(spacing: 0) {
+                if model.isConversationActive {
+                    ActiveSessionBar(model: model)
                 }
-                .padding(.bottom, keyboardOverlap(in: geometry))
-                .animation(.easeOut(duration: 0.22), value: keyboardEndFrame)
+                composer
             }
         }
         .navigationTitle("Voice Chatbot")
@@ -95,13 +90,6 @@ private struct ConversationView: View {
                 addJPEG(image, name: "Camera-\(UUID().uuidString).jpg")
             }
             .ignoresSafeArea()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
-            guard let frame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-            keyboardEndFrame = frame
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardEndFrame = .zero
         }
     }
 
@@ -292,11 +280,6 @@ private struct ConversationView: View {
         showingAttachmentOptions = false
     }
 
-    private func keyboardOverlap(in geometry: GeometryProxy) -> CGFloat {
-        guard keyboardEndFrame != .zero else { return 0 }
-        let localKeyboardFrame = geometry.frame(in: .global).intersection(keyboardEndFrame)
-        return max(0, localKeyboardFrame.height - geometry.safeAreaInsets.bottom)
-    }
 }
 
 private enum PhotoImportError: LocalizedError {
