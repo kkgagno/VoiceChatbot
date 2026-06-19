@@ -35,7 +35,6 @@ private struct ConversationView: View {
     @State private var importingDocuments = false
     @State private var showingAttachmentOptions = false
     @State private var showingCamera = false
-    @State private var keyboardHeight: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -60,7 +59,6 @@ private struct ConversationView: View {
 
             }
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .navigationTitle("Voice Chatbot")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
@@ -82,8 +80,6 @@ private struct ConversationView: View {
                 }
                 composer
             }
-            .offset(y: keyboardHeight > 0 ? -keyboardHeight : 0)
-            .animation(.easeOut(duration: 0.22), value: keyboardHeight)
         }
         .fileImporter(
             isPresented: $importingDocuments,
@@ -100,12 +96,6 @@ private struct ConversationView: View {
                 addJPEG(image, name: "Camera-\(UUID().uuidString).jpg")
             }
             .ignoresSafeArea()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
-            updateKeyboardHeight(from: $0)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardHeight = 0
         }
     }
 
@@ -296,13 +286,6 @@ private struct ConversationView: View {
         showingAttachmentOptions = false
     }
 
-    private func updateKeyboardHeight(from notification: Notification) {
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
-        }
-        let overlap = max(0, UIScreen.main.bounds.maxY - frame.minY)
-        keyboardHeight = overlap < 1 ? 0 : overlap
-    }
 }
 
 private enum PhotoImportError: LocalizedError {
