@@ -57,11 +57,13 @@ public sealed class SileroVad : IDisposable
 
         var inputs = new List<NamedOnnxValue>
         {
-            NamedOnnxValue.CreateFromTensor("input", new DenseTensor<float>(input, [1, input.Length])),
-            NamedOnnxValue.CreateFromTensor("sr", new DenseTensor<long>([(long)SampleRate], [1])),
+            NamedOnnxValue.CreateFromTensor("input", new DenseTensor<float>(input, new[] { 1, input.Length })),
+            NamedOnnxValue.CreateFromTensor(
+                "sr",
+                new DenseTensor<long>(new long[] { SampleRate }, new[] { 1 })),
             NamedOnnxValue.CreateFromTensor(
                 "state",
-                new DenseTensor<float>(_state.Cast<float>().ToArray(), [2, 1, 128]))
+                new DenseTensor<float>(_state.Cast<float>().ToArray(), new[] { 2, 1, 128 }))
         };
 
         using var outputs = _session.Run(inputs);
