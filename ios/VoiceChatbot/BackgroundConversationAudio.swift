@@ -101,7 +101,16 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
         let session = AVAudioSession.sharedInstance()
-        try session.overrideOutputAudioPort(.speaker)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            stopEngine()
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            voiceProcessingEnabled = false
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setActive(true)
+        } else {
+            try session.overrideOutputAudioPort(.speaker)
+        }
         let audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer.delegate = self
         audioPlayer.volume = 1
@@ -118,8 +127,9 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             self.player = nil
             if !self.isPaused {
                 if UIDevice.current.userInterfaceIdiom == .pad {
-                    self.stopEngine()
-                    try? await Task.sleep(for: .milliseconds(150))
+                    let session = AVAudioSession.sharedInstance()
+                    try? session.setActive(false, options: .notifyOthersOnDeactivation)
+                    try? await Task.sleep(for: .milliseconds(250))
                     try? self.startListening()
                 } else if self.engine.isRunning {
                     self.speechDetector.resume()
