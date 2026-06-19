@@ -52,7 +52,7 @@ jobs:
       - name: Create portable test build
         run: >
           dotnet publish --configuration Release --runtime win-x64
-          --self-contained true --no-restore
+          --self-contained true
           --output artifacts/VoiceChatbot-VAD-Test
 
       - uses: actions/upload-artifact@v4
