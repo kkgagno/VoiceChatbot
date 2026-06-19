@@ -43,5 +43,8 @@ jobs:
               $path = $matches[1].Replace('\', '/')
               $message = "$($matches[4]): $($matches[5])"
               Write-Output "::error file=$path,line=$($matches[2]),col=$($matches[3])::$message"
+            } elseif ($_ -match '(?i)\berror\b') {
+              $message = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error file=.github/workflows/windows-build.yml,line=1::$message"
             }
           }
