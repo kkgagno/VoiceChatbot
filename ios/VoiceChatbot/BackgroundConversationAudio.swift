@@ -142,16 +142,13 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     private func enableVoiceProcessingIfAvailable() {
         guard !voiceProcessingEnabled else { return }
         let input = engine.inputNode
-        let output = engine.outputNode
         do {
             try input.setVoiceProcessingEnabled(true)
-            try output.setVoiceProcessingEnabled(true)
             voiceProcessingEnabled = true
         } catch {
             // Some Bluetooth and external audio routes do not support Apple's
             // voice-processing unit. Continue with the native route there.
             try? input.setVoiceProcessingEnabled(false)
-            try? output.setVoiceProcessingEnabled(false)
             voiceProcessingEnabled = false
         }
     }
