@@ -1954,6 +1954,7 @@ public partial class MainWindow : Window
                     });
                     messagesForModel = BuildMessagesForModel(modelUserText, imagesBase64);
                     InsertTransientContexts(messagesForModel, transientContexts);
+                    ApplyYouTubeContextToCurrentUserMessage(messagesForModel, modelUserText, youtubeUrl, transcriptResult.Title, transcriptResult.Transcript);
 
                     AddSystemMessage("YouTube transcript added to this response.");
                 }
@@ -1980,6 +1981,7 @@ public partial class MainWindow : Window
                         });
                         messagesForModel = BuildMessagesForModel(modelUserText, imagesBase64);
                         InsertTransientContexts(messagesForModel, transientContexts);
+                        ApplyYouTubeContextToCurrentUserMessage(messagesForModel, modelUserText, youtubeUrl, transcriptResult.Title, transcriptResult.Transcript);
 
                         AddSystemMessage("YouTube audio transcription added to this response.");
                     }
@@ -2421,6 +2423,42 @@ public partial class MainWindow : Window
                 Role = messages[i].Role,
                 Content = $"{messages[i].Content}\n\n{documentContext}\n\nUse the attached document context above when answering this question.",
                 ImagesBase64 = messages[i].ImagesBase64
+            };
+            return;
+        }
+    }
+
+    private static void ApplyYouTubeContextToCurrentUserMessage(
+        List<ChatMessage> messages,
+        string userText,
+        string youtubeUrl,
+        string title,
+        string transcript)
+    {
+        if (string.IsNullOrWhiteSpace(transcript))
+            return;
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (!messages[i].Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var request = userText.Trim();
+            if (string.Equals(request, youtubeUrl, StringComparison.OrdinalIgnoreCase))
+                request = "Summarize this video and list its main points.";
+
+            var titleLine = string.IsNullOrWhiteSpace(title) ? "" : $"Title: {title}\n";
+            messages[i] = new ChatMessage
+            {
+                Role = messages[i].Role,
+                Content =
+                    $"{request}\n\n" +
+                    $"YouTube transcript for {youtubeUrl}\n" +
+                    titleLine +
+                    $"Transcript:\n{transcript}\n\n" +
+                    "Use the transcript above as the video content. Do not say that you cannot watch or access the video.",
+                ImagesBase64 = messages[i].ImagesBase64,
+                Timestamp = messages[i].Timestamp
             };
             return;
         }
@@ -5533,6 +5571,7 @@ public partial class MainWindow : Window
                     });
                     messagesForModel = BuildMessagesForModel(modelUserText, phoneImagesBase64);
                     InsertTransientContexts(messagesForModel, transientContexts);
+                    ApplyYouTubeContextToCurrentUserMessage(messagesForModel, modelUserText, youtubeUrl, transcriptResult.Title, transcriptResult.Transcript);
                     await Dispatcher.InvokeAsync(() => AddSystemMessage("Phone remote YouTube transcript added to this response."));
                 }
                 else
