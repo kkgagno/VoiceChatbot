@@ -104,15 +104,18 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     func play(_ data: Data) throws {
         speechDetector.suspendAndReset()
         let session = AVAudioSession.sharedInstance()
-        usingSplitPlaybackSession = false
+        usingSplitPlaybackSession = !engine.isRunning
         if usingSplitPlaybackSession {
             stopEngine()
-            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            if voiceProcessingEnabled {
+                try? engine.inputNode.setVoiceProcessingEnabled(false)
+            }
             voiceProcessingEnabled = false
-            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
             try session.setCategory(.playback, mode: .spokenAudio, options: [])
             try session.setActive(true)
         } else {
+            try session.setActive(true)
             try session.overrideOutputAudioPort(.speaker)
         }
         let audioPlayer = try AVAudioPlayer(data: data)
