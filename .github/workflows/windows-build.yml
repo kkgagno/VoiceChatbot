@@ -26,4 +26,22 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - run: dotnet restore
-      - run: dotnet build --configuration Release --no-restore
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build --configuration Release --no-restore 2>&1 |
+            Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+
+      - name: Publish compiler errors
+        if: failure()
+        shell: pwsh
+        run: |
+          $pattern = '^(.*)\((\d+),(\d+)\): error ([^:]+): (.*)$'
+          Get-Content build.log | ForEach-Object {
+            if ($_ -match $pattern) {
+              $path = $matches[1].Replace('\', '/')
+              $message = "$($matches[4]): $($matches[5])"
+              Write-Output "::error file=$path,line=$($matches[2]),col=$($matches[3])::$message"
+            }
+          }
