@@ -105,10 +105,42 @@ actor VoiceChatAPI {
         return try await perform(request)
     }
 
-    func respond(to text: String) async throws -> AssistantResponse {
+    func respond(to text: String, keepDocumentsActive: Bool = false) async throws -> AssistantResponse {
         var request = try makeRequest(path: "/api/respond", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(TextRequest(text: text))
+        request.httpBody = try JSONEncoder().encode(
+            TextRequest(text: text, keepDocumentsActive: keepDocumentsActive)
+        )
+        return try await perform(request)
+    }
+
+    func sendMessage(
+        text: String,
+        attachments: [PendingAttachment],
+        keepDocumentsActive: Bool
+    ) async throws -> AssistantResponse {
+        let boundary = "VoiceChatbot-\(UUID().uuidString)"
+        var body = Data()
+        body.appendMultipartField(name: "text", value: text, boundary: boundary)
+        body.appendMultipartField(
+            name: "keepDocumentsActive",
+            value: keepDocumentsActive ? "true" : "false",
+            boundary: boundary
+        )
+        for attachment in attachments {
+            body.appendMultipartFile(
+                name: "files",
+                filename: attachment.name,
+                mimeType: attachment.mimeType,
+                data: attachment.data,
+                boundary: boundary
+            )
+        }
+        body.append("--\(boundary)--\r\n")
+
+        var request = try makeRequest(path: "/api/message", method: "POST")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
         return try await perform(request)
     }
 
@@ -156,7 +188,7 @@ actor VoiceChatAPI {
 
 private struct TextRequest: Encodable {
     let text: String
-    let keepDocumentsActive = false
+    let keepDocumentsActive: Bool
 }
 
 private struct SpeechDetectionResponse: Decodable {
@@ -166,5 +198,30 @@ private struct SpeechDetectionResponse: Decodable {
 private extension Data {
     mutating func append(_ string: String) {
         append(Data(string.utf8))
+    }
+
+    mutating func appendMultipartField(name: String, value: String, boundary: String) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        append(value)
+        append("\r\n")
+    }
+
+    mutating func appendMultipartFile(
+        name: String,
+        filename: String,
+        mimeType: String,
+        data: Data,
+        boundary: String
+    ) {
+        let safeFilename = filename
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(safeFilename)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        append(data)
+        append("\r\n")
     }
 }

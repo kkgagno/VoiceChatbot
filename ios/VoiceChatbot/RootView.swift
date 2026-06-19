@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -29,6 +30,8 @@ struct RootView: View {
 private struct ConversationView: View {
     @Bindable var model: AppModel
     @FocusState private var messageFieldFocused: Bool
+    @State private var selectedPhotos = [PhotosPickerItem]()
+    @State private var importingDocuments = false
 
     var body: some View {
         ZStack {
@@ -73,40 +76,196 @@ private struct ConversationView: View {
                 ActiveSessionBar(model: model)
             }
         }
+        .fileImporter(
+            isPresented: $importingDocuments,
+            allowedContentTypes: Self.documentTypes,
+            allowsMultipleSelection: true,
+            onCompletion: importDocuments
+        )
+        .onChange(of: selectedPhotos) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await importPhotos(items) }
+        }
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message your PC model", text: $model.typedMessage, axis: .vertical)
-                .lineLimit(1...5)
-                .focused($messageFieldFocused)
-                .submitLabel(.send)
-                .onSubmit {
-                    guard !model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        messageFieldFocused = false
-                        return
+        VStack(spacing: 10) {
+            if !model.pendingAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(model.pendingAttachments) { attachment in
+                            AttachmentChip(attachment: attachment) {
+                                model.removeAttachment(id: attachment.id)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 1)
+                }
+            }
+
+            if model.pendingAttachments.contains(where: { $0.kind == .document })
+                || model.activeDocumentCount > 0 {
+                HStack(spacing: 10) {
+                    Toggle(isOn: $model.keepDocumentsActive) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Keep document active")
+                                .font(.subheadline.weight(.semibold))
+                            Text(
+                                model.activeDocumentCount > 0
+                                    ? "\(model.activeDocumentCount) document\(model.activeDocumentCount == 1 ? "" : "s") available to every prompt"
+                                    : "Reuse uploaded documents in later prompts"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(.cyan)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                Menu {
+                    PhotosPicker(
+                        selection: $selectedPhotos,
+                        maxSelectionCount: 8,
+                        matching: .images
+                    ) {
+                        Label("Photo Library", systemImage: "photo.on.rectangle")
+                    }
+
+                    Button {
+                        importingDocuments = true
+                    } label: {
+                        Label("Choose Documents", systemImage: "doc")
+                    }
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.headline)
+                        .frame(width: 44, height: 44)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .accessibilityLabel("Attach photos or documents")
+
+                TextField("Message your PC model", text: $model.typedMessage, axis: .vertical)
+                    .lineLimit(1...5)
+                    .focused($messageFieldFocused)
+                    .submitLabel(.send)
+                    .onSubmit {
+                        guard canSend else {
+                            messageFieldFocused = false
+                            return
+                        }
+                        messageFieldFocused = false
+                        Task { await model.sendTypedMessage() }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+
+                Button {
                     messageFieldFocused = false
                     Task { await model.sendTypedMessage() }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.headline.bold())
+                        .frame(width: 44, height: 44)
+                        .background(.cyan, in: Circle())
+                        .foregroundStyle(.black)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
-
-            Button {
-                messageFieldFocused = false
-                Task { await model.sendTypedMessage() }
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.headline.bold())
-                    .frame(width: 44, height: 44)
-                    .background(.cyan, in: Circle())
-                    .foregroundStyle(.black)
+                .disabled(!canSend)
+                .opacity(canSend ? 1 : 0.45)
             }
-            .disabled(model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(model.typedMessage.isEmpty ? 0.45 : 1)
         }
         .padding()
+    }
+
+    private var canSend: Bool {
+        !model.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !model.pendingAttachments.isEmpty
+    }
+
+    private static let documentTypes: [UTType] = {
+        let extensions = ["pdf", "docx", "txt", "md", "csv", "json", "xml", "log"]
+        return extensions.compactMap { UTType(filenameExtension: $0) }
+    }()
+
+    private func importDocuments(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let values = try url.resourceValues(forKeys: [.contentTypeKey])
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                model.addAttachment(
+                    name: url.lastPathComponent,
+                    mimeType: values.contentType?.preferredMIMEType ?? "application/octet-stream",
+                    data: data,
+                    kind: .document
+                )
+            } catch {
+                model.messages.append(
+                    ChatEntry(role: .system, text: "Could not open \(url.lastPathComponent): \(error.localizedDescription)")
+                )
+            }
+        }
+    }
+
+    @MainActor
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotos = [] }
+        for (index, item) in items.enumerated() {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                let type = item.supportedContentTypes.first ?? .jpeg
+                let fileExtension = type.preferredFilenameExtension ?? "jpg"
+                model.addAttachment(
+                    name: "Photo-\(index + 1).\(fileExtension)",
+                    mimeType: type.preferredMIMEType ?? "image/jpeg",
+                    data: data,
+                    kind: .image
+                )
+            } catch {
+                model.messages.append(
+                    ChatEntry(role: .system, text: "A selected photo could not be loaded: \(error.localizedDescription)")
+                )
+            }
+        }
+    }
+}
+
+private struct AttachmentChip: View {
+    let attachment: PendingAttachment
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                .foregroundStyle(.cyan)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(attachment.name)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(attachment.sizeLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(attachment.name)")
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 250)
+        .background(.thinMaterial, in: Capsule())
     }
 }
 

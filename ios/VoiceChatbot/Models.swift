@@ -56,6 +56,23 @@ struct TranscriptionResponse: Decodable {
     let transcript: String
 }
 
+struct PendingAttachment: Identifiable, Equatable {
+    enum Kind {
+        case image
+        case document
+    }
+
+    let id = UUID()
+    let name: String
+    let mimeType: String
+    let data: Data
+    let kind: Kind
+
+    var sizeLabel: String {
+        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+    }
+}
+
 struct AssistantResponse: Decodable {
     let transcript: String
     let response: String

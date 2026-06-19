@@ -18,3 +18,7 @@ artifacts/
 *inference_summary*.json
 record_timer*.json
 settings.json
+ios/build/
+ios/*.xcodeproj/
+xcuserdata/
+*.xcuserstate

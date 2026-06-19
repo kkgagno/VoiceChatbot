@@ -18,6 +18,9 @@ final class AppModel {
     var connectionMessage = "Not connected"
     var activeRoute = ""
     var activeServerURL = ""
+    var pendingAttachments = [PendingAttachment]()
+    var keepDocumentsActive = false
+    var activeDocumentCount = 0
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -199,9 +202,38 @@ final class AppModel {
 
     func sendTypedMessage() async {
         let text = typedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
         typedMessage = ""
-        await send(text: text)
+        await send(text: text.isEmpty ? "Review the attached file." : text)
+    }
+
+    func addAttachment(
+        name: String,
+        mimeType: String,
+        data: Data,
+        kind: PendingAttachment.Kind
+    ) {
+        let maximumFileBytes = 25 * 1024 * 1024
+        let maximumTotalBytes = 50 * 1024 * 1024
+        guard pendingAttachments.count < 8 else {
+            failMessage("You can attach up to 8 files at once.")
+            return
+        }
+        guard data.count <= maximumFileBytes else {
+            failMessage("\(name) is larger than the 25 MB attachment limit.")
+            return
+        }
+        guard pendingAttachments.reduce(0, { $0 + $1.data.count }) + data.count <= maximumTotalBytes else {
+            failMessage("Attachments may total up to 50 MB per message.")
+            return
+        }
+        pendingAttachments.append(
+            PendingAttachment(name: name, mimeType: mimeType, data: data, kind: kind)
+        )
+    }
+
+    func removeAttachment(id: UUID) {
+        pendingAttachments.removeAll { $0.id == id }
     }
 
     private func process(wav: Data) async {
@@ -243,10 +275,28 @@ final class AppModel {
     }
 
     private func send(text: String) async {
-        messages.append(ChatEntry(role: .user, text: text))
+        let attachments = pendingAttachments
+        pendingAttachments = []
+        let attachmentSummary = attachments.isEmpty
+            ? ""
+            : "\n\nAttached: " + attachments.map(\.name).joined(separator: ", ")
+        messages.append(ChatEntry(role: .user, text: text + attachmentSummary))
         do {
             conversationState = .thinking
-            let result = try await api.respond(to: text)
+            let result: AssistantResponse
+            if attachments.isEmpty {
+                result = try await api.respond(
+                    to: text,
+                    keepDocumentsActive: keepDocumentsActive
+                )
+            } else {
+                result = try await api.sendMessage(
+                    text: text,
+                    attachments: attachments,
+                    keepDocumentsActive: keepDocumentsActive
+                )
+            }
+            activeDocumentCount = result.activeDocumentCount
             messages.append(ChatEntry(role: .assistant, text: result.response))
             if isConversationActive, let audioPath = result.audioURL, !audioPath.isEmpty {
                 conversationState = .speaking
@@ -259,6 +309,7 @@ final class AppModel {
                 conversationState = .idle
             }
         } catch {
+            pendingAttachments.insert(contentsOf: attachments, at: 0)
             audio.stop()
             isConversationActive = false
             fail(error)
