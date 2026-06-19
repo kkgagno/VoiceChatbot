@@ -3,25 +3,51 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+private enum AppTab: Hashable {
+    case chat
+    case transcription
+    case models
+    case comfy
+    case connection
+}
+
 struct RootView: View {
     @Bindable var model: AppModel
+    @State private var selectedTab: AppTab = .chat
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             NavigationStack {
                 ConversationView(model: model)
             }
             .tabItem { Label("Chat", systemImage: "message.fill") }
+            .tag(AppTab.chat)
 
             NavigationStack {
                 TranscriptionView(model: model)
             }
             .tabItem { Label("Transcribe", systemImage: "waveform") }
+            .tag(AppTab.transcription)
+
+            NavigationStack {
+                ModelsView(model: model) {
+                    selectedTab = .chat
+                }
+            }
+            .tabItem { Label("Models", systemImage: "cpu") }
+            .tag(AppTab.models)
+
+            NavigationStack {
+                ComfyUIView(model: model)
+            }
+            .tabItem { Label("ComfyUI", systemImage: "square.stack.3d.up.fill") }
+            .tag(AppTab.comfy)
 
             NavigationStack {
                 ConnectionView(model: model)
             }
             .tabItem { Label("Connection", systemImage: "desktopcomputer") }
+            .tag(AppTab.connection)
         }
         .tint(.cyan)
         .task { await model.refreshStatus() }

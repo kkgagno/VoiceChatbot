@@ -22,6 +22,8 @@ final class AppModel {
     var keepDocumentsActive = false
     var activeDocumentCount = 0
     var playingMessageID: UUID?
+    var comfyOutput: ComfyOutput?
+    var isRunningComfy = false
 
     private var api: VoiceChatAPI
     private let audio = BackgroundConversationAudio()
@@ -254,6 +256,58 @@ final class AppModel {
             }
             let data = try await api.audioData(relativePath: audioPath)
             try audio.play(data)
+        } catch {
+            fail(error)
+        }
+    }
+
+    func runModelCommand(_ command: String) async {
+        await send(text: command)
+        await refreshStatus()
+    }
+
+    func runComfy(
+        action: ComfyAction,
+        prompt: String,
+        attachments: [PendingAttachment],
+        seconds: Int
+    ) async {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            failMessage("Enter a ComfyUI prompt first.")
+            return
+        }
+
+        isRunningComfy = true
+        comfyOutput = nil
+        defer { isRunningComfy = false }
+
+        do {
+            let command = action.command(prompt: prompt, seconds: seconds)
+            let result = try await api.sendMessage(
+                text: command,
+                attachments: attachments,
+                keepDocumentsActive: false
+            )
+
+            var imageData: Data?
+            var videoURL: URL?
+            if let path = result.imageURL, !path.isEmpty {
+                imageData = try await api.mediaData(relativePath: path)
+            }
+            if let path = result.videoURL, !path.isEmpty {
+                let data = try await api.mediaData(relativePath: path)
+                let extensionName = path.lowercased().contains(".webm") ? "webm" : "mp4"
+                let url = FileManager.default.temporaryDirectory
+                    .appending(path: "VoiceChatbot-\(UUID().uuidString).\(extensionName)")
+                try data.write(to: url, options: .atomic)
+                videoURL = url
+            }
+
+            comfyOutput = ComfyOutput(
+                message: result.response,
+                imageData: imageData,
+                videoURL: videoURL
+            )
         } catch {
             fail(error)
         }

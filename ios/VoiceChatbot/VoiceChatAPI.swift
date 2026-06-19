@@ -153,6 +153,10 @@ actor VoiceChatAPI {
     }
 
     func audioData(relativePath: String) async throws -> Data {
+        try await mediaData(relativePath: relativePath)
+    }
+
+    func mediaData(relativePath: String) async throws -> Data {
         let request = try makeRequest(path: relativePath, method: "GET")
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)

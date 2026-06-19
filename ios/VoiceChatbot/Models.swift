@@ -60,6 +60,7 @@ struct PendingAttachment: Identifiable, Equatable {
     enum Kind {
         case image
         case document
+        case audio
     }
 
     let id = UUID()
@@ -71,6 +72,41 @@ struct PendingAttachment: Identifiable, Equatable {
     var sizeLabel: String {
         ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
     }
+}
+
+enum ComfyAction: String, CaseIterable, Identifiable {
+    case createImage = "New Image"
+    case editImage = "Edit Image"
+    case createVideo = "Image to Video"
+    case createVideoWithAudio = "Image + Audio Video"
+
+    var id: Self { self }
+
+    var systemImage: String {
+        switch self {
+        case .createImage: "photo.badge.plus"
+        case .editImage: "wand.and.stars"
+        case .createVideo: "video.badge.plus"
+        case .createVideoWithAudio: "waveform.badge.plus"
+        }
+    }
+
+    func command(prompt: String, seconds: Int) -> String {
+        switch self {
+        case .createImage:
+            "create an image of \(prompt)"
+        case .editImage:
+            "edit this image \(prompt)"
+        case .createVideo, .createVideoWithAudio:
+            "create a \(seconds) second video \(prompt)"
+        }
+    }
+}
+
+struct ComfyOutput {
+    let message: String
+    let imageData: Data?
+    let videoURL: URL?
 }
 
 struct AssistantResponse: Decodable {
