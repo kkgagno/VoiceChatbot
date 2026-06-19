@@ -377,6 +377,20 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
         candidatePending = true
         let generation = candidateGeneration
         let candidate = WAVEncoder.encode(samples: samples, sourceRate: sampleRate)
+
+        // A stalled network/VAD request must never leave AC or room noise
+        // recording forever. Discard any unconfirmed candidate promptly.
+        queue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self,
+                  generation == self.candidateGeneration,
+                  self.heardSpeech,
+                  self.candidatePending,
+                  !self.speechConfirmed
+            else { return }
+            self.reset(keepingCapacity: true)
+            self.candidateGeneration += 1
+        }
+
         onCandidate(candidate) { [weak self] containsSpeech in
             self?.queue.async { [weak self] in
                 guard let self, generation == self.candidateGeneration, self.heardSpeech else { return }
@@ -384,7 +398,9 @@ private final class BackgroundSpeechDetector: @unchecked Sendable {
                 if containsSpeech {
                     self.speechConfirmed = true
                     self.silenceFrames = 0
-                } else if Double(self.samples.count) / self.sampleRate >= 1.1 {
+                } else {
+                    // Silero explicitly rejected this sound as non-speech.
+                    // Drop it immediately instead of waiting for AC/typing to stop.
                     self.reset(keepingCapacity: true)
                     self.candidateGeneration += 1
                 }
