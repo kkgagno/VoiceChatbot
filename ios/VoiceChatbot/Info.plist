@@ -22,6 +22,14 @@
     <dict>
         <key>NSAllowsLocalNetworking</key>
         <true/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>minilagertha.tail2762b8.ts.net</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+        </dict>
     </dict>
     <key>UIBackgroundModes</key>
     <array>

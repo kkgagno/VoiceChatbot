@@ -3,7 +3,7 @@ import Foundation
 struct ServerProfile: Codable, Equatable, Sendable {
     var name = "Home PC"
     var localURL = "https://192.168.1.50:5100"
-    var vpnURL = "https://10.8.0.1:5100"
+    var vpnURL = "http://minilagertha.tail2762b8.ts.net:5101"
     var pin = ""
     var pinnedCertificateDER: Data?
 
@@ -20,7 +20,8 @@ struct ServerProfile: Codable, Equatable, Sendable {
         localURL = try container.decodeIfPresent(String.self, forKey: .localURL)
             ?? container.decodeIfPresent(String.self, forKey: .legacyBaseURL)
             ?? "https://192.168.1.50:5100"
-        vpnURL = try container.decodeIfPresent(String.self, forKey: .vpnURL) ?? "https://10.8.0.1:5100"
+        vpnURL = try container.decodeIfPresent(String.self, forKey: .vpnURL)
+            ?? "http://minilagertha.tail2762b8.ts.net:5101"
         pin = try container.decodeIfPresent(String.self, forKey: .pin) ?? ""
         pinnedCertificateDER = try container.decodeIfPresent(Data.self, forKey: .pinnedCertificateDER)
     }

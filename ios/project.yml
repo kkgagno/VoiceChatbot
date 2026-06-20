@@ -27,6 +27,9 @@ targets:
         NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            minilagertha.tail2762b8.ts.net:
+              NSExceptionAllowsInsecureHTTPLoads: true
         UIBackgroundModes:
           - audio
         UILaunchScreen: {}

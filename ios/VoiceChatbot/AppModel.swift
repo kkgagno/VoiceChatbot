@@ -35,7 +35,11 @@ final class AppModel {
     init() {
         let initialProfile: ServerProfile
         if let data = UserDefaults.standard.data(forKey: "serverProfile"),
-           let saved = try? JSONDecoder().decode(ServerProfile.self, from: data) {
+           var saved = try? JSONDecoder().decode(ServerProfile.self, from: data) {
+            if saved.vpnURL == "https://100.94.67.49:5100"
+                || saved.vpnURL == "https://10.8.0.1:5100" {
+                saved.vpnURL = "http://minilagertha.tail2762b8.ts.net:5101"
+            }
             initialProfile = saved
         } else {
             initialProfile = ServerProfile()
