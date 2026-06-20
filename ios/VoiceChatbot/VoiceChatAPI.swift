@@ -65,10 +65,16 @@ actor VoiceChatAPI {
     init(profile: ServerProfile, baseURL: String, probeMode: Bool = false) {
         self.profile = profile
         self.baseURL = baseURL
-        let configuration = URLSessionConfiguration.default
+        let configuration = probeMode
+            ? URLSessionConfiguration.ephemeral
+            : URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = probeMode ? 8 : 90
         configuration.timeoutIntervalForResource = probeMode ? 10 : 300
-        configuration.waitsForConnectivity = !probeMode
+        configuration.waitsForConnectivity = true
+        configuration.allowsCellularAccess = true
+        configuration.allowsExpensiveNetworkAccess = true
+        configuration.allowsConstrainedNetworkAccess = true
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(
             configuration: configuration,
             delegate: PinnedCertificateDelegate(certificateDER: profile.pinnedCertificateDER),

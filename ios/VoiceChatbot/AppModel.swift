@@ -103,7 +103,7 @@ final class AppModel {
 
         let currentProfile = profile
         let candidates = currentProfile.endpointCandidates
-        let winner = await withTaskGroup(of: ConnectionAttempt?.self) { group -> ConnectionAttempt? in
+        let probeResult = await withTaskGroup(of: ConnectionProbeResult.self) { group in
             for candidate in candidates {
                 group.addTask {
                     do {
@@ -116,30 +116,41 @@ final class AppModel {
                             probeMode: true
                         )
                         let discoveredStatus = try await probe.status()
-                        return Optional(ConnectionAttempt(
-                            name: candidate.name,
-                            url: candidate.url,
-                            status: discoveredStatus
-                        ))
+                        return ConnectionProbeResult(
+                            attempt: ConnectionAttempt(
+                                name: candidate.name,
+                                url: candidate.url,
+                                status: discoveredStatus
+                            ),
+                            failure: nil
+                        )
                     } catch {
-                        return Optional<ConnectionAttempt>.none
+                        let nsError = error as NSError
+                        return ConnectionProbeResult(
+                            attempt: nil,
+                            failure: "\(candidate.name) \(candidate.url): \(nsError.domain) \(nsError.code) — \(nsError.localizedDescription)"
+                        )
                     }
                 }
             }
 
-            for await attempt in group {
-                if let attempt {
+            var failures = [String]()
+            for await result in group {
+                if let attempt = result.attempt {
                     group.cancelAll()
-                    return attempt
+                    return (winner: Optional(attempt), failures: failures)
+                }
+                if let failure = result.failure {
+                    failures.append(failure)
                 }
             }
-            return nil
+            return (winner: Optional<ConnectionAttempt>.none, failures: failures)
         }
 
         guard generation == connectionProbeGeneration else { return }
         isConnecting = false
 
-        if let winner {
+        if let winner = probeResult.winner {
             api = VoiceChatAPI(profile: currentProfile, baseURL: winner.url)
             status = winner.status
             activeRoute = winner.name
@@ -148,15 +159,24 @@ final class AppModel {
             return
         }
 
-        connectionMessage = candidates.isEmpty
-            ? "Enter at least one server address."
-            : "Could not reach the PC on Home Wi-Fi or VPN."
+        if candidates.isEmpty {
+            connectionMessage = "Enter at least one server address."
+        } else {
+            connectionMessage = probeResult.failures.isEmpty
+                ? "Could not reach the PC on Home Wi-Fi or VPN."
+                : probeResult.failures.joined(separator: "\n")
+        }
     }
 
     private struct ConnectionAttempt: Sendable {
         let name: String
         let url: String
         let status: ServerStatus
+    }
+
+    private struct ConnectionProbeResult: Sendable {
+        let attempt: ConnectionAttempt?
+        let failure: String?
     }
 
     private func scheduleNetworkRefresh() {
