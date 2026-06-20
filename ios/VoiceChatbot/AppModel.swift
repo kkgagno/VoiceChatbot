@@ -103,7 +103,7 @@ final class AppModel {
 
         let currentProfile = profile
         let candidates = currentProfile.endpointCandidates
-        let winner = await withTaskGroup(of: ConnectionAttempt?.self) { group in
+        let winner = await withTaskGroup(of: ConnectionAttempt?.self) { group -> ConnectionAttempt? in
             for candidate in candidates {
                 group.addTask {
                     do {
