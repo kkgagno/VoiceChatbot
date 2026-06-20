@@ -550,11 +550,14 @@ final class AppModel {
 
     func saveCalendarEvent(_ draft: CalendarEventDraft) -> Bool {
         do {
-            try calendar.save(draft)
+            let saved = try calendar.save(draft)
             pendingCalendarEvent = nil
-            let when = draft.startDate.formatted(date: .abbreviated, time: .shortened)
+            let when = saved.startDate.formatted(date: .complete, time: .shortened)
             messages.append(
-                ChatEntry(role: .assistant, text: "Added \(draft.title) to your calendar for \(when).")
+                ChatEntry(
+                    role: .assistant,
+                    text: "Verified: \(saved.title) was added to “\(saved.calendarTitle)” for \(when)."
+                )
             )
             resumeAfterCalendarSheet()
             return true

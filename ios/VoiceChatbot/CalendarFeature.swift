@@ -19,6 +19,12 @@ struct CalendarEventDraft: Identifiable, Equatable {
     var notes = ""
 }
 
+struct SavedCalendarEvent {
+    let title: String
+    let startDate: Date
+    let calendarTitle: String
+}
+
 enum CalendarCommand {
     case create
     case list
@@ -102,6 +108,10 @@ final class CalendarService {
         authorizationStatus == .fullAccess
     }
 
+    var destinationCalendarTitle: String {
+        store.defaultCalendarForNewEvents?.title ?? "Default Calendar"
+    }
+
     func requestAccessAndLoad() async {
         do {
             if !hasFullAccess {
@@ -141,7 +151,7 @@ final class CalendarService {
         errorMessage = nil
     }
 
-    func save(_ draft: CalendarEventDraft) throws {
+    func save(_ draft: CalendarEventDraft) throws -> SavedCalendarEvent {
         guard hasFullAccess else {
             throw CalendarFeatureError.accessRequired
         }
@@ -156,7 +166,18 @@ final class CalendarService {
         event.notes = draft.notes.isEmpty ? nil : draft.notes
         event.calendar = calendar
         try store.save(event, span: .thisEvent, commit: true)
+
+        guard let identifier = event.eventIdentifier,
+              let verified = store.event(withIdentifier: identifier)
+        else {
+            throw CalendarFeatureError.saveVerificationFailed
+        }
         loadUpcoming()
+        return SavedCalendarEvent(
+            title: verified.title ?? draft.title,
+            startDate: verified.startDate,
+            calendarTitle: verified.calendar.title
+        )
     }
 
     func spokenSummary(limit: Int = 8) -> String {
@@ -194,6 +215,7 @@ enum CalendarFeatureError: LocalizedError {
     case accessRequired
     case noWritableCalendar
     case invalidAIDraft
+    case saveVerificationFailed
 
     var errorDescription: String? {
         switch self {
@@ -203,6 +225,8 @@ enum CalendarFeatureError: LocalizedError {
             "No writable calendar is available on this iPhone."
         case .invalidAIDraft:
             "The AI could not produce a valid calendar event. Please include a date and time and try again."
+        case .saveVerificationFailed:
+            "The event could not be verified after saving."
         }
     }
 }
@@ -322,6 +346,22 @@ struct CalendarConfirmationView: View {
                     )
                     TextField("Notes", text: $draft.notes, axis: .vertical)
                         .lineLimit(2...5)
+                }
+
+                Section("Verify before saving") {
+                    LabeledContent("Full date") {
+                        Text(draft.startDate.formatted(date: .complete, time: .shortened))
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Year") {
+                        Text(draft.startDate.formatted(.dateTime.year()))
+                    }
+                    LabeledContent("Time zone") {
+                        Text(TimeZone.current.identifier)
+                    }
+                    LabeledContent("Calendar") {
+                        Text(model.calendar.destinationCalendarTitle)
+                    }
                 }
 
                 Section {
