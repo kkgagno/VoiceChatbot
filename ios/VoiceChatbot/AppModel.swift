@@ -559,15 +559,37 @@ final class AppModel {
     }
 
     private func handleTextMessageCommand(_ text: String) async -> Bool {
-        guard TextMessageCommandParser.isTextRequest(text) else { return false }
-        messages.append(ChatEntry(role: .user, text: text))
+        guard TextMessageCommandParser.mightBeCommunicationRequest(text) else { return false }
+
+        do {
+            let intentPrompt = """
+            Decide whether the user is asking to compose and send an SMS/iMessage to a person.
+            Understand natural requests such as “Send Jane that I am late,” “Tell Jane I will
+            arrive at six,” “Let my sister know dinner moved,” and “Message Mike about tomorrow.”
+            Requests for you to answer, explain, write content, send files, or tell the user
+            something are NOT text-message requests.
+
+            Return ONLY JSON: {"isTextMessage":true} or {"isTextMessage":false}
+
+            User request: \(text)
+            """
+            let intentResult = try await api.respond(to: intentPrompt)
+            let intent = try TextMessageAIIntent.decode(from: intentResult.response)
+            guard intent.isTextMessage else { return false }
+        } catch {
+            messages.append(ChatEntry(role: .user, text: text))
+            fail(error)
+            return true
+        }
 
         await contacts.requestAccessAndLoad()
         guard contacts.hasAccess else {
+            messages.append(ChatEntry(role: .user, text: text))
             failMessage(contacts.errorMessage ?? "Contacts access is required.")
             return true
         }
 
+        messages.append(ChatEntry(role: .user, text: text))
         conversationState = .thinking
         do {
             let prompt = """

@@ -18,13 +18,33 @@ struct TextMessageDraft: Identifiable, Equatable {
 }
 
 enum TextMessageCommandParser {
-    static func isTextRequest(_ text: String) -> Bool {
+    static func mightBeCommunicationRequest(_ text: String) -> Bool {
         let lowered = text.lowercased()
-        return lowered.hasPrefix("text ")
-            || lowered.hasPrefix("message ")
-            || lowered.contains("send a text")
-            || lowered.contains("send an sms")
-            || lowered.contains("send a message to")
+        let words = Set(
+            lowered
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        )
+        return !words.isDisjoint(
+            with: ["text", "message", "sms", "imessage", "send", "tell", "let", "write", "ask"]
+        )
+    }
+}
+
+struct TextMessageAIIntent: Decodable {
+    let isTextMessage: Bool
+
+    static func decode(from response: String) throws -> TextMessageAIIntent {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let start = trimmed.firstIndex(of: "{"),
+              let end = trimmed.lastIndex(of: "}")
+        else {
+            throw ContactsFeatureError.invalidAIIntent
+        }
+        return try JSONDecoder().decode(
+            TextMessageAIIntent.self,
+            from: Data(trimmed[start...end].utf8)
+        )
     }
 }
 
@@ -129,6 +149,7 @@ final class ContactsService {
 
 enum ContactsFeatureError: LocalizedError {
     case accessRequired
+    case invalidAIIntent
     case invalidAIDraft
     case contactNotFound
     case messagingUnavailable
@@ -137,6 +158,8 @@ enum ContactsFeatureError: LocalizedError {
         switch self {
         case .accessRequired:
             "Contacts access is required."
+        case .invalidAIIntent:
+            "The AI could not determine whether this was a text-message request."
         case .invalidAIDraft:
             "The AI could not prepare a valid text message."
         case .contactNotFound:
