@@ -66,8 +66,8 @@ actor VoiceChatAPI {
         self.profile = profile
         self.baseURL = baseURL
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = probeMode ? 3 : 90
-        configuration.timeoutIntervalForResource = probeMode ? 4 : 300
+        configuration.timeoutIntervalForRequest = probeMode ? 8 : 90
+        configuration.timeoutIntervalForResource = probeMode ? 10 : 300
         configuration.waitsForConnectivity = !probeMode
         session = URLSession(
             configuration: configuration,

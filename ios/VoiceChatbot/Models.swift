@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerProfile: Codable, Equatable {
+struct ServerProfile: Codable, Equatable, Sendable {
     var name = "Home PC"
     var localURL = "https://192.168.1.50:5100"
     var vpnURL = "https://10.8.0.1:5100"
@@ -44,7 +44,7 @@ struct ServerProfile: Codable, Equatable {
     }
 }
 
-struct ServerStatus: Decodable {
+struct ServerStatus: Decodable, Sendable {
     let ok: Bool
     let requiresPin: Bool
     let activeProvider: String

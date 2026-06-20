@@ -30,6 +30,7 @@ final class AppModel {
     private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
     private var networkRefreshTask: Task<Void, Never>?
+    private var connectionProbeGeneration = 0
 
     init() {
         let initialProfile: ServerProfile
@@ -93,34 +94,69 @@ final class AppModel {
     }
 
     func refreshStatus() async {
+        connectionProbeGeneration += 1
+        let generation = connectionProbeGeneration
         isConnecting = true
-        defer { isConnecting = false }
         status = nil
         activeRoute = ""
         activeServerURL = ""
 
-        for candidate in profile.endpointCandidates {
-            do {
-                let probe = VoiceChatAPI(
-                    profile: profile,
-                    baseURL: candidate.url,
-                    probeMode: true
-                )
-                let discoveredStatus = try await probe.status()
-                api = VoiceChatAPI(profile: profile, baseURL: candidate.url)
-                status = discoveredStatus
-                activeRoute = candidate.name
-                activeServerURL = candidate.url
-                connectionMessage = "Connected automatically via \(candidate.name)"
-                return
-            } catch {
-                continue
+        let currentProfile = profile
+        let candidates = currentProfile.endpointCandidates
+        let winner = await withTaskGroup(of: ConnectionAttempt?.self) { group in
+            for candidate in candidates {
+                group.addTask {
+                    do {
+                        if candidate.name == "VPN" {
+                            try await Task.sleep(for: .milliseconds(200))
+                        }
+                        let probe = VoiceChatAPI(
+                            profile: currentProfile,
+                            baseURL: candidate.url,
+                            probeMode: true
+                        )
+                        let discoveredStatus = try await probe.status()
+                        return ConnectionAttempt(
+                            name: candidate.name,
+                            url: candidate.url,
+                            status: discoveredStatus
+                        )
+                    } catch {
+                        return nil
+                    }
+                }
             }
+
+            for await attempt in group {
+                if let attempt {
+                    group.cancelAll()
+                    return attempt
+                }
+            }
+            return nil
         }
 
-        connectionMessage = profile.endpointCandidates.isEmpty
+        guard generation == connectionProbeGeneration else { return }
+        isConnecting = false
+
+        if let winner {
+            api = VoiceChatAPI(profile: currentProfile, baseURL: winner.url)
+            status = winner.status
+            activeRoute = winner.name
+            activeServerURL = winner.url
+            connectionMessage = "Connected automatically via \(winner.name)"
+            return
+        }
+
+        connectionMessage = candidates.isEmpty
             ? "Enter at least one server address."
             : "Could not reach the PC on Home Wi-Fi or VPN."
+    }
+
+    private struct ConnectionAttempt: Sendable {
+        let name: String
+        let url: String
+        let status: ServerStatus
     }
 
     private func scheduleNetworkRefresh() {
