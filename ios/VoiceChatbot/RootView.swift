@@ -1,4 +1,5 @@
 import PhotosUI
+import MessageUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -9,6 +10,7 @@ private enum AppTab: Hashable {
     case models
     case comfy
     case calendar
+    case contacts
     case connection
 }
 
@@ -51,6 +53,12 @@ struct RootView: View {
             .tag(AppTab.calendar)
 
             NavigationStack {
+                ContactsView(model: model)
+            }
+            .tabItem { Label("Contacts", systemImage: "person.2.fill") }
+            .tag(AppTab.contacts)
+
+            NavigationStack {
                 ConnectionView(model: model)
             }
             .tabItem { Label("Connection", systemImage: "desktopcomputer") }
@@ -63,6 +71,9 @@ struct RootView: View {
         }
         .sheet(item: $model.pendingCalendarDeletion) { draft in
             CalendarDeletionConfirmationView(model: model, draft: draft)
+        }
+        .sheet(item: $model.pendingTextMessage) { draft in
+            TextMessageConfirmationView(model: model, draft: draft)
         }
     }
 }

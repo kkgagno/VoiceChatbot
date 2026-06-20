@@ -1,4 +1,5 @@
 import Foundation
+import MessageUI
 import Observation
 
 @MainActor
@@ -26,9 +27,11 @@ final class AppModel {
     var isRunningComfy = false
     var pendingCalendarEvent: CalendarEventDraft?
     var pendingCalendarDeletion: CalendarDeletionDraft?
+    var pendingTextMessage: TextMessageDraft?
 
     private var api: VoiceChatAPI
     let calendar = CalendarService()
+    let contacts = ContactsService()
     private let audio = BackgroundConversationAudio()
     private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
@@ -272,6 +275,9 @@ final class AppModel {
         let text = typedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
         typedMessage = ""
+        if pendingAttachments.isEmpty, await handleTextMessageCommand(text) {
+            return
+        }
         if pendingAttachments.isEmpty, await handleCalendarCommand(text) {
             return
         }
@@ -410,6 +416,9 @@ final class AppModel {
                 audio.updateNowPlaying(active: true, title: "Active transcription")
                 conversationState = .listening
             } else {
+                if await handleTextMessageCommand(transcript) {
+                    return
+                }
                 if await handleCalendarCommand(transcript) {
                     return
                 }
@@ -547,6 +556,88 @@ final class AppModel {
             await send(text: groundedPrompt, displayText: text)
         }
         return true
+    }
+
+    private func handleTextMessageCommand(_ text: String) async -> Bool {
+        guard TextMessageCommandParser.isTextRequest(text) else { return false }
+        messages.append(ChatEntry(role: .user, text: text))
+
+        await contacts.requestAccessAndLoad()
+        guard contacts.hasAccess else {
+            failMessage(contacts.errorMessage ?? "Contacts access is required.")
+            return true
+        }
+
+        conversationState = .thinking
+        do {
+            let prompt = """
+            You are an expert messaging assistant. Select exactly one contact and phone number
+            from the live iPhone Contacts list and draft the text requested by the user.
+            Understand nicknames, possessives, and conversational wording, but never invent a
+            contact ID or phone number. Preserve the user's intended tone. Do not add a signature.
+
+            Return ONLY one JSON object:
+            {"contactID":"exact id","phoneNumber":"exact phone","body":"message to send"}
+
+            User request:
+            \(text)
+
+            Live iPhone contacts:
+            \(contacts.modelContext())
+            """
+            let result = try await api.respond(to: prompt)
+            let aiDraft = try TextMessageAIDraft.decode(from: result.response)
+            guard let contact = contacts.contact(
+                id: aiDraft.contactID,
+                phoneNumber: aiDraft.phoneNumber
+            ) else {
+                throw ContactsFeatureError.contactNotFound
+            }
+            pendingTextMessage = TextMessageDraft(
+                contactID: contact.id,
+                contactName: contact.name,
+                phoneNumber: aiDraft.phoneNumber,
+                body: aiDraft.body
+            )
+            messages.append(
+                ChatEntry(
+                    role: .system,
+                    text: "The AI prepared a text to \(contact.name). Review it before opening Messages."
+                )
+            )
+            if isConversationActive {
+                audio.pause()
+                conversationState = .paused
+            } else {
+                conversationState = .idle
+            }
+        } catch {
+            fail(error)
+        }
+        return true
+    }
+
+    func completeTextMessage(result: MessageComposeResult, draft: TextMessageDraft) {
+        switch result {
+        case .sent:
+            pendingTextMessage = nil
+            messages.append(
+                ChatEntry(role: .assistant, text: "Text sent to \(draft.contactName).")
+            )
+            resumeAfterCalendarSheet()
+        case .failed:
+            failMessage("The text message could not be sent.")
+        case .cancelled:
+            messages.append(ChatEntry(role: .system, text: "Text was not sent."))
+        @unknown default:
+            messages.append(ChatEntry(role: .system, text: "Messages closed without sending."))
+        }
+    }
+
+    func cancelTextMessage() {
+        pendingTextMessage = nil
+        messages.append(ChatEntry(role: .system, text: "Text message canceled."))
+        resumeAfterCalendarSheet()
     }
 
     private func createCalendarDraftWithAI(from request: String) async throws -> CalendarEventDraft {

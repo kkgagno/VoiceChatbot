@@ -26,6 +26,7 @@ targets:
         NSPhotoLibraryAddUsageDescription: Voice Chatbot adds generated images to Photos only when you tap Save to Photos.
         NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
         NSCalendarsFullAccessUsageDescription: Voice Chatbot uses calendar access to show upcoming events and add events only after you confirm them.
+        NSContactsUsageDescription: Voice Chatbot uses contacts to resolve names and prepare text messages only after you request them.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSExceptionDomains:

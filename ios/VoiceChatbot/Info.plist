@@ -20,6 +20,8 @@
     <string>Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Voice Chatbot uses calendar access to show upcoming events and add events only after you confirm them.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Voice Chatbot uses contacts to resolve names and prepare text messages only after you request them.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
