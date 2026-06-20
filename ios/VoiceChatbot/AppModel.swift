@@ -24,8 +24,10 @@ final class AppModel {
     var playingMessageID: UUID?
     var comfyOutput: ComfyOutput?
     var isRunningComfy = false
+    var pendingCalendarEvent: CalendarEventDraft?
 
     private var api: VoiceChatAPI
+    let calendar = CalendarService()
     private let audio = BackgroundConversationAudio()
     private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
@@ -269,6 +271,9 @@ final class AppModel {
         let text = typedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
         typedMessage = ""
+        if pendingAttachments.isEmpty, await handleCalendarCommand(text) {
+            return
+        }
         await send(text: text.isEmpty ? "Review the attached file." : text)
     }
 
@@ -404,6 +409,9 @@ final class AppModel {
                 audio.updateNowPlaying(active: true, title: "Active transcription")
                 conversationState = .listening
             } else {
+                if await handleCalendarCommand(transcript) {
+                    return
+                }
                 await send(text: transcript)
             }
         } catch {
@@ -461,6 +469,87 @@ final class AppModel {
             }
         } catch {
             pendingAttachments.insert(contentsOf: attachments, at: 0)
+            audio.stop()
+            isConversationActive = false
+            fail(error)
+        }
+    }
+
+    private func handleCalendarCommand(_ text: String) async -> Bool {
+        guard let command = CalendarCommandParser.parse(text) else { return false }
+        messages.append(ChatEntry(role: .user, text: text))
+
+        await calendar.requestAccessAndLoad()
+        guard calendar.hasFullAccess else {
+            failMessage(calendar.errorMessage ?? "Calendar access is required.")
+            return true
+        }
+
+        switch command {
+        case .create(let draft):
+            pendingCalendarEvent = draft
+            messages.append(
+                ChatEntry(
+                    role: .system,
+                    text: "Review and confirm the calendar event before it is added."
+                )
+            )
+            if isConversationActive {
+                audio.pause()
+                conversationState = .paused
+            }
+        case .list:
+            calendar.loadUpcoming()
+            let summary = calendar.spokenSummary()
+            messages.append(ChatEntry(role: .assistant, text: summary))
+            if isConversationActive {
+                do {
+                    conversationState = .speaking
+                    let audioPath = try await api.speak(summary)
+                    let data = try await api.audioData(relativePath: audioPath)
+                    try audio.play(data)
+                } catch {
+                    fail(error)
+                }
+            } else {
+                conversationState = .idle
+            }
+        }
+        return true
+    }
+
+    func saveCalendarEvent(_ draft: CalendarEventDraft) -> Bool {
+        do {
+            try calendar.save(draft)
+            pendingCalendarEvent = nil
+            let when = draft.startDate.formatted(date: .abbreviated, time: .shortened)
+            messages.append(
+                ChatEntry(role: .assistant, text: "Added \(draft.title) to your calendar for \(when).")
+            )
+            resumeAfterCalendarSheet()
+            return true
+        } catch {
+            calendar.errorMessage = error.localizedDescription
+            fail(error)
+            return false
+        }
+    }
+
+    func cancelCalendarEvent() {
+        pendingCalendarEvent = nil
+        messages.append(ChatEntry(role: .system, text: "Calendar event canceled."))
+        resumeAfterCalendarSheet()
+    }
+
+    private func resumeAfterCalendarSheet() {
+        guard isConversationActive else {
+            conversationState = .idle
+            return
+        }
+        do {
+            try audio.resume()
+            conversationState = .listening
+        } catch {
             audio.stop()
             isConversationActive = false
             fail(error)

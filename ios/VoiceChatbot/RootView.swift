@@ -8,6 +8,7 @@ private enum AppTab: Hashable {
     case transcription
     case models
     case comfy
+    case calendar
     case connection
 }
 
@@ -44,6 +45,12 @@ struct RootView: View {
             .tag(AppTab.comfy)
 
             NavigationStack {
+                CalendarView(model: model)
+            }
+            .tabItem { Label("Calendar", systemImage: "calendar") }
+            .tag(AppTab.calendar)
+
+            NavigationStack {
                 ConnectionView(model: model)
             }
             .tabItem { Label("Connection", systemImage: "desktopcomputer") }
@@ -51,6 +58,9 @@ struct RootView: View {
         }
         .tint(.cyan)
         .task { await model.refreshStatus() }
+        .sheet(item: $model.pendingCalendarEvent) { draft in
+            CalendarConfirmationView(model: model, draft: draft)
+        }
     }
 }
 
@@ -803,7 +813,7 @@ private struct ConnectionView: View {
     }
 }
 
-private struct AppBackground: View {
+struct AppBackground: View {
     var body: some View {
         LinearGradient(
             colors: [Color(.systemBackground), Color.cyan.opacity(0.07), Color(.systemBackground)],

@@ -18,6 +18,8 @@
     <string>Voice Chatbot adds generated images to Photos only when you tap Save to Photos.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Voice Chatbot uses calendar access to show upcoming events and add events only after you confirm them.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
