@@ -54,10 +54,20 @@ final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, @unchecked 
         }
 
         // The user explicitly imported and pinned this exact server certificate.
-        // Evaluate it as an X.509 certificate rather than against the URL host,
-        // because the same PC certificate is reached through both its LAN and
-        // Tailscale IP addresses.
-        SecTrustSetPolicies(trust, SecPolicyCreateBasicX509())
+        // Make that certificate the trust anchor and evaluate it as plain X.509,
+        // without tying trust to either the LAN or Tailscale IP address.
+        let policyStatus = SecTrustSetPolicies(trust, SecPolicyCreateBasicX509())
+        let anchorStatus = SecTrustSetAnchorCertificates(trust, [leaf] as CFArray)
+        let anchorOnlyStatus = SecTrustSetAnchorCertificatesOnly(trust, true)
+        guard policyStatus == errSecSuccess,
+              anchorStatus == errSecSuccess,
+              anchorOnlyStatus == errSecSuccess,
+              SecTrustEvaluateWithError(trust, nil)
+        else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
