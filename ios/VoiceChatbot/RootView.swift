@@ -61,6 +61,9 @@ struct RootView: View {
         .sheet(item: $model.pendingCalendarEvent) { draft in
             CalendarConfirmationView(model: model, draft: draft)
         }
+        .sheet(item: $model.pendingCalendarDeletion) { draft in
+            CalendarDeletionConfirmationView(model: model, draft: draft)
+        }
     }
 }
 

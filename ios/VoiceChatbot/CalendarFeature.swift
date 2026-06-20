@@ -9,6 +9,7 @@ struct CalendarEventSummary: Identifiable, Equatable {
     let endDate: Date
     let calendarTitle: String
     let isAllDay: Bool
+    let isRecurring: Bool
 }
 
 struct CalendarEventDraft: Identifiable, Equatable {
@@ -25,8 +26,21 @@ struct SavedCalendarEvent {
     let calendarTitle: String
 }
 
+struct CalendarDeletionItem: Identifiable, Equatable {
+    let event: CalendarEventSummary
+    var deleteFutureEvents = false
+
+    var id: String { event.id }
+}
+
+struct CalendarDeletionDraft: Identifiable, Equatable {
+    let id = UUID()
+    var items: [CalendarDeletionItem]
+}
+
 enum CalendarCommand {
     case create
+    case delete
     case list
 }
 
@@ -36,6 +50,13 @@ enum CalendarCommandParser {
         let mentionsCalendar = lowered.contains("calendar")
             || lowered.contains("appointment")
             || lowered.contains("event")
+            || lowered.contains("schedule")
+
+        let asksToDelete = ["delete", "remove", "cancel", "erase"]
+            .contains { lowered.contains($0) }
+        if asksToDelete, mentionsCalendar {
+            return .delete
+        }
 
         let calendarQuestion = mentionsCalendar
             || ["am i free", "am i busy", "what do i have", "what have i got", "my schedule"]
@@ -94,6 +115,24 @@ struct CalendarAIDraft: Decodable {
     }
 }
 
+struct CalendarAIDeleteSelection: Decodable {
+    let eventIDs: [String]
+    let futureSeriesEventIDs: [String]?
+
+    static func decode(from response: String) throws -> CalendarAIDeleteSelection {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let start = trimmed.firstIndex(of: "{"),
+              let end = trimmed.lastIndex(of: "}")
+        else {
+            throw CalendarFeatureError.invalidAIDeleteSelection
+        }
+        return try JSONDecoder().decode(
+            CalendarAIDeleteSelection.self,
+            from: Data(trimmed[start...end].utf8)
+        )
+    }
+}
+
 @MainActor
 @Observable
 final class CalendarService {
@@ -145,7 +184,8 @@ final class CalendarService {
                     startDate: $0.startDate,
                     endDate: $0.endDate,
                     calendarTitle: $0.calendar.title,
-                    isAllDay: $0.isAllDay
+                    isAllDay: $0.isAllDay,
+                    isRecurring: $0.hasRecurrenceRules
                 )
             }
         errorMessage = nil
@@ -180,6 +220,27 @@ final class CalendarService {
         )
     }
 
+    func delete(_ draft: CalendarDeletionDraft) throws -> Int {
+        guard hasFullAccess else {
+            throw CalendarFeatureError.accessRequired
+        }
+        var deleted = 0
+        for item in draft.items {
+            guard let event = store.event(withIdentifier: item.event.id) else { continue }
+            let span: EKSpan = item.deleteFutureEvents && item.event.isRecurring
+                ? .futureEvents
+                : .thisEvent
+            try store.remove(event, span: span, commit: false)
+            deleted += 1
+        }
+        guard deleted > 0 else {
+            throw CalendarFeatureError.noMatchingEvents
+        }
+        try store.commit()
+        loadUpcoming()
+        return deleted
+    }
+
     func spokenSummary(limit: Int = 8) -> String {
         let upcoming = Array(events.prefix(limit))
         guard !upcoming.isEmpty else {
@@ -196,7 +257,7 @@ final class CalendarService {
         let records = events.prefix(limit).map { event in
             let start = event.startDate.formatted(date: .numeric, time: .complete)
             let end = event.endDate.formatted(date: .numeric, time: .complete)
-            return "- \(event.title) | start: \(start) | end: \(end) | all-day: \(event.isAllDay) | calendar: \(event.calendarTitle)"
+            return "- id: \(event.id) | title: \(event.title) | start: \(start) | end: \(end) | all-day: \(event.isAllDay) | recurring: \(event.isRecurring) | calendar: \(event.calendarTitle)"
         }
         let eventText = records.isEmpty
             ? "- No upcoming events found."
@@ -216,6 +277,8 @@ enum CalendarFeatureError: LocalizedError {
     case noWritableCalendar
     case invalidAIDraft
     case saveVerificationFailed
+    case invalidAIDeleteSelection
+    case noMatchingEvents
 
     var errorDescription: String? {
         switch self {
@@ -227,6 +290,10 @@ enum CalendarFeatureError: LocalizedError {
             "The AI could not produce a valid calendar event. Please include a date and time and try again."
         case .saveVerificationFailed:
             "The event could not be verified after saving."
+        case .invalidAIDeleteSelection:
+            "The AI could not identify calendar events to delete."
+        case .noMatchingEvents:
+            "No matching calendar events were found."
         }
     }
 }
@@ -386,6 +453,74 @@ struct CalendarConfirmationView: View {
                         }
                     }
                     .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+struct CalendarDeletionConfirmationView: View {
+    @Bindable var model: AppModel
+    @State private var draft: CalendarDeletionDraft
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: AppModel, draft: CalendarDeletionDraft) {
+        self.model = model
+        _draft = State(initialValue: draft)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Only the events shown below will be deleted.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach($draft.items) { $item in
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.event.title)
+                                .font(.headline)
+                            Text(item.event.startDate.formatted(date: .complete, time: .shortened))
+                            Text(item.event.calendarTitle)
+                                .font(.caption)
+                                .foregroundStyle(.cyan)
+                        }
+                        if item.event.isRecurring {
+                            Toggle("Delete this and future events", isOn: $item.deleteFutureEvents)
+                            Text(
+                                item.deleteFutureEvents
+                                    ? "This occurrence and all later occurrences will be deleted."
+                                    : "Only this occurrence will be deleted."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Confirm Deletion")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        model.cancelCalendarDeletion()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(
+                        draft.items.count == 1
+                            ? "Delete Event"
+                            : "Delete \(draft.items.count) Events",
+                        role: .destructive
+                    ) {
+                        if model.deleteCalendarEvents(draft) {
+                            dismiss()
+                        }
+                    }
                 }
             }
         }

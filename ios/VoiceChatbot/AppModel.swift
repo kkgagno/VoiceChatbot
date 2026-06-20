@@ -25,6 +25,7 @@ final class AppModel {
     var comfyOutput: ComfyOutput?
     var isRunningComfy = false
     var pendingCalendarEvent: CalendarEventDraft?
+    var pendingCalendarDeletion: CalendarDeletionDraft?
 
     private var api: VoiceChatAPI
     let calendar = CalendarService()
@@ -509,6 +510,27 @@ final class AppModel {
             } catch {
                 fail(error)
             }
+        case .delete:
+            messages.append(ChatEntry(role: .user, text: text))
+            conversationState = .thinking
+            do {
+                let draft = try await createCalendarDeletionWithAI(from: text)
+                pendingCalendarDeletion = draft
+                messages.append(
+                    ChatEntry(
+                        role: .system,
+                        text: "The AI found \(draft.items.count) matching event\(draft.items.count == 1 ? "" : "s"). Review them before deletion."
+                    )
+                )
+                if isConversationActive {
+                    audio.pause()
+                    conversationState = .paused
+                } else {
+                    conversationState = .idle
+                }
+            } catch {
+                fail(error)
+            }
         case .list:
             calendar.loadUpcoming()
             let groundedPrompt = """
@@ -548,6 +570,44 @@ final class AppModel {
         return try CalendarAIDraft.decode(from: result.response).eventDraft()
     }
 
+    private func createCalendarDeletionWithAI(
+        from request: String
+    ) async throws -> CalendarDeletionDraft {
+        calendar.loadUpcoming()
+        let prompt = """
+        You are an expert calendar assistant. Select only the live calendar events that clearly
+        match the user's deletion request. Resolve relative dates using the supplied local date,
+        time, and time zone. Never guess an event ID. If nothing matches, return an empty eventIDs array.
+
+        Return ONLY one JSON object:
+        {"eventIDs":["exact event id"],"futureSeriesEventIDs":["exact recurring event id"]}
+
+        Use futureSeriesEventIDs only when the user explicitly asks to delete an entire recurring
+        series or this and all future occurrences. Otherwise leave it empty.
+
+        User request:
+        \(request)
+
+        \(calendar.modelContext())
+        """
+        let result = try await api.respond(to: prompt)
+        let selection = try CalendarAIDeleteSelection.decode(from: result.response)
+        let selectedIDs = Set(selection.eventIDs)
+        let futureIDs = Set(selection.futureSeriesEventIDs ?? [])
+        let items = calendar.events
+            .filter { selectedIDs.contains($0.id) }
+            .map {
+                CalendarDeletionItem(
+                    event: $0,
+                    deleteFutureEvents: $0.isRecurring && futureIDs.contains($0.id)
+                )
+            }
+        guard !items.isEmpty else {
+            throw CalendarFeatureError.noMatchingEvents
+        }
+        return CalendarDeletionDraft(items: items)
+    }
+
     func saveCalendarEvent(_ draft: CalendarEventDraft) -> Bool {
         do {
             let saved = try calendar.save(draft)
@@ -571,6 +631,30 @@ final class AppModel {
     func cancelCalendarEvent() {
         pendingCalendarEvent = nil
         messages.append(ChatEntry(role: .system, text: "Calendar event canceled."))
+        resumeAfterCalendarSheet()
+    }
+
+    func deleteCalendarEvents(_ draft: CalendarDeletionDraft) -> Bool {
+        do {
+            let deleted = try calendar.delete(draft)
+            pendingCalendarDeletion = nil
+            messages.append(
+                ChatEntry(
+                    role: .assistant,
+                    text: "Deleted \(deleted) calendar event\(deleted == 1 ? "" : "s")."
+                )
+            )
+            resumeAfterCalendarSheet()
+            return true
+        } catch {
+            fail(error)
+            return false
+        }
+    }
+
+    func cancelCalendarDeletion() {
+        pendingCalendarDeletion = nil
+        messages.append(ChatEntry(role: .system, text: "Calendar deletion canceled."))
         resumeAfterCalendarSheet()
     }
 
