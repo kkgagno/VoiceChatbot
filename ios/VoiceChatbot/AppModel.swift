@@ -431,13 +431,15 @@ final class AppModel {
         transcript = transcript.isEmpty ? line : transcript + "\n\n" + line
     }
 
-    private func send(text: String) async {
+    private func send(text: String, displayText: String? = nil) async {
         let attachments = pendingAttachments
         pendingAttachments = []
         let attachmentSummary = attachments.isEmpty
             ? ""
             : "\n\nAttached: " + attachments.map(\.name).joined(separator: ", ")
-        messages.append(ChatEntry(role: .user, text: text + attachmentSummary))
+        messages.append(
+            ChatEntry(role: .user, text: (displayText ?? text) + attachmentSummary)
+        )
         do {
             conversationState = .thinking
             let result: AssistantResponse
@@ -477,16 +479,17 @@ final class AppModel {
 
     private func handleCalendarCommand(_ text: String) async -> Bool {
         guard let command = CalendarCommandParser.parse(text) else { return false }
-        messages.append(ChatEntry(role: .user, text: text))
 
         await calendar.requestAccessAndLoad()
         guard calendar.hasFullAccess else {
+            messages.append(ChatEntry(role: .user, text: text))
             failMessage(calendar.errorMessage ?? "Calendar access is required.")
             return true
         }
 
         switch command {
         case .create(let draft):
+            messages.append(ChatEntry(role: .user, text: text))
             pendingCalendarEvent = draft
             messages.append(
                 ChatEntry(
@@ -500,20 +503,18 @@ final class AppModel {
             }
         case .list:
             calendar.loadUpcoming()
-            let summary = calendar.spokenSummary()
-            messages.append(ChatEntry(role: .assistant, text: summary))
-            if isConversationActive {
-                do {
-                    conversationState = .speaking
-                    let audioPath = try await api.speak(summary)
-                    let data = try await api.audioData(relativePath: audioPath)
-                    try audio.play(data)
-                } catch {
-                    fail(error)
-                }
-            } else {
-                conversationState = .idle
-            }
+            let groundedPrompt = """
+            Answer the user's calendar question using only the live iPhone calendar data below.
+            Reason naturally about relative dates and ranges such as today, tomorrow, this weekend,
+            or the next two days. Be concise. If the requested period has no matching events, say so.
+            Do not claim you cannot access the calendar.
+
+            User's question:
+            \(text)
+
+            \(calendar.modelContext())
+            """
+            await send(text: groundedPrompt, displayText: text)
         }
         return true
     }

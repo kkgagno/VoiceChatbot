@@ -31,8 +31,11 @@ enum CalendarCommandParser {
             || lowered.contains("appointment")
             || lowered.contains("event")
 
-        let asksToList = mentionsCalendar
-            && ["what", "show", "list", "upcoming", "do i have", "what's", "whats"]
+        let calendarQuestion = mentionsCalendar
+            || ["am i free", "am i busy", "what do i have", "what have i got", "my schedule"]
+                .contains { lowered.contains($0) }
+        let asksToList = calendarQuestion
+            && ["what", "show", "list", "upcoming", "do i have", "what's", "whats", "free", "busy", "schedule"]
                 .contains { lowered.contains($0) }
         if asksToList {
             return .list
@@ -178,6 +181,24 @@ final class CalendarService {
             return "\(event.title), \(when)"
         }
         return "Your upcoming events are: " + lines.joined(separator: "; ") + "."
+    }
+
+    func modelContext(limit: Int = 100) -> String {
+        let records = events.prefix(limit).map { event in
+            let start = event.startDate.formatted(date: .numeric, time: .complete)
+            let end = event.endDate.formatted(date: .numeric, time: .complete)
+            return "- \(event.title) | start: \(start) | end: \(end) | all-day: \(event.isAllDay) | calendar: \(event.calendarTitle)"
+        }
+        let eventText = records.isEmpty
+            ? "- No upcoming events found."
+            : records.joined(separator: "\n")
+        return """
+        The following is live calendar data read from the user's iPhone.
+        Current local date and time: \(Date.now.formatted(date: .complete, time: .complete))
+        Time zone: \(TimeZone.current.identifier)
+        Upcoming calendar events:
+        \(eventText)
+        """
     }
 }
 
