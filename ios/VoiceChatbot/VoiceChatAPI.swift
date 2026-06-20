@@ -53,6 +53,11 @@ final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, @unchecked 
             return
         }
 
+        // The user explicitly imported and pinned this exact server certificate.
+        // Evaluate it as an X.509 certificate rather than against the URL host,
+        // because the same PC certificate is reached through both its LAN and
+        // Tailscale IP addresses.
+        SecTrustSetPolicies(trust, SecPolicyCreateBasicX509())
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
