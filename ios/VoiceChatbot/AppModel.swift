@@ -28,6 +28,7 @@ final class AppModel {
     var pendingCalendarEvent: CalendarEventDraft?
     var pendingCalendarDeletion: CalendarDeletionDraft?
     var pendingTextMessage: TextMessageDraft?
+    var pendingContactDisambiguation: ContactDisambiguationDraft?
 
     private var api: VoiceChatAPI
     let calendar = CalendarService()
@@ -593,13 +594,15 @@ final class AppModel {
         conversationState = .thinking
         do {
             let prompt = """
-            You are an expert messaging assistant. Select exactly one contact and phone number
-            from the live iPhone Contacts list and draft the text requested by the user.
+            You are an expert messaging assistant. Identify every plausible contact matching the
+            recipient named by the user and draft the requested text.
             Understand nicknames, possessives, and conversational wording, but never invent a
-            contact ID or phone number. Preserve the user's intended tone. Do not add a signature.
+            contact ID. If a first name matches multiple people, include all plausible contact IDs.
+            If one person has multiple phone numbers, include that contact once; the app will show
+            the numbers. Preserve the user's intended tone. Do not add a signature.
 
             Return ONLY one JSON object:
-            {"contactID":"exact id","phoneNumber":"exact phone","body":"message to send"}
+            {"candidateContactIDs":["exact id"],"body":"message to send"}
 
             User request:
             \(text)
@@ -609,24 +612,25 @@ final class AppModel {
             """
             let result = try await api.respond(to: prompt)
             let aiDraft = try TextMessageAIDraft.decode(from: result.response)
-            guard let contact = contacts.contact(
-                id: aiDraft.contactID,
-                phoneNumber: aiDraft.phoneNumber
-            ) else {
+            let choices = contacts.choices(for: aiDraft.candidateContactIDs)
+            guard !choices.isEmpty else {
                 throw ContactsFeatureError.contactNotFound
             }
-            pendingTextMessage = TextMessageDraft(
-                contactID: contact.id,
-                contactName: contact.name,
-                phoneNumber: aiDraft.phoneNumber,
-                body: aiDraft.body
-            )
-            messages.append(
-                ChatEntry(
-                    role: .system,
-                    text: "The AI prepared a text to \(contact.name). Review it before opening Messages."
+            if choices.count == 1, let choice = choices.first {
+                prepareTextMessage(choice: choice, body: aiDraft.body)
+            } else {
+                pendingContactDisambiguation = ContactDisambiguationDraft(
+                    originalRequest: text,
+                    messageBody: aiDraft.body,
+                    choices: choices
                 )
-            )
+                messages.append(
+                    ChatEntry(
+                        role: .system,
+                        text: "I found \(choices.count) possible recipients. Choose who you meant."
+                    )
+                )
+            }
             if isConversationActive {
                 audio.pause()
                 conversationState = .paused
@@ -637,6 +641,35 @@ final class AppModel {
             fail(error)
         }
         return true
+    }
+
+    func selectTextRecipient(
+        _ choice: ContactChoice,
+        from draft: ContactDisambiguationDraft
+    ) {
+        pendingContactDisambiguation = nil
+        prepareTextMessage(choice: choice, body: draft.messageBody)
+    }
+
+    func cancelContactDisambiguation() {
+        pendingContactDisambiguation = nil
+        messages.append(ChatEntry(role: .system, text: "Text recipient selection canceled."))
+        resumeAfterCalendarSheet()
+    }
+
+    private func prepareTextMessage(choice: ContactChoice, body: String) {
+        pendingTextMessage = TextMessageDraft(
+            contactID: choice.contact.id,
+            contactName: choice.contact.name,
+            phoneNumber: choice.phoneNumber,
+            body: body
+        )
+        messages.append(
+            ChatEntry(
+                role: .system,
+                text: "The AI prepared a text to \(choice.contact.name). Review it before opening Messages."
+            )
+        )
     }
 
     func completeTextMessage(result: MessageComposeResult, draft: TextMessageDraft) {

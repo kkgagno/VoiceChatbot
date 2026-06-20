@@ -17,6 +17,20 @@ struct TextMessageDraft: Identifiable, Equatable {
     var body: String
 }
 
+struct ContactChoice: Identifiable, Equatable {
+    let contact: ContactSummary
+    let phoneNumber: String
+
+    var id: String { "\(contact.id)|\(phoneNumber)" }
+}
+
+struct ContactDisambiguationDraft: Identifiable, Equatable {
+    let id = UUID()
+    let originalRequest: String
+    let messageBody: String
+    let choices: [ContactChoice]
+}
+
 enum TextMessageCommandParser {
     static func mightBeCommunicationRequest(_ text: String) -> Bool {
         let lowered = text.lowercased()
@@ -49,8 +63,7 @@ struct TextMessageAIIntent: Decodable {
 }
 
 struct TextMessageAIDraft: Decodable {
-    let contactID: String
-    let phoneNumber: String
+    let candidateContactIDs: [String]
     let body: String
 
     static func decode(from response: String) throws -> TextMessageAIDraft {
@@ -135,6 +148,17 @@ final class ContactsService {
         contacts.first {
             $0.id == id && $0.phoneNumbers.contains(phoneNumber)
         }
+    }
+
+    func choices(for ids: [String]) -> [ContactChoice] {
+        let idSet = Set(ids)
+        return contacts
+            .filter { idSet.contains($0.id) }
+            .flatMap { contact in
+                contact.phoneNumbers.map {
+                    ContactChoice(contact: contact, phoneNumber: $0)
+                }
+            }
     }
 
     func modelContext(limit: Int = 1_000) -> String {
@@ -275,6 +299,47 @@ struct TextMessageConfirmationView: View {
                     showingComposer = false
                     model.completeTextMessage(result: result, draft: draft)
                     if case .sent = result {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct ContactDisambiguationView: View {
+    @Bindable var model: AppModel
+    let draft: ContactDisambiguationDraft
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Several contacts could match. Choose who you meant.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(draft.choices) { choice in
+                    Button {
+                        model.selectTextRecipient(choice, from: draft)
+                        dismiss()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(choice.contact.name)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Text(choice.phoneNumber)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Choose Contact")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        model.cancelContactDisambiguation()
                         dismiss()
                     }
                 }

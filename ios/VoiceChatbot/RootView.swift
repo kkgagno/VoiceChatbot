@@ -75,6 +75,9 @@ struct RootView: View {
         .sheet(item: $model.pendingTextMessage) { draft in
             TextMessageConfirmationView(model: model, draft: draft)
         }
+        .sheet(item: $model.pendingContactDisambiguation) { draft in
+            ContactDisambiguationView(model: model, draft: draft)
+        }
     }
 }
 
