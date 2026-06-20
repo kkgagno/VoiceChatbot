@@ -594,25 +594,20 @@ final class AppModel {
         conversationState = .thinking
         do {
             let prompt = """
-            You are an expert messaging assistant. Identify every plausible contact matching the
-            recipient named by the user and draft the requested text.
-            Understand nicknames, possessives, and conversational wording, but never invent a
-            contact ID. If a first name matches multiple people, include all plausible contact IDs.
-            If one person has multiple phone numbers, include that contact once; the app will show
-            the numbers. Preserve the user's intended tone. Do not add a signature.
+            You are an expert messaging assistant. Extract the person the user wants to contact
+            and draft the requested text. Preserve the recipient wording the user actually used,
+            such as “Jane”, “Jane Smith”, or a saved nickname. Preserve the user's intended tone.
+            Do not add a signature and do not claim the message was sent.
 
             Return ONLY one JSON object:
-            {"candidateContactIDs":["exact id"],"body":"message to send"}
+            {"recipient":"name or relationship from request","body":"message to send"}
 
             User request:
             \(text)
-
-            Live iPhone contacts:
-            \(contacts.modelContext())
             """
             let result = try await api.respond(to: prompt)
             let aiDraft = try TextMessageAIDraft.decode(from: result.response)
-            let choices = contacts.choices(for: aiDraft.candidateContactIDs)
+            let choices = contacts.choices(matching: aiDraft.recipient)
             guard !choices.isEmpty else {
                 throw ContactsFeatureError.contactNotFound
             }

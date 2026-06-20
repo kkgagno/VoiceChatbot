@@ -7,6 +7,7 @@ struct ContactSummary: Identifiable, Equatable {
     let id: String
     let name: String
     let phoneNumbers: [String]
+    let aliases: [String]
 }
 
 struct TextMessageDraft: Identifiable, Equatable {
@@ -63,7 +64,7 @@ struct TextMessageAIIntent: Decodable {
 }
 
 struct TextMessageAIDraft: Decodable {
-    let candidateContactIDs: [String]
+    let recipient: String
     let body: String
 
     static func decode(from response: String) throws -> TextMessageAIDraft {
@@ -118,6 +119,7 @@ final class ContactsService {
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactFamilyNameKey as CNKeyDescriptor,
             CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactNicknameKey as CNKeyDescriptor,
             CNContactPhoneNumbersKey as CNKeyDescriptor
         ]
         let request = CNContactFetchRequest(keysToFetch: keys)
@@ -136,7 +138,8 @@ final class ContactsService {
                 ContactSummary(
                     id: contact.identifier,
                     name: name,
-                    phoneNumbers: numbers
+                    phoneNumbers: numbers,
+                    aliases: [contact.nickname].filter { !$0.isEmpty }
                 )
             )
         }
@@ -159,6 +162,41 @@ final class ContactsService {
                     ContactChoice(contact: contact, phoneNumber: $0)
                 }
             }
+    }
+
+    func choices(matching query: String) -> [ContactChoice] {
+        let normalizedQuery = Self.normalized(query)
+        guard !normalizedQuery.isEmpty else { return [] }
+
+        let exact = contacts.filter {
+            Self.normalized($0.name) == normalizedQuery
+        }
+        let firstName = contacts.filter {
+            Self.normalized($0.name)
+                .split(separator: " ")
+                .first
+                .map(String.init) == normalizedQuery
+        }
+        let contained = contacts.filter {
+            Self.normalized($0.name).contains(normalizedQuery)
+                || $0.aliases.contains { Self.normalized($0).contains(normalizedQuery) }
+        }
+
+        let matches = !exact.isEmpty ? exact : (!firstName.isEmpty ? firstName : contained)
+        return matches.flatMap { contact in
+            contact.phoneNumbers.map {
+                ContactChoice(contact: contact, phoneNumber: $0)
+            }
+        }
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
     }
 
     func modelContext(limit: Int = 1_000) -> String {
