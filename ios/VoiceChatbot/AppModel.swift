@@ -488,18 +488,26 @@ final class AppModel {
         }
 
         switch command {
-        case .create(let draft):
+        case .create:
             messages.append(ChatEntry(role: .user, text: text))
-            pendingCalendarEvent = draft
-            messages.append(
-                ChatEntry(
-                    role: .system,
-                    text: "Review and confirm the calendar event before it is added."
+            conversationState = .thinking
+            do {
+                let draft = try await createCalendarDraftWithAI(from: text)
+                pendingCalendarEvent = draft
+                messages.append(
+                    ChatEntry(
+                        role: .system,
+                        text: "The AI prepared this calendar event. Review and confirm it before it is added."
+                    )
                 )
-            )
-            if isConversationActive {
-                audio.pause()
-                conversationState = .paused
+                if isConversationActive {
+                    audio.pause()
+                    conversationState = .paused
+                } else {
+                    conversationState = .idle
+                }
+            } catch {
+                fail(error)
             }
         case .list:
             calendar.loadUpcoming()
@@ -517,6 +525,27 @@ final class AppModel {
             await send(text: groundedPrompt, displayText: text)
         }
         return true
+    }
+
+    private func createCalendarDraftWithAI(from request: String) async throws -> CalendarEventDraft {
+        let now = Date.now.formatted(date: .complete, time: .complete)
+        let timeZone = TimeZone.current.identifier
+        let prompt = """
+        You are an expert calendar assistant. Convert the user's request into one calendar event.
+        Resolve relative dates using the supplied current local date, time, and time zone.
+        If the year is omitted, choose the next future occurrence. Infer a concise useful title.
+        Infer a sensible duration: use one hour when no duration or ending time is stated.
+        Put useful extra details in notes, but do not invent people, locations, or facts.
+
+        Return ONLY one JSON object with exactly these string fields:
+        {"title":"...","start":"ISO-8601 with UTC offset","end":"ISO-8601 with UTC offset","notes":"..."}
+
+        Current local date and time: \(now)
+        Time zone: \(timeZone)
+        User request: \(request)
+        """
+        let result = try await api.respond(to: prompt)
+        return try CalendarAIDraft.decode(from: result.response).eventDraft()
     }
 
     func saveCalendarEvent(_ draft: CalendarEventDraft) -> Bool {

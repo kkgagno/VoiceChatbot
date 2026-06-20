@@ -20,12 +20,12 @@ struct CalendarEventDraft: Identifiable, Equatable {
 }
 
 enum CalendarCommand {
-    case create(CalendarEventDraft)
+    case create
     case list
 }
 
 enum CalendarCommandParser {
-    static func parse(_ text: String, now: Date = .now) -> CalendarCommand? {
+    static func parse(_ text: String) -> CalendarCommand? {
         let lowered = text.lowercased()
         let mentionsCalendar = lowered.contains("calendar")
             || lowered.contains("appointment")
@@ -45,58 +45,46 @@ enum CalendarCommandParser {
             .contains { lowered.contains($0) }
         guard asksToCreate, mentionsCalendar else { return nil }
 
-        guard let detector = try? NSDataDetector(
-            types: NSTextCheckingResult.CheckingType.date.rawValue
-        ) else { return nil }
-        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = detector.firstMatch(in: text, range: fullRange),
-              var startDate = match.date
-        else { return nil }
+        return .create
+    }
+}
 
-        if startDate < now.addingTimeInterval(-60) {
-            startDate = Calendar.current.date(byAdding: .year, value: 1, to: startDate) ?? startDate
+struct CalendarAIDraft: Decodable {
+    let title: String
+    let start: String
+    let end: String
+    let notes: String?
+
+    func eventDraft() throws -> CalendarEventDraft {
+        guard let startDate = Self.parseDate(start),
+              let endDate = Self.parseDate(end)
+        else {
+            throw CalendarFeatureError.invalidAIDraft
         }
-
-        let title = extractedTitle(from: text, dateRange: match.range)
-        return .create(
-            CalendarEventDraft(
-                title: title.isEmpty ? "New event" : title,
-                startDate: startDate,
-                endDate: startDate.addingTimeInterval(60 * 60)
-            )
+        return CalendarEventDraft(
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            startDate: startDate,
+            endDate: max(endDate, startDate.addingTimeInterval(5 * 60)),
+            notes: notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         )
     }
 
-    private static func extractedTitle(from text: String, dateRange: NSRange) -> String {
-        if let expression = try? NSRegularExpression(
-            pattern: #"\b(?:for|called|titled|named)\s+"#,
-            options: .caseInsensitive
-        ) {
-            let range = NSRange(text.startIndex..<text.endIndex, in: text)
-            if let match = expression.matches(in: text, range: range).last,
-               let markerRange = Range(match.range, in: text) {
-                return cleanedTitle(String(text[markerRange.upperBound...]))
-            }
+    static func decode(from response: String) throws -> CalendarAIDraft {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        let json: String
+        if let start = trimmed.firstIndex(of: "{"),
+           let end = trimmed.lastIndex(of: "}") {
+            json = String(trimmed[start...end])
+        } else {
+            throw CalendarFeatureError.invalidAIDraft
         }
-
-        var remainder = text
-        if let swiftRange = Range(dateRange, in: remainder) {
-            remainder.removeSubrange(swiftRange)
-        }
-        remainder = remainder.replacingOccurrences(
-            of: #"\b(add|create|schedule|put|a|an|the|to|on|my|calendar|event|appointment)\b"#,
-            with: " ",
-            options: [.regularExpression, .caseInsensitive]
-        )
-        return cleanedTitle(remainder)
+        return try JSONDecoder().decode(CalendarAIDraft.self, from: Data(json.utf8))
     }
 
-    private static func cleanedTitle(_ value: String) -> String {
-        let words = value
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        guard let first = words.first else { return "" }
-        return String(first).uppercased() + String(words.dropFirst())
+    private static func parseDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
 
@@ -205,6 +193,7 @@ final class CalendarService {
 enum CalendarFeatureError: LocalizedError {
     case accessRequired
     case noWritableCalendar
+    case invalidAIDraft
 
     var errorDescription: String? {
         switch self {
@@ -212,6 +201,8 @@ enum CalendarFeatureError: LocalizedError {
             "Calendar access is required."
         case .noWritableCalendar:
             "No writable calendar is available on this iPhone."
+        case .invalidAIDraft:
+            "The AI could not produce a valid calendar event. Please include a date and time and try again."
         }
     }
 }
