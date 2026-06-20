@@ -108,7 +108,7 @@ final class AppModel {
                 group.addTask {
                     do {
                         if candidate.name == "VPN" {
-                            try await Task.sleep(for: .milliseconds(200))
+                            await Task.sleep(for: .milliseconds(200))
                         }
                         let probe = VoiceChatAPI(
                             profile: currentProfile,
@@ -116,13 +116,13 @@ final class AppModel {
                             probeMode: true
                         )
                         let discoveredStatus = try await probe.status()
-                        return ConnectionAttempt(
+                        return Optional(ConnectionAttempt(
                             name: candidate.name,
                             url: candidate.url,
                             status: discoveredStatus
-                        )
+                        ))
                     } catch {
-                        return nil
+                        return Optional<ConnectionAttempt>.none
                     }
                 }
             }
