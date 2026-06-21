@@ -40,6 +40,9 @@ final class AppModel {
     private var processingSegment = false
     private var networkRefreshTask: Task<Void, Never>?
     private var connectionProbeGeneration = 0
+    private var healthDiscussionTurns = [HealthDiscussionTurn]()
+    private var healthDiscussionData = ""
+    private var healthDiscussionUpdatedAt: Date?
 
     init() {
         let initialProfile: ServerProfile
@@ -278,15 +281,16 @@ final class AppModel {
         let text = typedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
         typedMessage = ""
-        if pendingAttachments.isEmpty, await handleHealthQuestion(text) {
-            return
-        }
         if pendingAttachments.isEmpty, await handleTextMessageCommand(text) {
             return
         }
         if pendingAttachments.isEmpty, await handleCalendarCommand(text) {
             return
         }
+        if pendingAttachments.isEmpty, await handleHealthQuestion(text) {
+            return
+        }
+        clearHealthDiscussion()
         await send(text: text.isEmpty ? "Review the attached file." : text)
     }
 
@@ -422,15 +426,16 @@ final class AppModel {
                 audio.updateNowPlaying(active: true, title: "Active transcription")
                 conversationState = .listening
             } else {
-                if await handleHealthQuestion(transcript) {
-                    return
-                }
                 if await handleTextMessageCommand(transcript) {
                     return
                 }
                 if await handleCalendarCommand(transcript) {
                     return
                 }
+                if await handleHealthQuestion(transcript) {
+                    return
+                }
+                clearHealthDiscussion()
                 await send(text: transcript)
             }
         } catch {
@@ -680,22 +685,48 @@ final class AppModel {
     }
 
     private func handleHealthQuestion(_ text: String) async -> Bool {
-        guard HealthQuestionParser.isHealthQuestion(text) else { return false }
+        let isExplicitHealthQuestion = HealthQuestionParser.isHealthQuestion(text)
+        let discussionIsRecent = healthDiscussionUpdatedAt.map {
+            Date.now.timeIntervalSince($0) < 20 * 60
+        } ?? false
+        let isFollowUp = discussionIsRecent
+            && !healthDiscussionTurns.isEmpty
+            && HealthQuestionParser.isLikelyFollowUp(text)
+        guard isExplicitHealthQuestion || isFollowUp else { return false }
+
         messages.append(ChatEntry(role: .user, text: text))
         conversationState = .thinking
         do {
-            let healthContext = try await health.modelContext()
+            let shouldRefreshData = healthDiscussionData.isEmpty
+                || isExplicitHealthQuestion
+                || (healthDiscussionUpdatedAt.map {
+                    Date.now.timeIntervalSince($0) > 5 * 60
+                } ?? true)
+            if shouldRefreshData {
+                healthDiscussionData = try await health.modelContext()
+            }
+            let priorDiscussion = healthDiscussionTurns.suffix(8).map {
+                "\($0.role): \($0.text)"
+            }.joined(separator: "\n")
             let prompt = """
-            Answer the user's question using only the live read-only Apple Health data below.
-            Reason naturally about relative dates and comparisons. Be concise but useful.
-            Clearly distinguish missing data from a zero value. Do not diagnose disease, prescribe
-            treatment, or claim the data is medically complete. For concerning values, recommend
-            discussing them with a qualified healthcare professional.
+            Have a natural, clinically informed health conversation with the user using only the
+            live Apple Health data below. Sound warm and conversational, like a thoughtful health
+            professional explaining the important takeaway aloud—not like a report or spreadsheet.
+
+            Answer the exact question first. By default use 2–4 spoken sentences, mention only the
+            one to three numbers that materially support the answer, and summarize patterns instead
+            of reading sample lists. Do not use bullets unless the user asks for a breakdown.
+            Clearly distinguish missing data from zero. Do not diagnose, prescribe treatment, or
+            pretend to be the user's doctor. Use a medical caution only when the data or question
+            genuinely warrants it; do not repeat generic disclaimers in every answer.
+
+            Recent private health discussion on this iPhone:
+            \(priorDiscussion.isEmpty ? "No prior health discussion." : priorDiscussion)
 
             User question:
             \(text)
 
-            \(healthContext)
+            \(healthDiscussionData)
             """
             let answer: String
             do {
@@ -705,6 +736,14 @@ final class AppModel {
                 guard status?.ok == true else { throw error }
                 answer = try await api.tool(prompt: prompt)
             }
+            healthDiscussionTurns.append(
+                HealthDiscussionTurn(role: "User", text: text)
+            )
+            healthDiscussionTurns.append(
+                HealthDiscussionTurn(role: "Assistant", text: answer)
+            )
+            healthDiscussionTurns = Array(healthDiscussionTurns.suffix(10))
+            healthDiscussionUpdatedAt = .now
             messages.append(ChatEntry(role: .assistant, text: answer))
             if isConversationActive {
                 conversationState = .speaking
@@ -718,6 +757,12 @@ final class AppModel {
             failMessage(error.localizedDescription)
         }
         return true
+    }
+
+    private func clearHealthDiscussion() {
+        healthDiscussionTurns = []
+        healthDiscussionData = ""
+        healthDiscussionUpdatedAt = nil
     }
 
     func selectTextRecipient(
