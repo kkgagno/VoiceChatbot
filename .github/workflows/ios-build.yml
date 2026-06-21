@@ -56,15 +56,24 @@ jobs:
           pattern = re.compile(r"^(.*?\.swift):(\d+):(\d+): (error|warning): (.*)$")
 
           with open("xcodebuild.log", encoding="utf-8", errors="replace") as log:
+              found = False
               for raw_line in log:
-                  match = pattern.match(raw_line.strip())
+                  line_text = raw_line.strip()
+                  match = pattern.match(line_text)
                   if not match:
+                      if " error:" in line_text.lower() or line_text.lower().startswith("error:"):
+                          message = line_text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                          print(f"::error::{message}")
+                          found = True
                       continue
                   path, line, column, level, message = match.groups()
                   if path.startswith(workspace):
                       path = path[len(workspace):]
                   message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                   print(f"::{level} file={path},line={line},col={column}::{message}")
+                  found = True
+              if not found:
+                  print("::error::Xcode build failed; inspect the Build for iPhone Simulator step.")
           PY
 
       - name: Verify runtime privacy configuration
