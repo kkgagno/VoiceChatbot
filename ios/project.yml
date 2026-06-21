@@ -27,6 +27,7 @@ targets:
         NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.
         NSCalendarsFullAccessUsageDescription: Voice Chatbot uses calendar access to show upcoming events and add events only after you confirm them.
         NSContactsUsageDescription: Voice Chatbot uses contacts to resolve names and prepare text messages only after you request them.
+        NSHealthShareUsageDescription: Voice Chatbot reads only the Apple Health categories you choose so it can answer your health and activity questions.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSExceptionDomains:
@@ -51,5 +52,6 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_FILE: VoiceChatbot/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: VoiceChatbot/VoiceChatbot.entitlements
     scheme:
       testTargets: []

@@ -34,6 +34,7 @@ final class AppModel {
     private var api: VoiceChatAPI
     let calendar = CalendarService()
     let contacts = ContactsService()
+    let health = HealthService()
     private let audio = BackgroundConversationAudio()
     private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
@@ -277,6 +278,9 @@ final class AppModel {
         let text = typedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
         typedMessage = ""
+        if pendingAttachments.isEmpty, await handleHealthQuestion(text) {
+            return
+        }
         if pendingAttachments.isEmpty, await handleTextMessageCommand(text) {
             return
         }
@@ -418,6 +422,9 @@ final class AppModel {
                 audio.updateNowPlaying(active: true, title: "Active transcription")
                 conversationState = .listening
             } else {
+                if await handleHealthQuestion(transcript) {
+                    return
+                }
                 if await handleTextMessageCommand(transcript) {
                     return
                 }
@@ -663,6 +670,40 @@ final class AppModel {
             if isConversationActive {
                 audio.pause()
                 conversationState = .paused
+            } else {
+                conversationState = .idle
+            }
+        } catch {
+            failMessage(error.localizedDescription)
+        }
+        return true
+    }
+
+    private func handleHealthQuestion(_ text: String) async -> Bool {
+        guard HealthQuestionParser.isHealthQuestion(text) else { return false }
+        messages.append(ChatEntry(role: .user, text: text))
+        conversationState = .thinking
+        do {
+            let healthContext = try await health.modelContext()
+            let prompt = """
+            Answer the user's question using only the live read-only Apple Health data below.
+            Reason naturally about relative dates and comparisons. Be concise but useful.
+            Clearly distinguish missing data from a zero value. Do not diagnose disease, prescribe
+            treatment, or claim the data is medically complete. For concerning values, recommend
+            discussing them with a qualified healthcare professional.
+
+            User question:
+            \(text)
+
+            \(healthContext)
+            """
+            let answer = try await api.tool(prompt: prompt)
+            messages.append(ChatEntry(role: .assistant, text: answer))
+            if isConversationActive {
+                conversationState = .speaking
+                let audioPath = try await api.speak(answer)
+                let data = try await api.audioData(relativePath: audioPath)
+                try audio.play(data)
             } else {
                 conversationState = .idle
             }

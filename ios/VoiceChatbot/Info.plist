@@ -22,6 +22,8 @@
     <string>Voice Chatbot uses calendar access to show upcoming events and add events only after you confirm them.</string>
     <key>NSContactsUsageDescription</key>
     <string>Voice Chatbot uses contacts to resolve names and prepare text messages only after you request them.</string>
+    <key>NSHealthShareUsageDescription</key>
+    <string>Voice Chatbot reads only the Apple Health categories you choose so it can answer your health and activity questions.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
