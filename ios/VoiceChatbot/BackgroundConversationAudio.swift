@@ -12,13 +12,19 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
     var onRemoteResume: (() -> Void)?
     var onRemoteStop: (() -> Void)?
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private var player: AVAudioPlayer?
     private var isPaused = false
+    private var wantsListening = false
+    private var isInterrupted = false
+    private var isRecoveringCapture = false
     private var inputTapInstalled = false
     private var voiceProcessingEnabled = false
     private var isApplicationBackgrounded = false
     private var usingSplitPlaybackSession = false
+    private var captureWatchdog: DispatchSourceTimer?
+    private let captureHeartbeat = CaptureHeartbeat()
+    private let captureStallThreshold = 8.0
     private lazy var speechDetector = BackgroundSpeechDetector(
         onCandidate: { [weak self] data, completion in
             Task { @MainActor in
@@ -41,7 +47,10 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         configureRemoteCommands()
         observeInterruptions()
         observeRouteChanges()
+        observeAudioEngineChanges()
+        observeMediaServices()
         observeApplicationLifecycle()
+        startCaptureWatchdog()
     }
 
     func requestPermission() async -> Bool {
@@ -50,6 +59,7 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func startListening() throws {
         isPaused = false
+        wantsListening = true
         try configureSession()
 
         let input = engine.inputNode
@@ -63,7 +73,9 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
         removeInputTap()
         engine.reset()
+        let heartbeat = captureHeartbeat
         input.installTap(onBus: 0, bufferSize: 2_048, format: nil) { buffer, _ in
+            heartbeat.mark()
             guard let channel = buffer.floatChannelData?.pointee else { return }
             let values = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             detector.consume(values, sampleRate: buffer.format.sampleRate)
@@ -75,13 +87,16 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             try engine.start()
         } catch {
             removeInputTap()
+            wantsListening = false
             throw error
         }
+        captureHeartbeat.mark()
         updateNowPlaying(active: true)
     }
 
     func pause() {
         isPaused = true
+        wantsListening = false
         speechDetector.suspendAndReset()
         stopEngine()
         updateNowPlaying(active: false)
@@ -93,6 +108,9 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
 
     func stop() {
         isPaused = false
+        wantsListening = false
+        isInterrupted = false
+        isRecoveringCapture = false
         speechDetector.suspendAndReset(keepingCapacity: false)
         stopEngine()
         player?.stop()
@@ -177,6 +195,60 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
         engine.reset()
     }
 
+    private func startCaptureWatchdog() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 4, repeating: 3, leeway: .milliseconds(500))
+        timer.setEventHandler { [weak self] in
+            guard let self,
+                  self.wantsListening,
+                  !self.isPaused,
+                  !self.isInterrupted,
+                  !self.isRecoveringCapture,
+                  self.player == nil,
+                  self.captureHeartbeat.elapsed >= self.captureStallThreshold
+            else { return }
+            self.recoverCaptureGraph(recreateEngine: false)
+        }
+        timer.resume()
+        captureWatchdog = timer
+    }
+
+    private func recoverCaptureGraph(recreateEngine: Bool) {
+        guard wantsListening,
+              !isPaused,
+              !isInterrupted,
+              player == nil,
+              !isRecoveringCapture
+        else { return }
+
+        isRecoveringCapture = true
+        speechDetector.suspendAndReset()
+        stopEngine()
+        if recreateEngine {
+            engine = AVAudioEngine()
+            voiceProcessingEnabled = false
+        }
+        captureHeartbeat.mark()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(250))
+            defer { self.isRecoveringCapture = false }
+            guard self.wantsListening,
+                  !self.isPaused,
+                  !self.isInterrupted,
+                  self.player == nil
+            else { return }
+            do {
+                try self.startListening()
+            } catch {
+                // Leave wantsListening intact. The watchdog will retry after
+                // the route or media service becomes available again.
+                self.captureHeartbeat.mark()
+            }
+        }
+    }
+
     private func enableVoiceProcessingIfAvailable() {
         // Voice Processing I/O is reliable on iPhone, but several iPad routes
         // fail or stop after lock/playback transitions. iPad still uses PC
@@ -216,10 +288,14 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             else { return }
 
             Task { @MainActor in
-                if type == .ended, !self.isPaused {
-                    try? self.startListening()
-                } else if type == .began {
+                if type == .began {
+                    self.isInterrupted = true
                     self.stopEngine()
+                } else if type == .ended {
+                    self.isInterrupted = false
+                    if self.wantsListening, !self.isPaused {
+                        self.recoverCaptureGraph(recreateEngine: false)
+                    }
                 }
             }
         }
@@ -246,9 +322,31 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             }
 
             Task { @MainActor in
-                self.stopEngine()
-                try? await Task.sleep(for: .milliseconds(150))
-                try? self.startListening()
+                self.recoverCaptureGraph(recreateEngine: false)
+            }
+        }
+    }
+
+    private func observeAudioEngineChanges() {
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverCaptureGraph(recreateEngine: false)
+            }
+        }
+    }
+
+    private func observeMediaServices() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverCaptureGraph(recreateEngine: true)
             }
         }
     }
@@ -302,6 +400,24 @@ final class BackgroundConversationAudio: NSObject, AVAudioPlayerDelegate {
             MPMediaItemPropertyArtist: title,
             MPNowPlayingInfoPropertyPlaybackRate: 1
         ] : nil
+    }
+}
+
+private final class CaptureHeartbeat: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastBufferUptime = ProcessInfo.processInfo.systemUptime
+
+    var elapsed: TimeInterval {
+        lock.lock()
+        let last = lastBufferUptime
+        lock.unlock()
+        return ProcessInfo.processInfo.systemUptime - last
+    }
+
+    func mark() {
+        lock.lock()
+        lastBufferUptime = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
     }
 }
 
