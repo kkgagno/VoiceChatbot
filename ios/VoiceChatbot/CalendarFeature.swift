@@ -46,7 +46,44 @@ enum CalendarCommand {
 
 enum CalendarCommandParser {
     static func parse(_ text: String) -> CalendarCommand? {
-        let lowered = text.lowercased()
+        var lowered = text
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Speech recognition commonly turns "add a calendar event" into
+        // "I had a calendar event." Correct that only when the remainder
+        // clearly describes a future event, so a genuine statement about a
+        // past event is not converted into an action.
+        let futureEventMarkers = [
+            "tonight", "tomorrow", "next ", " at ", " for ", " on ",
+            "this morning", "this afternoon", "this evening"
+        ]
+        let soundsLikeMisheardAdd =
+            lowered.hasPrefix("i had a calendar event")
+                || lowered.hasPrefix("i had an event")
+                || lowered.hasPrefix("i add a calendar event")
+                || lowered.hasPrefix("i add an event")
+        if soundsLikeMisheardAdd,
+           futureEventMarkers.contains(where: lowered.contains) {
+            if lowered.hasPrefix("i had a calendar event") {
+                lowered.replaceSubrange(
+                    lowered.startIndex..<lowered.index(
+                        lowered.startIndex,
+                        offsetBy: "i had a calendar event".count
+                    ),
+                    with: "add a calendar event"
+                )
+            } else if lowered.hasPrefix("i had an event") {
+                lowered.replaceSubrange(
+                    lowered.startIndex..<lowered.index(
+                        lowered.startIndex,
+                        offsetBy: "i had an event".count
+                    ),
+                    with: "add an event"
+                )
+            }
+        }
         let mentionsCalendar = lowered.contains("calendar")
             || lowered.contains("appointment")
             || lowered.contains("event")
@@ -68,7 +105,7 @@ enum CalendarCommandParser {
             return .list
         }
 
-        let asksToCreate = ["add", "create", "schedule", "put"]
+        let asksToCreate = ["add", "create", "schedule", "put", "set up", "make"]
             .contains { lowered.contains($0) }
         guard asksToCreate, mentionsCalendar else { return nil }
 

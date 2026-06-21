@@ -1300,6 +1300,14 @@ public partial class MainWindow : Window
     {
         var basePrompt = SystemPromptBox.Text;
         basePrompt += "\n\n" + GetEasternDateTimeSystemContext();
+        basePrompt +=
+            "\n\nCapability truthfulness: You do not have direct access to the user's live iPhone " +
+            "calendar, Health data, contacts, text messages, reminders, location, or other private " +
+            "device data in ordinary chat. Never claim that you checked, found, created, changed, " +
+            "deleted, sent, or confirmed anything in those services unless the current request " +
+            "explicitly includes live tool results proving it. A user's statement is not proof that " +
+            "an item exists. If a likely voice-transcription error makes an action ambiguous, briefly " +
+            "state what you think they meant and ask for confirmation instead of fabricating a result.";
         if (IsCodeOrScriptRequest(currentUserText))
         {
             basePrompt += "\n\n" + GetCodeArtifactSystemInstruction(currentUserText);
