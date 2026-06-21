@@ -1,4 +1,5 @@
 import Contacts
+import Foundation
 import MessageUI
 import Observation
 import SwiftUI
@@ -69,28 +70,60 @@ struct TextMessageAIDraft: Decodable {
 
     static func decode(from response: String) throws -> TextMessageAIDraft {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = trimmed.firstIndex(of: "{")
-        else {
-            throw ContactsFeatureError.invalidAIDraft
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           let draft = draft(from: object) {
+            return draft
         }
 
-        let decoder = JSONDecoder()
-        var cursor = trimmed.index(after: start)
-        while cursor <= trimmed.endIndex {
-            if trimmed.index(before: cursor) < trimmed.endIndex,
-               trimmed[trimmed.index(before: cursor)] == "}" {
-                let candidate = String(trimmed[start..<cursor])
-                if let draft = try? decoder.decode(
-                    TextMessageAIDraft.self,
-                    from: Data(candidate.utf8)
-                ), draft.isValid {
+        if let start = trimmed.firstIndex(of: "{") {
+            var cursor = trimmed.index(after: start)
+            while cursor <= trimmed.endIndex {
+                if trimmed.index(before: cursor) < trimmed.endIndex,
+                   trimmed[trimmed.index(before: cursor)] == "}" {
+                    let candidate = String(trimmed[start..<cursor])
+                    if let data = candidate.data(using: .utf8),
+                       let object = try? JSONSerialization.jsonObject(with: data),
+                       let draft = draft(from: object) {
+                        return draft
+                    }
+                }
+                guard cursor < trimmed.endIndex else { break }
+                cursor = trimmed.index(after: cursor)
+            }
+        }
+        throw ContactsFeatureError.invalidAIDraft
+    }
+
+    private static func draft(from object: Any) -> TextMessageAIDraft? {
+        if let dictionary = object as? [String: Any] {
+            var normalized = [String: Any]()
+            for (key, value) in dictionary {
+                normalized[key.lowercased()] = value
+            }
+            let recipientKeys = ["recipient", "contact", "contactname", "name", "to"]
+            let bodyKeys = ["body", "message", "text", "content"]
+            let recipient = recipientKeys.compactMap { normalized[$0] as? String }.first
+            let body = bodyKeys.compactMap { normalized[$0] as? String }.first
+            if let recipient, let body {
+                let candidate = TextMessageAIDraft(recipient: recipient, body: body)
+                if candidate.isValid {
+                    return candidate
+                }
+            }
+            for value in dictionary.values {
+                if let draft = draft(from: value) {
                     return draft
                 }
             }
-            guard cursor < trimmed.endIndex else { break }
-            cursor = trimmed.index(after: cursor)
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let draft = draft(from: value) {
+                    return draft
+                }
+            }
         }
-        throw ContactsFeatureError.invalidAIDraft
+        return nil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -114,6 +147,11 @@ struct TextMessageAIDraft: Decodable {
             ?? container.decodeIfPresent(String.self, forKey: .message)
             ?? container.decodeIfPresent(String.self, forKey: .text)
             ?? ""
+    }
+
+    private init(recipient: String, body: String) {
+        self.recipient = recipient
+        self.body = body
     }
 
     private var isValid: Bool {

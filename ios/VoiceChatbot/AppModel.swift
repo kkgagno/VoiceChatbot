@@ -620,7 +620,25 @@ final class AppModel {
             \(text)
             """
             let result = try await api.tool(prompt: prompt)
-            let aiDraft = try TextMessageAIDraft.decode(from: result)
+            let aiDraft: TextMessageAIDraft
+            do {
+                aiDraft = try TextMessageAIDraft.decode(from: result)
+            } catch {
+                let repairPrompt = """
+                Convert the raw assistant output below into exactly one valid JSON object.
+                Preserve the intended recipient and message. Return no explanation.
+                Required shape:
+                {"recipient":"person named by user","body":"text message content"}
+
+                Original user request:
+                \(text)
+
+                Raw assistant output:
+                \(result)
+                """
+                let repaired = try await api.tool(prompt: repairPrompt)
+                aiDraft = try TextMessageAIDraft.decode(from: repaired)
+            }
             let choices = contacts.choices(matching: aiDraft.recipient)
             guard !choices.isEmpty else {
                 throw ContactsFeatureError.contactNotFound
