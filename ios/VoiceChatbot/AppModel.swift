@@ -280,10 +280,13 @@ final class AppModel {
         audio.stop()
         isConversationActive = false
         conversationState = .idle
-        do {
-            try wakeWord.start()
-        } catch {
-            wakeWord.statusMessage = error.localizedDescription
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.wakeWord.start()
+            } catch {
+                self.wakeWord.statusMessage = error.localizedDescription
+            }
         }
     }
 
@@ -292,7 +295,7 @@ final class AppModel {
         await refreshStatus()
         guard status?.ok == true, await audio.requestPermission() else {
             wakeWord.statusMessage = "Could not start the voice request"
-            try? wakeWord.start()
+            try? await wakeWord.start()
             return
         }
         do {
@@ -305,7 +308,7 @@ final class AppModel {
         } catch {
             returnToWakeModeAfterResponse = false
             wakeWord.statusMessage = error.localizedDescription
-            try? wakeWord.start()
+            try? await wakeWord.start()
         }
     }
 
@@ -315,10 +318,13 @@ final class AppModel {
         isConversationActive = false
         conversationState = .idle
         guard wakeWord.isEnabled else { return }
-        do {
-            try wakeWord.start()
-        } catch {
-            wakeWord.statusMessage = error.localizedDescription
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.wakeWord.start()
+            } catch {
+                self.wakeWord.statusMessage = error.localizedDescription
+            }
         }
     }
 

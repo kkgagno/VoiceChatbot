@@ -12,6 +12,8 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Voice Chatbot uses the microphone during conversations and transcription sessions you start.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Voice Chatbot uses Apple on-device speech recognition only to detect the wake phrase you configure.</string>
     <key>NSCameraUsageDescription</key>
     <string>Voice Chatbot uses the camera only when you choose to take a photo for your PC model to examine.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>

@@ -8,19 +8,12 @@ settings:
     SWIFT_VERSION: "5.0"
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
-packages:
-  Porcupine:
-    url: https://github.com/Picovoice/porcupine.git
-    exactVersion: "4.0.0"
 targets:
   VoiceChatbot:
     type: application
     platform: iOS
     sources:
       - path: VoiceChatbot
-    dependencies:
-      - package: Porcupine
-        product: Porcupine
     info:
       path: VoiceChatbot/Info.plist
       properties:
@@ -29,6 +22,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         NSMicrophoneUsageDescription: Voice Chatbot uses the microphone during conversations and transcription sessions you start.
+        NSSpeechRecognitionUsageDescription: Voice Chatbot uses Apple on-device speech recognition only to detect the wake phrase you configure.
         NSCameraUsageDescription: Voice Chatbot uses the camera only when you choose to take a photo for your PC model to examine.
         NSPhotoLibraryAddUsageDescription: Voice Chatbot adds generated images to Photos only when you tap Save to Photos.
         NSLocalNetworkUsageDescription: Voice Chatbot connects to your VoiceChatbot server on your PC over Wi-Fi or VPN.

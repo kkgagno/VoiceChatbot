@@ -1,213 +1,201 @@
+import AVFAudio
 import Foundation
 import Observation
-import Porcupine
-import Security
+import Speech
 import SwiftUI
-import UniformTypeIdentifiers
-
-enum WakeKeyword: String, CaseIterable, Identifiable {
-    case computer = "Computer"
-    case jarvis = "Jarvis"
-    case picovoice = "Picovoice"
-    case porcupine = "Porcupine"
-    case terminator = "Terminator"
-    case blueberry = "Blueberry"
-    case custom = "Custom .ppn"
-
-    var id: String { rawValue }
-
-    var builtIn: Porcupine.BuiltInKeyword? {
-        switch self {
-        case .computer: .computer
-        case .jarvis: .jarvis
-        case .picovoice: .picovoice
-        case .porcupine: .porcupine
-        case .terminator: .terminator
-        case .blueberry: .blueberry
-        case .custom: nil
-        }
-    }
-}
 
 @MainActor
 @Observable
 final class WakeWordService {
     var isEnabled = UserDefaults.standard.bool(forKey: "wakeWordEnabled")
-    var keyword = WakeKeyword(
-        rawValue: UserDefaults.standard.string(forKey: "wakeWordKeyword") ?? ""
-    ) ?? .computer
-    var sensitivity = UserDefaults.standard.object(forKey: "wakeWordSensitivity") as? Double ?? 0.55
+    var phrase = UserDefaults.standard.string(forKey: "wakeWordPhrase") ?? "Hey Computer"
     var isListening = false
     var statusMessage = "Wake word is off"
-    var customKeywordName = UserDefaults.standard.string(forKey: "wakeWordCustomName") ?? ""
+    var lastHeardText = ""
 
     var onDetection: (() -> Void)?
 
-    private var manager: PorcupineManager?
-    private let accessKeyAccount = "PicovoiceAccessKey"
-
-    var accessKey: String {
-        get { KeychainValue.read(account: accessKeyAccount) ?? "" }
-        set { KeychainValue.write(newValue, account: accessKeyAccount) }
-    }
+    private let engine = AVAudioEngine()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var restartTask: Task<Void, Never>?
+    private var tapInstalled = false
+    private var speechRecognizer = SFSpeechRecognizer(locale: .current)
 
     func saveSettings() {
+        phrase = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(isEnabled, forKey: "wakeWordEnabled")
-        UserDefaults.standard.set(keyword.rawValue, forKey: "wakeWordKeyword")
-        UserDefaults.standard.set(sensitivity, forKey: "wakeWordSensitivity")
-        UserDefaults.standard.set(customKeywordName, forKey: "wakeWordCustomName")
+        UserDefaults.standard.set(phrase, forKey: "wakeWordPhrase")
     }
 
-    func start() throws {
-        stop()
-        let key = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
-            throw WakeWordError.accessKeyRequired
+    func start() async throws {
+        stop(preserveStatus: true)
+        let configuredPhrase = normalized(phrase)
+        guard !configuredPhrase.isEmpty else {
+            throw WakeWordError.phraseRequired
+        }
+        guard await requestSpeechPermission() else {
+            throw WakeWordError.speechPermissionRequired
+        }
+        guard await AVAudioApplication.requestRecordPermission() else {
+            throw WakeWordError.microphonePermissionRequired
+        }
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            throw WakeWordError.recognizerUnavailable
+        }
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw WakeWordError.onDeviceRecognitionUnavailable
         }
 
-        let detected: (Int32) -> Void = { [weak self] _ in
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: .measurement,
+            options: [.defaultToSpeaker, .allowBluetooth]
+        )
+        try session.setActive(true)
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = true
+        request.addsPunctuation = false
+        request.taskHint = .confirmation
+        request.contextualStrings = [phrase]
+        recognitionRequest = request
+
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 1_024, format: nil) {
+            [weak request] buffer, _ in
+            request?.append(buffer)
+        }
+        tapInstalled = true
+
+        recognitionTask = recognizer.recognitionTask(with: request) {
+            [weak self] result, error in
             Task { @MainActor in
                 guard let self, self.isListening else { return }
-                self.stop()
-                self.statusMessage = "Wake word detected"
-                self.onDetection?()
-            }
-        }
-        let failed: (Error) -> Void = { [weak self] error in
-            Task { @MainActor in
-                self?.statusMessage = error.localizedDescription
-                self?.isListening = false
+                if let result {
+                    let heard = result.bestTranscription.formattedString
+                    self.lastHeardText = heard
+                    if self.containsWakePhrase(heard) {
+                        self.statusMessage = "Wake phrase detected"
+                        self.stop(preserveStatus: true)
+                        self.onDetection?()
+                        return
+                    }
+                }
+                if error != nil || result?.isFinal == true {
+                    self.scheduleRestart()
+                }
             }
         }
 
-        if keyword == .custom {
-            guard let path = customKeywordPath else {
-                throw WakeWordError.customKeywordRequired
-            }
-            manager = try PorcupineManager(
-                accessKey: key,
-                keywordPath: path,
-                sensitivity: Float32(sensitivity),
-                onDetection: detected,
-                errorCallback: failed
-            )
-        } else if let builtIn = keyword.builtIn {
-            manager = try PorcupineManager(
-                accessKey: key,
-                keyword: builtIn,
-                sensitivity: Float32(sensitivity),
-                onDetection: detected,
-                errorCallback: failed
-            )
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            stop(preserveStatus: true)
+            throw error
         }
-
-        try manager?.start()
         isListening = true
-        statusMessage = "Listening for “\(displayName)”"
+        statusMessage = "Listening locally for “\(phrase)”"
     }
 
-    func stop() {
-        try? manager?.stop()
-        try? manager?.delete()
-        manager = nil
+    func stop(preserveStatus: Bool = false) {
+        restartTask?.cancel()
+        restartTask = nil
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        if engine.isRunning {
+            engine.stop()
+        }
+        engine.reset()
         isListening = false
-        if !isEnabled {
-            statusMessage = "Wake word is off"
+        lastHeardText = ""
+        if !preserveStatus {
+            statusMessage = isEnabled ? "Wake mode stopped" : "Wake word is off"
         }
     }
 
-    func importCustomKeyword(from source: URL) throws {
-        let accessing = source.startAccessingSecurityScopedResource()
-        defer { if accessing { source.stopAccessingSecurityScopedResource() } }
-        let directory = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ).appending(path: "WakeWords", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        let destination = directory.appending(path: "custom_ios.ppn")
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+    private func scheduleRestart() {
+        guard isEnabled, isListening, restartTask == nil else { return }
+        stop(preserveStatus: true)
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self, self.isEnabled else { return }
+            self.restartTask = nil
+            do {
+                try await self.start()
+            } catch {
+                self.statusMessage = error.localizedDescription
+            }
         }
-        try FileManager.default.copyItem(at: source, to: destination)
-        customKeywordName = source.deletingPathExtension().lastPathComponent
-        keyword = .custom
-        saveSettings()
     }
 
-    var displayName: String {
-        keyword == .custom && !customKeywordName.isEmpty
-            ? customKeywordName
-            : keyword.rawValue
+    private func containsWakePhrase(_ text: String) -> Bool {
+        let heard = normalized(text)
+        let target = normalized(phrase)
+        guard !heard.isEmpty, !target.isEmpty else { return false }
+        return (" " + heard + " ").contains(" " + target + " ")
     }
 
-    private var customKeywordPath: String? {
-        guard let directory = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        ) else { return nil }
-        let path = directory.appending(path: "WakeWords/custom_ios.ppn").path
-        return FileManager.default.fileExists(atPath: path) ? path : nil
+    private func normalized(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private func requestSpeechPermission() async -> Bool {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization {
+                    continuation.resume(returning: $0 == .authorized)
+                }
+            }
+        default:
+            return false
+        }
     }
 }
 
 enum WakeWordError: LocalizedError {
-    case accessKeyRequired
-    case customKeywordRequired
+    case phraseRequired
+    case speechPermissionRequired
+    case microphonePermissionRequired
+    case recognizerUnavailable
+    case onDeviceRecognitionUnavailable
 
     var errorDescription: String? {
         switch self {
-        case .accessKeyRequired:
-            "Enter your Picovoice AccessKey first."
-        case .customKeywordRequired:
-            "Import an iOS .ppn custom keyword first."
+        case .phraseRequired:
+            "Enter a wake phrase."
+        case .speechPermissionRequired:
+            "Allow Speech Recognition in iPhone Settings."
+        case .microphonePermissionRequired:
+            "Microphone permission is required."
+        case .recognizerUnavailable:
+            "Apple’s speech recognizer is currently unavailable."
+        case .onDeviceRecognitionUnavailable:
+            "On-device speech recognition is unavailable for the current iPhone language."
         }
-    }
-}
-
-private enum KeychainValue {
-    static let service = "com.keithgagnon.VoiceChatbot"
-
-    static func read(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func write(_ value: String, account: String) {
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var item = base
-        item[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(item as CFDictionary, nil)
     }
 }
 
 struct WakeWordView: View {
     @Bindable var model: AppModel
     @Bindable var wakeWord: WakeWordService
-    @State private var accessKey = ""
-    @State private var importingKeyword = false
 
     init(model: AppModel) {
         self.model = model
@@ -216,44 +204,22 @@ struct WakeWordView: View {
 
     var body: some View {
         Form {
-            Section("Picovoice") {
-                SecureField("AccessKey", text: $accessKey)
-                    .textInputAutocapitalization(.never)
+            Section("Local wake phrase") {
+                Toggle("Enable wake phrase", isOn: $wakeWord.isEnabled)
+                TextField("Wake phrase", text: $wakeWord.phrase)
+                    .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
-                Link(
-                    "Get a free AccessKey",
-                    destination: URL(string: "https://console.picovoice.ai/")!
-                )
-                Text("The AccessKey is stored in the iPhone Keychain.")
+                Text("Examples: “Hey Computer”, “Lagertha”, or another distinctive phrase.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Wake word") {
-                Toggle("Enable wake word", isOn: $wakeWord.isEnabled)
-                Picker("Keyword", selection: $wakeWord.keyword) {
-                    ForEach(WakeKeyword.allCases) {
-                        Text($0.rawValue).tag($0)
-                    }
-                }
-                if wakeWord.keyword == .custom {
-                    Button("Import iOS .ppn Keyword") {
-                        importingKeyword = true
-                    }
-                    if !wakeWord.customKeywordName.isEmpty {
-                        Text(wakeWord.customKeywordName)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                VStack(alignment: .leading) {
-                    Text("Sensitivity \(wakeWord.sensitivity.formatted(.number.precision(.fractionLength(2))))")
-                    Slider(value: $wakeWord.sensitivity, in: 0...1, step: 0.05)
-                }
-            }
-
             Section {
-                Button(wakeWord.isListening ? "Stop Wake Mode" : "Save and Start Wake Mode") {
-                    wakeWord.accessKey = accessKey
+                Button(
+                    wakeWord.isListening
+                        ? "Stop Wake Mode"
+                        : "Save and Start Wake Mode"
+                ) {
                     model.applyWakeWordSettings()
                 }
                 .buttonStyle(.borderedProminent)
@@ -262,25 +228,14 @@ struct WakeWordView: View {
             }
 
             Section("How it works") {
-                Text("Wake audio stays on the iPhone. After detection, the app records one request, answers it, then returns to wake-word mode.")
-                Text("Wake mode requires the app to remain running with an active background microphone session. Force-quitting stops it.")
+                Text("Apple’s on-device speech recognizer listens locally for the configured phrase. Audio is not sent to the PC until the phrase is detected.")
+                Text("After detection, pause briefly and speak one request. The app answers, then returns to wake mode.")
+                Text("Force-quitting the app stops wake mode. Continuous microphone use increases battery consumption.")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
         .navigationTitle("Wake Word")
         .navigationBarTitleDisplayMode(.inline)
-        .task { accessKey = wakeWord.accessKey }
-        .fileImporter(
-            isPresented: $importingKeyword,
-            allowedContentTypes: [UTType(filenameExtension: "ppn") ?? .data]
-        ) { result in
-            guard case .success(let url) = result else { return }
-            do {
-                try wakeWord.importCustomKeyword(from: url)
-            } catch {
-                wakeWord.statusMessage = error.localizedDescription
-            }
-        }
     }
 }
