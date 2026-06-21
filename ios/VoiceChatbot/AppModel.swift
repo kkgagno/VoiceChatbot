@@ -1,6 +1,7 @@
 import Foundation
 import MessageUI
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -35,6 +36,7 @@ final class AppModel {
     let calendar = CalendarService()
     let contacts = ContactsService()
     let health = HealthService()
+    let wakeWord = WakeWordService()
     private let audio = BackgroundConversationAudio()
     private let networkMonitor = NetworkChangeMonitor()
     private var processingSegment = false
@@ -43,6 +45,7 @@ final class AppModel {
     private var healthDiscussionTurns = [HealthDiscussionTurn]()
     private var healthDiscussionData = ""
     private var healthDiscussionUpdatedAt: Date?
+    private var returnToWakeModeAfterResponse = false
 
     init() {
         let initialProfile: ServerProfile
@@ -74,6 +77,10 @@ final class AppModel {
         audio.onPlaybackFinished = { [weak self] in
             guard let self else { return }
             self.playingMessageID = nil
+            if self.returnToWakeModeAfterResponse {
+                self.finishWakeRequest()
+                return
+            }
             guard self.isConversationActive else { return }
             Task { @MainActor in
                 await self.restartListeningAfterPlayback()
@@ -95,6 +102,11 @@ final class AppModel {
         networkMonitor.start { [weak self] in
             Task { @MainActor in
                 self?.scheduleNetworkRefresh()
+            }
+        }
+        wakeWord.onDetection = { [weak self] in
+            Task { @MainActor in
+                await self?.beginWakeRequest()
             }
         }
     }
@@ -205,6 +217,7 @@ final class AppModel {
     }
 
     func startSession() async {
+        wakeWord.stop()
         guard !isConversationActive else { return }
         await refreshStatus()
         guard status?.ok == true else {
@@ -251,6 +264,62 @@ final class AppModel {
         audio.stop()
         isConversationActive = false
         conversationState = .idle
+    }
+
+    func applyWakeWordSettings() {
+        wakeWord.saveSettings()
+        if wakeWord.isListening {
+            wakeWord.stop()
+            wakeWord.statusMessage = "Wake mode stopped"
+            return
+        }
+        guard wakeWord.isEnabled else {
+            wakeWord.stop()
+            return
+        }
+        audio.stop()
+        isConversationActive = false
+        conversationState = .idle
+        do {
+            try wakeWord.start()
+        } catch {
+            wakeWord.statusMessage = error.localizedDescription
+        }
+    }
+
+    private func beginWakeRequest() async {
+        guard !isConversationActive else { return }
+        await refreshStatus()
+        guard status?.ok == true, await audio.requestPermission() else {
+            wakeWord.statusMessage = "Could not start the voice request"
+            try? wakeWord.start()
+            return
+        }
+        do {
+            returnToWakeModeAfterResponse = true
+            try audio.startListening()
+            isConversationActive = true
+            conversationState = .listening
+            audio.updateNowPlaying(active: true, title: "Wake word detected")
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            returnToWakeModeAfterResponse = false
+            wakeWord.statusMessage = error.localizedDescription
+            try? wakeWord.start()
+        }
+    }
+
+    private func finishWakeRequest() {
+        returnToWakeModeAfterResponse = false
+        audio.stop()
+        isConversationActive = false
+        conversationState = .idle
+        guard wakeWord.isEnabled else { return }
+        do {
+            try wakeWord.start()
+        } catch {
+            wakeWord.statusMessage = error.localizedDescription
+        }
     }
 
     private func restartListeningAfterPlayback() async {
@@ -488,8 +557,12 @@ final class AppModel {
                 let data = try await api.audioData(relativePath: audioPath)
                 try audio.play(data)
             } else if isConversationActive {
-                try audio.startListening()
-                conversationState = .listening
+                if returnToWakeModeAfterResponse {
+                    finishWakeRequest()
+                } else {
+                    try audio.startListening()
+                    conversationState = .listening
+                }
             } else {
                 conversationState = .idle
             }

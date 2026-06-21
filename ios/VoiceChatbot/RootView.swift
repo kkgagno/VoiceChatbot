@@ -12,6 +12,7 @@ private enum AppTab: Hashable {
     case calendar
     case contacts
     case health
+    case wakeWord
     case connection
 }
 
@@ -64,6 +65,12 @@ struct RootView: View {
             }
             .tabItem { Label("Health", systemImage: "heart.text.square.fill") }
             .tag(AppTab.health)
+
+            NavigationStack {
+                WakeWordView(model: model)
+            }
+            .tabItem { Label("Wake", systemImage: "ear.badge.waveform") }
+            .tag(AppTab.wakeWord)
 
             NavigationStack {
                 ConnectionView(model: model)
