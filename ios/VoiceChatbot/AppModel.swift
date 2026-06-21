@@ -578,11 +578,27 @@ final class AppModel {
 
         let intent: TextMessagePreparation
         do {
-            intent = try await api.prepareTextMessage(text)
+            do {
+                intent = try await api.prepareTextMessage(text)
+            } catch {
+                // The desktop server may have restarted or the phone may have
+                // switched between LAN and Tailscale since the active API
+                // session was selected. Re-probe both routes once and retry
+                // against the newly selected server.
+                await refreshStatus()
+                guard status?.ok == true else {
+                    throw error
+                }
+                intent = try await api.prepareTextMessage(text)
+            }
             guard intent.isTextMessage else { return false }
         } catch {
             messages.append(ChatEntry(role: .user, text: text))
-            failMessage("The text-message assistant could not process that request. Please try again.")
+            let nsError = error as NSError
+            failMessage(
+                "Text preparation failed at \(activeRoute.isEmpty ? "the PC connection" : activeRoute) "
+                    + "(\(nsError.domain) \(nsError.code))."
+            )
             return true
         }
 
