@@ -266,21 +266,36 @@ final class ContactsService {
         let normalizedQuery = Self.normalized(query)
         guard !normalizedQuery.isEmpty else { return [] }
 
-        let exact = contacts.filter {
-            Self.normalized($0.name) == normalizedQuery
-        }
-        let firstName = contacts.filter {
-            Self.normalized($0.name)
-                .split(separator: " ")
-                .first
-                .map(String.init) == normalizedQuery
-        }
-        let contained = contacts.filter {
-            Self.normalized($0.name).contains(normalizedQuery)
-                || $0.aliases.contains { Self.normalized($0).contains(normalizedQuery) }
+        let ranked = contacts
+            .map { contact in
+                (
+                    contact: contact,
+                    score: Self.contactScore(
+                        query: normalizedQuery,
+                        contact: contact
+                    )
+                )
+            }
+            .filter { $0.score >= 0.68 }
+            .sorted {
+                if $0.score == $1.score {
+                    return $0.contact.name < $1.contact.name
+                }
+                return $0.score > $1.score
+            }
+
+        guard let best = ranked.first else { return [] }
+        let matchingContacts: [ContactSummary]
+        if ranked.count == 1
+            || best.score - ranked[1].score >= 0.12 {
+            matchingContacts = [best.contact]
+        } else {
+            matchingContacts = ranked
+                .filter { best.score - $0.score <= 0.08 }
+                .map(\.contact)
         }
 
-        let matches = !exact.isEmpty ? exact : (!firstName.isEmpty ? firstName : contained)
+        let matches = matchingContacts
         return matches.flatMap { contact in
             contact.phoneNumbers.map {
                 ContactChoice(contact: contact, phoneNumber: $0)
@@ -295,6 +310,91 @@ final class ContactsService {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .lowercased()
+    }
+
+    private static func contactScore(
+        query: String,
+        contact: ContactSummary
+    ) -> Double {
+        let name = normalized(contact.name)
+        if query == name { return 1 }
+        if contact.aliases.contains(where: { normalized($0) == query }) {
+            return 0.99
+        }
+
+        let queryTokens = query.split(separator: " ").map(String.init)
+        let nameTokens = name.split(separator: " ").map(String.init)
+        guard !queryTokens.isEmpty, !nameTokens.isEmpty else { return 0 }
+
+        var best = 0.0
+        let windowSize = nameTokens.count
+        if queryTokens.count >= windowSize {
+            for start in 0...(queryTokens.count - windowSize) {
+                best = max(
+                    best,
+                    tokenScore(
+                        query: Array(queryTokens[start..<(start + windowSize)]),
+                        name: nameTokens
+                    )
+                )
+            }
+        } else {
+            best = tokenScore(query: queryTokens, name: nameTokens)
+        }
+
+        for alias in contact.aliases {
+            best = max(best, stringSimilarity(query, normalized(alias)) * 0.98)
+        }
+        return best
+    }
+
+    private static func tokenScore(query: [String], name: [String]) -> Double {
+        guard !query.isEmpty, !name.isEmpty else { return 0 }
+        if query.count == 1 {
+            return max(
+                stringSimilarity(query[0], name[0]) * 0.94,
+                name.map { stringSimilarity(query[0], $0) }.max() ?? 0
+            )
+        }
+
+        let first = stringSimilarity(query[0], name[0])
+        let queryLast = query.last ?? query[0]
+        let nameLast = name.last ?? name[0]
+        let last = stringSimilarity(queryLast, nameLast)
+        let middleBonus = Set(query.dropFirst().dropLast())
+            .intersection(Set(name.dropFirst().dropLast()))
+            .isEmpty ? 0.0 : 0.05
+        return min(1, first * 0.55 + last * 0.45 + middleBonus)
+    }
+
+    private static func stringSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        if lhs == rhs { return 1 }
+        guard !lhs.isEmpty, !rhs.isEmpty else { return 0 }
+        let distance = levenshteinDistance(lhs, rhs)
+        return 1 - Double(distance) / Double(max(lhs.count, rhs.count))
+    }
+
+    private static func levenshteinDistance(_ lhs: String, _ rhs: String) -> Int {
+        let left = Array(lhs)
+        let right = Array(rhs)
+        var previous = Array(0...right.count)
+
+        for (leftIndex, leftCharacter) in left.enumerated() {
+            var current = [leftIndex + 1]
+            for (rightIndex, rightCharacter) in right.enumerated() {
+                current.append(
+                    min(
+                        current[rightIndex] + 1,
+                        min(
+                            previous[rightIndex + 1] + 1,
+                            previous[rightIndex] + (leftCharacter == rightCharacter ? 0 : 1)
+                        )
+                    )
+                )
+            }
+            previous = current
+        }
+        return previous[right.count]
     }
 
     func modelContext(limit: Int = 1_000) -> String {
