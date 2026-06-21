@@ -137,12 +137,17 @@ public class OllamaClient : IDisposable
                     content =
                         "Determine whether the user wants to compose an SMS/iMessage. " +
                         "If true, extract the recipient wording and draft the message. " +
-                        "Do not add a signature or claim anything was sent."
+                        "When the user asks for detailed information, write the complete useful " +
+                        "message using your knowledge. Never use placeholders such as 'insert details here'. " +
+                        "Include only facts you are confident are accurate; omit uncertain details and never " +
+                        "invent names, dates, credits, statistics, quotations, or current status. " +
+                        "If the requested subject is ambiguous, set needsClarification true, leave body empty, " +
+                        "and ask one concise clarification question. Never guess which person, title, or topic " +
+                        "the user means. Do not add a signature or claim anything was sent."
                 },
                 new { role = "user", content = userRequest }
             },
             temperature = 0.1,
-            max_tokens = 256,
             response_format = new
             {
                 type = "json_schema",
@@ -157,9 +162,18 @@ public class OllamaClient : IDisposable
                         {
                             isTextMessage = new { type = "boolean" },
                             recipient = new { type = "string" },
-                            body = new { type = "string" }
+                            body = new { type = "string" },
+                            needsClarification = new { type = "boolean" },
+                            clarificationQuestion = new { type = "string" }
                         },
-                        required = new[] { "isTextMessage", "recipient", "body" },
+                        required = new[]
+                        {
+                            "isTextMessage",
+                            "recipient",
+                            "body",
+                            "needsClarification",
+                            "clarificationQuestion"
+                        },
                         additionalProperties = false
                     }
                 }
@@ -721,4 +735,6 @@ public class OllamaClient : IDisposable
 public sealed record StructuredTextMessageResult(
     bool IsTextMessage,
     string Recipient,
-    string Body);
+    string Body,
+    bool NeedsClarification,
+    string ClarificationQuestion);

@@ -255,6 +255,8 @@ struct TextMessagePreparation: Decodable {
     let isTextMessage: Bool
     let recipient: String
     let body: String
+    let needsClarification: Bool
+    let clarificationQuestion: String
 }
 
 private struct SpeechDetectionResponse: Decodable {

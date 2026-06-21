@@ -29,6 +29,7 @@ final class AppModel {
     var pendingCalendarDeletion: CalendarDeletionDraft?
     var pendingTextMessage: TextMessageDraft?
     var pendingContactDisambiguation: ContactDisambiguationDraft?
+    var pendingTextClarificationRequest: String?
 
     private var api: VoiceChatAPI
     let calendar = CalendarService()
@@ -574,12 +575,18 @@ final class AppModel {
     }
 
     private func handleTextMessageCommand(_ text: String) async -> Bool {
-        guard TextMessageCommandParser.mightBeCommunicationRequest(text) else { return false }
+        let originalRequest = pendingTextClarificationRequest
+        guard originalRequest != nil
+                || TextMessageCommandParser.mightBeCommunicationRequest(text)
+        else { return false }
+        let effectiveRequest = originalRequest.map {
+            "\($0)\n\nUser clarification: \(text)"
+        } ?? text
 
         let intent: TextMessagePreparation
         do {
             do {
-                intent = try await api.prepareTextMessage(text)
+                intent = try await api.prepareTextMessage(effectiveRequest)
             } catch {
                 // The desktop server may have restarted or the phone may have
                 // switched between LAN and Tailscale since the active API
@@ -589,7 +596,7 @@ final class AppModel {
                 guard status?.ok == true else {
                     throw error
                 }
-                intent = try await api.prepareTextMessage(text)
+                intent = try await api.prepareTextMessage(effectiveRequest)
             }
             guard intent.isTextMessage else { return false }
         } catch {
@@ -601,14 +608,30 @@ final class AppModel {
             return true
         }
 
+        messages.append(ChatEntry(role: .user, text: text))
+        if intent.needsClarification {
+            pendingTextClarificationRequest = effectiveRequest
+            let question = intent.clarificationQuestion
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            messages.append(
+                ChatEntry(
+                    role: .assistant,
+                    text: question.isEmpty
+                        ? "Which person, title, or subject did you mean?"
+                        : question
+                )
+            )
+            conversationState = .idle
+            return true
+        }
+        pendingTextClarificationRequest = nil
+
         await contacts.requestAccessAndLoad()
         guard contacts.hasAccess else {
-            messages.append(ChatEntry(role: .user, text: text))
             failMessage(contacts.errorMessage ?? "Contacts access is required.")
             return true
         }
 
-        messages.append(ChatEntry(role: .user, text: text))
         conversationState = .thinking
         do {
             let recipient = intent.recipient.trimmingCharacters(in: .whitespacesAndNewlines)
