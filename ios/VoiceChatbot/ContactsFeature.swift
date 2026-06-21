@@ -69,15 +69,56 @@ struct TextMessageAIDraft: Decodable {
 
     static func decode(from response: String) throws -> TextMessageAIDraft {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = trimmed.firstIndex(of: "{"),
-              let end = trimmed.lastIndex(of: "}")
+        guard let start = trimmed.firstIndex(of: "{")
         else {
             throw ContactsFeatureError.invalidAIDraft
         }
-        return try JSONDecoder().decode(
-            TextMessageAIDraft.self,
-            from: Data(trimmed[start...end].utf8)
-        )
+
+        let decoder = JSONDecoder()
+        var cursor = trimmed.index(after: start)
+        while cursor <= trimmed.endIndex {
+            if trimmed.index(before: cursor) < trimmed.endIndex,
+               trimmed[trimmed.index(before: cursor)] == "}" {
+                let candidate = String(trimmed[start..<cursor])
+                if let draft = try? decoder.decode(
+                    TextMessageAIDraft.self,
+                    from: Data(candidate.utf8)
+                ), draft.isValid {
+                    return draft
+                }
+            }
+            guard cursor < trimmed.endIndex else { break }
+            cursor = trimmed.index(after: cursor)
+        }
+        throw ContactsFeatureError.invalidAIDraft
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recipient
+        case contact
+        case contactName
+        case name
+        case body
+        case message
+        case text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        recipient = try container.decodeIfPresent(String.self, forKey: .recipient)
+            ?? container.decodeIfPresent(String.self, forKey: .contact)
+            ?? container.decodeIfPresent(String.self, forKey: .contactName)
+            ?? container.decodeIfPresent(String.self, forKey: .name)
+            ?? ""
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+            ?? container.decodeIfPresent(String.self, forKey: .message)
+            ?? container.decodeIfPresent(String.self, forKey: .text)
+            ?? ""
+    }
+
+    private var isValid: Bool {
+        !recipient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
