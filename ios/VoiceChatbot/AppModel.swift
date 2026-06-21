@@ -594,10 +594,9 @@ final class AppModel {
             guard intent.isTextMessage else { return false }
         } catch {
             messages.append(ChatEntry(role: .user, text: text))
-            let nsError = error as NSError
             failMessage(
                 "Text preparation failed at \(activeRoute.isEmpty ? "the PC connection" : activeRoute) "
-                    + "(\(nsError.domain) \(nsError.code))."
+                    + "— \(error.localizedDescription)"
             )
             return true
         }

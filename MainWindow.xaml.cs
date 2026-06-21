@@ -5725,7 +5725,22 @@ public partial class MainWindow : Window
             var model = await Dispatcher.InvokeAsync(() => ModelCombo.Text);
             if (string.IsNullOrWhiteSpace(model))
                 throw new InvalidOperationException("Select a model in the desktop app first.");
-            return await _ollama.PrepareTextMessageAsync(model, request, ct);
+
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    return await _ollama.PrepareTextMessageAsync(model, request, ct);
+                }
+                catch (Exception ex) when (attempt < 3 && !ct.IsCancellationRequested)
+                {
+                    lastError = ex;
+                    await Task.Delay(TimeSpan.FromMilliseconds(350 * attempt), ct);
+                }
+            }
+            throw lastError ?? new InvalidOperationException(
+                "The structured text-message request failed after three attempts.");
         }
         finally
         {
