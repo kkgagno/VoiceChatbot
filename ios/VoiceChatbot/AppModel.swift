@@ -700,7 +700,12 @@ final class AppModel {
         }
 
         messages.append(ChatEntry(role: .user, text: text))
-        if intent.needsClarification {
+        let preparedRecipient = intent.recipient
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let preparedBody = intent.body
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if intent.needsClarification
+            && (preparedRecipient.isEmpty || preparedBody.isEmpty) {
             pendingTextClarificationRequest = effectiveRequest
             let question = intent.clarificationQuestion
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -725,8 +730,8 @@ final class AppModel {
 
         conversationState = .thinking
         do {
-            let recipient = intent.recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-            let body = intent.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            let recipient = preparedRecipient
+            let body = preparedBody
             guard !recipient.isEmpty,
                   !body.isEmpty
             else {
@@ -849,7 +854,12 @@ final class AppModel {
         from draft: ContactDisambiguationDraft
     ) {
         pendingContactDisambiguation = nil
-        prepareTextMessage(choice: choice, body: draft.messageBody)
+        Task { @MainActor in
+            // Let SwiftUI finish dismissing the contact chooser before opening
+            // the confirmation sheet. Presenting both in one update is flaky.
+            try? await Task.sleep(for: .milliseconds(350))
+            prepareTextMessage(choice: choice, body: draft.messageBody)
+        }
     }
 
     func cancelContactDisambiguation() {

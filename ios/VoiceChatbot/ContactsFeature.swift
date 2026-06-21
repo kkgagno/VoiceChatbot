@@ -52,7 +52,9 @@ enum TextMessageCommandParser {
             courtesyPrefix + #"tell\s+\#(recipient)\s+(?:that|to)\b"#,
             courtesyPrefix + #"let\s+\#(recipient)\s+know\b"#,
             courtesyPrefix + #"write\s+(?:a\s+)?(?:text|message|sms|imessage)\s+to\s+\#(recipient)\b"#,
-            courtesyPrefix + #"ask\s+\#(recipient)\s+(?:if|whether|to)\b"#
+            courtesyPrefix + #"ask\s+\#(recipient)\s+(?:if|whether|to)\b"#,
+            courtesyPrefix
+                + #"(?:say|write)\s+.+?\s+to\s+\#(recipient)\s+(?:send\s+)?(?:a\s+)?(?:text|message|sms|imessage)\b"#
         ]
 
         return patterns.contains { pattern in

@@ -136,14 +136,25 @@ public class OllamaClient : IDisposable
                     role = "system",
                     content =
                         "Determine whether the user wants to compose an SMS/iMessage. " +
-                        "If true, extract the recipient wording and draft the message. " +
+                        "If true, copy only the recipient wording the user actually spoke into recipient; " +
+                        "never invent, expand, or list alternate contact spellings because the iPhone resolves " +
+                        "the recipient against the user's real contacts after this step. Draft the message body. " +
                         "When the user asks for detailed information, write the complete useful " +
                         "message using your knowledge. Never use placeholders such as 'insert details here'. " +
                         "Include only facts you are confident are accurate; omit uncertain details and never " +
                         "invent names, dates, credits, statistics, quotations, or current status. " +
-                        "If the requested subject is ambiguous, set needsClarification true, leave body empty, " +
-                        "and ask one concise clarification question. Never guess which person, title, or topic " +
-                        "the user means. Do not add a signature or claim anything was sent."
+                        "Resolve obvious speech-recognition or phonetic misspellings of well-known subjects when " +
+                        "the intended subject is reasonably clear. Treat 'McAvelli', 'Machiavelli', and similar " +
+                        "phonetic forms as Niccolo Machiavelli unless the user explicitly identifies a different " +
+                        "person, company, or product. Never invent a company, product, person, or biography to " +
+                        "explain an unfamiliar term. Do not ask the user to narrow a broad topic; " +
+                        "write a useful concise overview instead. Set needsClarification true only when the user " +
+                        "genuinely omitted the recipient or omitted what the message should say. Never combine " +
+                        "recipient clarification with content clarification. Do not add a signature or claim " +
+                        "anything was sent. Examples: 'say hello to Jane Cook send a message' means recipient " +
+                        "'Jane Cook' and body 'Hello!'; 'send a message to Keith Gagman with details on the " +
+                        "world's deadliest spiders' means recipient 'Keith Gagman' and a complete informative " +
+                        "body about that topic; 'text Jane' is missing content and may ask what to say."
                 },
                 new { role = "user", content = userRequest }
             },
@@ -199,8 +210,20 @@ public class OllamaClient : IDisposable
         var result = JsonSerializer.Deserialize<StructuredTextMessageResult>(
             content,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        return result ?? throw new InvalidOperationException(
-            "The model returned an empty structured text-message result.");
+        if (result == null)
+            throw new InvalidOperationException(
+                "The model returned an empty structured text-message result.");
+        if (result.IsTextMessage &&
+            !string.IsNullOrWhiteSpace(result.Recipient) &&
+            !string.IsNullOrWhiteSpace(result.Body))
+        {
+            return result with
+            {
+                NeedsClarification = false,
+                ClarificationQuestion = ""
+            };
+        }
+        return result;
     }
 
     public async Task<StructuredCalendarEventResult> PrepareCalendarEventAsync(
