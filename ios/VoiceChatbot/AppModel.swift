@@ -576,6 +576,7 @@ final class AppModel {
     private func handleTextMessageCommand(_ text: String) async -> Bool {
         guard TextMessageCommandParser.mightBeCommunicationRequest(text) else { return false }
 
+        let intent: TextMessageAIIntent
         do {
             let intentPrompt = """
             Decide whether the user is asking to compose and send an SMS/iMessage to a person.
@@ -584,16 +585,23 @@ final class AppModel {
             Requests for you to answer, explain, write content, send files, or tell the user
             something are NOT text-message requests.
 
-            Return ONLY JSON: {"isTextMessage":true} or {"isTextMessage":false}
+            If it is a text request, also extract the recipient wording and draft the message.
+            Preserve the user's intended tone. Do not add a signature or claim it was sent.
 
-            User request: \(text)
+            Return ONLY one JSON object:
+            {"isTextMessage":true,"recipient":"Jane","body":"message content"}
+            For a non-text request return:
+            {"isTextMessage":false,"recipient":"","body":""}
+
+            User request:
+            \(text)
             """
             let intentResult = try await api.tool(prompt: intentPrompt)
-            let intent = try TextMessageAIIntent.decode(from: intentResult)
+            intent = try TextMessageAIIntent.decode(from: intentResult)
             guard intent.isTextMessage else { return false }
         } catch {
             messages.append(ChatEntry(role: .user, text: text))
-            fail(error)
+            failMessage("The text-message assistant could not process that request. Please try again.")
             return true
         }
 
@@ -607,48 +615,23 @@ final class AppModel {
         messages.append(ChatEntry(role: .user, text: text))
         conversationState = .thinking
         do {
-            let prompt = """
-            You are an expert messaging assistant. Extract the person the user wants to contact
-            and draft the requested text. Preserve the recipient wording the user actually used,
-            such as “Jane”, “Jane Smith”, or a saved nickname. Preserve the user's intended tone.
-            Do not add a signature and do not claim the message was sent.
-
-            Return ONLY one JSON object:
-            {"recipient":"name or relationship from request","body":"message to send"}
-
-            User request:
-            \(text)
-            """
-            let result = try await api.tool(prompt: prompt)
-            let aiDraft: TextMessageAIDraft
-            do {
-                aiDraft = try TextMessageAIDraft.decode(from: result)
-            } catch {
-                let repairPrompt = """
-                Convert the raw assistant output below into exactly one valid JSON object.
-                Preserve the intended recipient and message. Return no explanation.
-                Required shape:
-                {"recipient":"person named by user","body":"text message content"}
-
-                Original user request:
-                \(text)
-
-                Raw assistant output:
-                \(result)
-                """
-                let repaired = try await api.tool(prompt: repairPrompt)
-                aiDraft = try TextMessageAIDraft.decode(from: repaired)
+            guard let recipient = intent.recipient?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let body = intent.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !recipient.isEmpty,
+                  !body.isEmpty
+            else {
+                throw ContactsFeatureError.invalidAIDraft
             }
-            let choices = contacts.choices(matching: aiDraft.recipient)
+            let choices = contacts.choices(matching: recipient)
             guard !choices.isEmpty else {
                 throw ContactsFeatureError.contactNotFound
             }
             if choices.count == 1, let choice = choices.first {
-                prepareTextMessage(choice: choice, body: aiDraft.body)
+                prepareTextMessage(choice: choice, body: body)
             } else {
                 pendingContactDisambiguation = ContactDisambiguationDraft(
                     originalRequest: text,
-                    messageBody: aiDraft.body,
+                    messageBody: body,
                     choices: choices
                 )
                 messages.append(
@@ -665,7 +648,7 @@ final class AppModel {
                 conversationState = .idle
             }
         } catch {
-            fail(error)
+            failMessage(error.localizedDescription)
         }
         return true
     }

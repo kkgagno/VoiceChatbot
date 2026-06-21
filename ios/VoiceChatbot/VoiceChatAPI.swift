@@ -13,7 +13,7 @@ enum APIError: LocalizedError {
         switch self {
         case .invalidServerURL: "The server URL is invalid."
         case .invalidResponse: "The server returned an invalid response."
-        case .server(let status, let text): "Server error \(status): \(text)"
+        case .server(let status, _): "Server error \(status). The PC could not complete the request."
         case .certificateRequired: "Import the PC server certificate before connecting."
         case .certificateMismatch: "The server certificate does not match the imported certificate."
         }

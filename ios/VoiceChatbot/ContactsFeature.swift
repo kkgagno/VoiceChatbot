@@ -49,6 +49,8 @@ enum TextMessageCommandParser {
 
 struct TextMessageAIIntent: Decodable {
     let isTextMessage: Bool
+    let recipient: String?
+    let body: String?
 
     static func decode(from response: String) throws -> TextMessageAIIntent {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -57,9 +59,26 @@ struct TextMessageAIIntent: Decodable {
         else {
             throw ContactsFeatureError.invalidAIIntent
         }
-        return try JSONDecoder().decode(
-            TextMessageAIIntent.self,
-            from: Data(trimmed[start...end].utf8)
+        let data = Data(trimmed[start...end].utf8)
+        if let decoded = try? JSONDecoder().decode(TextMessageAIIntent.self, from: data) {
+            return decoded
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any]
+        else {
+            throw ContactsFeatureError.invalidAIIntent
+        }
+        var normalized = [String: Any]()
+        for (key, value) in dictionary {
+            normalized[key.lowercased()] = value
+        }
+        let isText = normalized["istextmessage"] as? Bool ?? false
+        let recipient = (normalized["recipient"] ?? normalized["contact"] ?? normalized["name"]) as? String
+        let body = (normalized["body"] ?? normalized["message"] ?? normalized["text"]) as? String
+        return TextMessageAIIntent(
+            isTextMessage: isText,
+            recipient: recipient,
+            body: body
         )
     }
 }
