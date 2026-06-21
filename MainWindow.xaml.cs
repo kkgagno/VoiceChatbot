@@ -5680,14 +5680,14 @@ public partial class MainWindow : Window
         try
         {
             string model = "";
-            string systemPrompt = "";
+            const string systemPrompt =
+                "You are a precise internal tool for a local iPhone assistant. " +
+                "Follow the requested output format exactly. Return no commentary unless requested.";
             double temperature = 0.1;
-            int maxTokens = 1024;
+            const int maxTokens = 512;
             await Dispatcher.InvokeAsync(() =>
             {
                 model = ModelCombo.Text;
-                systemPrompt = GetEffectiveSystemPrompt();
-                maxTokens = Math.Min(2048, GetMaxTokensForRequest(prompt, model));
             });
 
             if (string.IsNullOrWhiteSpace(model))

@@ -182,8 +182,18 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             if (string.IsNullOrWhiteSpace(request.Prompt))
                 return Results.BadRequest(new { error = "No tool prompt was provided." });
 
-            var response = await _toolAsync(request.Prompt.Trim(), ct);
-            return Results.Json(new { response });
+            try
+            {
+                var response = await _toolAsync(request.Prompt.Trim(), ct);
+                return Results.Json(new { response });
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "AI tool request failed");
+            }
         });
 
         app.MapPost("/api/speak", async (PhoneRemoteSpeakRequest request, HttpRequest httpRequest, CancellationToken ct) =>
