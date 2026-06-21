@@ -577,7 +577,7 @@ final class AppModel {
     private func handleTextMessageCommand(_ text: String) async -> Bool {
         let originalRequest = pendingTextClarificationRequest
         guard originalRequest != nil
-                || TextMessageCommandParser.mightBeCommunicationRequest(text)
+                || TextMessageCommandParser.isTextMessageDirective(text)
         else { return false }
         let effectiveRequest = originalRequest.map {
             "\($0)\n\nUser clarification: \(text)"

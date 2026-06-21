@@ -34,16 +34,33 @@ struct ContactDisambiguationDraft: Identifiable, Equatable {
 }
 
 enum TextMessageCommandParser {
-    static func mightBeCommunicationRequest(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        let words = Set(
-            lowered
-                .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty }
-        )
-        return !words.isDisjoint(
-            with: ["text", "message", "sms", "imessage", "send", "tell", "let", "write", "ask"]
-        )
+    static func isTextMessageDirective(_ text: String) -> Bool {
+        let normalized = text
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Only intercept an actual directive near the beginning of the utterance.
+        // Ordinary conversation that merely contains words such as "send" or
+        // "text" must continue to normal chat without a model-classification call.
+        let courtesyPrefix =
+            #"(?:hey\s+\w+[,.]?\s+)?(?:(?:please|kindly)\s+)?(?:(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+)?"#
+        let recipient = #"(?!me\b|you\b|us\b)(?:my\s+)?[\p{L}\p{N}'’-]+(?:\s+[\p{L}\p{N}'’-]+){0,4}"#
+        let patterns = [
+            courtesyPrefix + #"(?:text|message|sms|imessage)\s+(?:to\s+)?\#(recipient)\b"#,
+            courtesyPrefix + #"send\s+(?:a\s+)?(?:text|message|sms|imessage)\s+to\s+\#(recipient)\b"#,
+            courtesyPrefix + #"send\s+\#(recipient)\s+(?:a\s+)?(?:text|message|sms|imessage)\b"#,
+            courtesyPrefix + #"tell\s+\#(recipient)\s+(?:that|to)\b"#,
+            courtesyPrefix + #"let\s+\#(recipient)\s+know\b"#,
+            courtesyPrefix + #"write\s+(?:a\s+)?(?:text|message|sms|imessage)\s+to\s+\#(recipient)\b"#,
+            courtesyPrefix + #"ask\s+\#(recipient)\s+(?:if|whether|to)\b"#
+        ]
+
+        return patterns.contains { pattern in
+            normalized.range(
+                of: "^(?:\(pattern))",
+                options: .regularExpression
+            ) != nil
+        }
     }
 }
 
