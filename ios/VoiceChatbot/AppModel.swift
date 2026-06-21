@@ -697,7 +697,14 @@ final class AppModel {
 
             \(healthContext)
             """
-            let answer = try await api.tool(prompt: prompt)
+            let answer: String
+            do {
+                answer = try await api.tool(prompt: prompt)
+            } catch {
+                await refreshStatus()
+                guard status?.ok == true else { throw error }
+                answer = try await api.tool(prompt: prompt)
+            }
             messages.append(ChatEntry(role: .assistant, text: answer))
             if isConversationActive {
                 conversationState = .speaking

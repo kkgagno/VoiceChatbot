@@ -76,61 +76,69 @@ final class HealthService {
 
         let calendar = Calendar.current
         let now = Date.now
-        let start = calendar.date(byAdding: .day, value: -days, to: now) ?? now
-        let todayStart = calendar.startOfDay(for: now)
-        async let todaySteps = cumulative(
-            .stepCount,
-            unit: .count(),
-            start: todayStart,
-            end: now
-        )
-        async let periodSteps = cumulative(
+        let end = now
+        let start = calendar.date(
+            byAdding: .day,
+            value: -(max(1, days) - 1),
+            to: calendar.startOfDay(for: now)
+        ) ?? now
+        async let dailySteps = dailyCumulative(
             .stepCount,
             unit: .count(),
             start: start,
-            end: now
+            end: end
         )
-        async let distance = cumulative(
+        async let dailyDistance = dailyCumulative(
             .distanceWalkingRunning,
             unit: .mile(),
             start: start,
-            end: now
+            end: end
         )
-        async let energy = cumulative(
+        async let dailyEnergy = dailyCumulative(
             .activeEnergyBurned,
             unit: .kilocalorie(),
             start: start,
-            end: now
+            end: end
         )
         async let heartRates = recentQuantities(
             .heartRate,
             unit: HKUnit.count().unitDivided(by: .minute()),
             start: start,
-            end: now,
-            limit: 200
+            end: end,
+            limit: 60
         )
         async let restingRates = recentQuantities(
             .restingHeartRate,
             unit: HKUnit.count().unitDivided(by: .minute()),
             start: start,
-            end: now,
-            limit: 60
+            end: end,
+            limit: 45
         )
         async let weights = recentQuantities(
             .bodyMass,
             unit: .pound(),
             start: start,
-            end: now,
-            limit: 30
+            end: end,
+            limit: 20
         )
-        async let sleep = sleepSamples(start: start, end: now)
-        async let workouts = workoutSamples(start: start, end: now)
+        async let sleep = sleepSamples(start: start, end: end)
+        async let workouts = workoutSamples(start: start, end: end)
 
+        let stepValues = try await dailySteps
+        let distanceValues = try await dailyDistance
+        let energyValues = try await dailyEnergy
         let heartValues = try await heartRates
         let restingValues = try await restingRates
         let weightValues = try await weights
         let sleepValues = try await sleep
         let workoutValues = try await workouts
+        let activityRows = Self.dailyActivityText(
+            steps: stepValues,
+            distance: distanceValues,
+            energy: energyValues,
+            start: start,
+            end: end
+        )
 
         let context = """
         Live read-only Apple Health data from the user's iPhone and connected devices.
@@ -138,20 +146,17 @@ final class HealthService {
         Time zone: \(TimeZone.current.identifier)
         Period covered: \(start.formatted(date: .abbreviated, time: .omitted)) through \(now.formatted(date: .abbreviated, time: .omitted))
 
-        Activity:
-        - Steps today: \(Self.number(try await todaySteps, decimals: 0))
-        - Steps during period: \(Self.number(try await periodSteps, decimals: 0))
-        - Walking/running distance during period: \(Self.number(try await distance, decimals: 2)) miles
-        - Active energy during period: \(Self.number(try await energy, decimals: 0)) kcal
+        Daily activity (one row per local calendar day; missing means no readable sample):
+        \(activityRows)
 
         Heart:
-        - Recent heart-rate samples (BPM): \(Self.sampleText(heartValues))
-        - Recent resting-heart-rate samples (BPM): \(Self.sampleText(restingValues))
+        - Recent heart-rate samples (BPM): \(Self.sampleText(heartValues, limit: 15))
+        - Recent resting-heart-rate samples (BPM): \(Self.sampleText(restingValues, limit: 20))
 
         Body:
-        - Recent weight samples (lb): \(Self.sampleText(weightValues))
+        - Recent weight samples (lb): \(Self.sampleText(weightValues, limit: 12))
 
-        Sleep:
+        Sleep by night (the date is the morning/wake-up date):
         \(Self.sleepText(sleepValues))
 
         Workouts:
@@ -162,14 +167,14 @@ final class HealthService {
         return context
     }
 
-    private func cumulative(
+    private func dailyCumulative(
         _ identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         start: Date,
         end: Date
-    ) async throws -> Double? {
+    ) async throws -> [Date: Double] {
         guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
-            return nil
+            return [:]
         }
         let predicate = HKQuery.predicateForSamples(
             withStart: start,
@@ -177,17 +182,25 @@ final class HealthService {
             options: .strictStartDate
         )
         return try await withCheckedThrowingContinuation { continuation in
-            let query = HKStatisticsQuery(
+            let query = HKStatisticsCollectionQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
-                options: .cumulativeSum
-            ) { _, result, error in
+                options: .cumulativeSum,
+                anchorDate: Calendar.current.startOfDay(for: start),
+                intervalComponents: DateComponents(day: 1)
+            )
+            query.initialResultsHandler = { _, result, error in
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
-                    continuation.resume(
-                        returning: result?.sumQuantity()?.doubleValue(for: unit)
-                    )
+                    var values = [Date: Double]()
+                    result?.enumerateStatistics(from: start, to: end) { statistics, _ in
+                        if let quantity = statistics.sumQuantity() {
+                            values[Calendar.current.startOfDay(for: statistics.startDate)] =
+                                quantity.doubleValue(for: unit)
+                        }
+                    }
+                    continuation.resume(returning: values)
                 }
             }
             store.execute(query)
@@ -240,7 +253,7 @@ final class HealthService {
             end: end,
             options: []
         )
-        return try await samples(type: type, predicate: predicate, limit: 200)
+        return try await samples(type: type, predicate: predicate, limit: 1_000)
     }
 
     private func workoutSamples(start: Date, end: Date) async throws -> [HKWorkout] {
@@ -281,32 +294,99 @@ final class HealthService {
         }
     }
 
-    private static func number(_ value: Double?, decimals: Int) -> String {
-        guard let value else { return "No data" }
-        return value.formatted(.number.precision(.fractionLength(decimals)))
-    }
-
-    private static func sampleText(_ samples: [(Date, Double)]) -> String {
+    private static func sampleText(
+        _ samples: [(Date, Double)],
+        limit: Int
+    ) -> String {
         guard !samples.isEmpty else { return "No data" }
-        return samples.prefix(30).map {
+        return samples.prefix(limit).map {
             "\($0.0.formatted(date: .abbreviated, time: .shortened)) = \($0.1.formatted(.number.precision(.fractionLength(1))))"
         }.joined(separator: "; ")
     }
 
+    private static func dailyActivityText(
+        steps: [Date: Double],
+        distance: [Date: Double],
+        energy: [Date: Double],
+        start: Date,
+        end: Date
+    ) -> String {
+        let calendar = Calendar.current
+        var rows = [String]()
+        var day = calendar.startOfDay(for: start)
+        let lastDay = calendar.startOfDay(for: end)
+        while day <= lastDay {
+            let stepText = steps[day].map {
+                $0.formatted(.number.precision(.fractionLength(0)))
+            } ?? "missing"
+            let distanceText = distance[day].map {
+                $0.formatted(.number.precision(.fractionLength(2)))
+            } ?? "missing"
+            let energyText = energy[day].map {
+                $0.formatted(.number.precision(.fractionLength(0)))
+            } ?? "missing"
+            rows.append(
+                "- \(day.formatted(date: .complete, time: .omitted)): "
+                    + "\(stepText) steps; \(distanceText) miles; \(energyText) active kcal"
+            )
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else {
+                break
+            }
+            day = next
+        }
+        return rows.joined(separator: "\n")
+    }
+
     private static func sleepText(_ samples: [HKCategorySample]) -> String {
-        let asleepValues: Set<Int> = [
-            HKCategoryValueSleepAnalysis.asleep.rawValue,
-            HKCategoryValueSleepAnalysis.asleepCore.rawValue,
-            HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
-            HKCategoryValueSleepAnalysis.asleepREM.rawValue,
-            HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
-        ]
-        let asleep = samples.filter { asleepValues.contains($0.value) }
-        guard !asleep.isEmpty else { return "- No sleep samples found." }
-        return asleep.prefix(40).map {
-            let hours = $0.endDate.timeIntervalSince($0.startDate) / 3600
-            return "- \($0.startDate.formatted(date: .abbreviated, time: .shortened)) to \($0.endDate.formatted(date: .omitted, time: .shortened)): \(hours.formatted(.number.precision(.fractionLength(2)))) hours"
+        guard !samples.isEmpty else { return "- No sleep samples found." }
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: samples) {
+            calendar.startOfDay(for: $0.endDate)
+        }
+        return grouped.keys.sorted(by: >).prefix(30).map { wakeDate in
+            let night = grouped[wakeDate] ?? []
+            let core = duration(
+                night.filter { $0.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue }
+            )
+            let deep = duration(
+                night.filter { $0.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue }
+            )
+            let rem = duration(
+                night.filter { $0.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue }
+            )
+            let unspecified = duration(
+                night.filter {
+                    $0.value == HKCategoryValueSleepAnalysis.asleep.rawValue
+                        || $0.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+                }
+            )
+            let awake = duration(
+                night.filter { $0.value == HKCategoryValueSleepAnalysis.awake.rawValue }
+            )
+            let stagedTotal = core + deep + rem
+            let total = stagedTotal > 0 ? stagedTotal : unspecified
+            let start = night.map(\.startDate).min()
+            let end = night.map(\.endDate).max()
+            let interval: String
+            if let start, let end {
+                interval =
+                    "\(start.formatted(date: .abbreviated, time: .shortened))–"
+                    + "\(end.formatted(date: .omitted, time: .shortened))"
+            } else {
+                interval = "times unavailable"
+            }
+            return "- Night ending \(wakeDate.formatted(date: .complete, time: .omitted)): "
+                + "\(hours(total)) asleep; core \(hours(core)); deep \(hours(deep)); "
+                + "REM \(hours(rem)); awake \(hours(awake)); interval \(interval)"
         }.joined(separator: "\n")
+    }
+
+    private static func duration(_ samples: [HKCategorySample]) -> TimeInterval {
+        samples.reduce(0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+    }
+
+    private static func hours(_ seconds: TimeInterval) -> String {
+        (seconds / 3600).formatted(.number.precision(.fractionLength(2))) + "h"
     }
 
     private static func workoutText(_ workouts: [HKWorkout]) -> String {
