@@ -26,6 +26,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<Stream, CancellationToken, Task<string>> _transcribeAsync;
     private readonly Func<Stream, CancellationToken, Task<bool>> _detectSpeechAsync;
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
+    private readonly Func<string, CancellationToken, Task<string>> _toolAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<string, CancellationToken, Task<string?>> _speakAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
@@ -40,6 +41,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<Stream, CancellationToken, Task<string>> transcribeAsync,
         Func<Stream, CancellationToken, Task<bool>> detectSpeechAsync,
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
+        Func<string, CancellationToken, Task<string>> toolAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
         Func<string, CancellationToken, Task<string?>> speakAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
@@ -47,6 +49,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         _transcribeAsync = transcribeAsync;
         _detectSpeechAsync = detectSpeechAsync;
         _chatAsync = chatAsync;
+        _toolAsync = toolAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _speakAsync = speakAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
@@ -169,6 +172,18 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                 request.Text.Trim(),
                 keepDocumentsActive: request.KeepDocumentsActive), ct);
             return Results.Json(response);
+        });
+
+        app.MapPost("/api/tool", async (PhoneRemoteToolRequest request, HttpRequest httpRequest, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(httpRequest))
+                return Results.Unauthorized();
+
+            if (string.IsNullOrWhiteSpace(request.Prompt))
+                return Results.BadRequest(new { error = "No tool prompt was provided." });
+
+            var response = await _toolAsync(request.Prompt.Trim(), ct);
+            return Results.Json(new { response });
         });
 
         app.MapPost("/api/speak", async (PhoneRemoteSpeakRequest request, HttpRequest httpRequest, CancellationToken ct) =>
@@ -1468,6 +1483,7 @@ public sealed record PhoneRemoteAssistantResult(
 public sealed record PhoneRemoteModelState(string Provider, string Model, string Endpoint);
 
 public sealed record PhoneRemoteTextRequest(string Text, bool KeepDocumentsActive = false);
+public sealed record PhoneRemoteToolRequest(string Prompt);
 public sealed record PhoneRemoteSpeakRequest(string Text);
 
 public sealed record PhoneRemoteDocument(string FileName, DocumentTextResult Document);

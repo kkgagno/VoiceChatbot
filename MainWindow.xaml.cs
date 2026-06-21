@@ -119,6 +119,7 @@ public partial class MainWindow : Window
             (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
             (stream, ct) => _speech.ContainsSpeechWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
+            HandlePhoneRemoteToolAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
             async (text, ct) =>
             {
@@ -5666,6 +5667,46 @@ public partial class MainWindow : Window
                 SetUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult($"Phone remote error: {ex.Message}", null);
+        }
+        finally
+        {
+            _phoneRemoteChatLock.Release();
+        }
+    }
+
+    private async Task<string> HandlePhoneRemoteToolAsync(string prompt, CancellationToken ct)
+    {
+        await _phoneRemoteChatLock.WaitAsync(ct);
+        try
+        {
+            string model = "";
+            string systemPrompt = "";
+            double temperature = 0.1;
+            int maxTokens = 1024;
+            await Dispatcher.InvokeAsync(() =>
+            {
+                model = ModelCombo.Text;
+                systemPrompt = GetEffectiveSystemPrompt();
+                maxTokens = Math.Min(2048, GetMaxTokensForRequest(prompt, model));
+            });
+
+            if (string.IsNullOrWhiteSpace(model))
+                throw new InvalidOperationException("Select an Ollama model in the desktop app first.");
+
+            var messages = new List<ChatMessage>
+            {
+                new() { Role = "user", Content = prompt }
+            };
+            var contextTokens = await GetContextTokensForRequestAsync(model, ct);
+            return CleanDisplayText(
+                await _ollama.ChatAsync(
+                    model,
+                    messages,
+                    systemPrompt,
+                    temperature,
+                    maxTokens,
+                    ct,
+                    contextTokens));
         }
         finally
         {

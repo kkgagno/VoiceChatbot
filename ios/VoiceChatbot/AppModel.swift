@@ -554,7 +554,21 @@ final class AppModel {
 
             \(calendar.modelContext())
             """
-            await send(text: groundedPrompt, displayText: text)
+            do {
+                let answer = try await api.tool(prompt: groundedPrompt)
+                messages.append(ChatEntry(role: .user, text: text))
+                messages.append(ChatEntry(role: .assistant, text: answer))
+                if isConversationActive {
+                    conversationState = .speaking
+                    let audioPath = try await api.speak(answer)
+                    let data = try await api.audioData(relativePath: audioPath)
+                    try audio.play(data)
+                } else {
+                    conversationState = .idle
+                }
+            } catch {
+                fail(error)
+            }
         }
         return true
     }
@@ -574,8 +588,8 @@ final class AppModel {
 
             User request: \(text)
             """
-            let intentResult = try await api.respond(to: intentPrompt)
-            let intent = try TextMessageAIIntent.decode(from: intentResult.response)
+            let intentResult = try await api.tool(prompt: intentPrompt)
+            let intent = try TextMessageAIIntent.decode(from: intentResult)
             guard intent.isTextMessage else { return false }
         } catch {
             messages.append(ChatEntry(role: .user, text: text))
@@ -605,8 +619,8 @@ final class AppModel {
             User request:
             \(text)
             """
-            let result = try await api.respond(to: prompt)
-            let aiDraft = try TextMessageAIDraft.decode(from: result.response)
+            let result = try await api.tool(prompt: prompt)
+            let aiDraft = try TextMessageAIDraft.decode(from: result)
             let choices = contacts.choices(matching: aiDraft.recipient)
             guard !choices.isEmpty else {
                 throw ContactsFeatureError.contactNotFound
@@ -707,8 +721,8 @@ final class AppModel {
         Time zone: \(timeZone)
         User request: \(request)
         """
-        let result = try await api.respond(to: prompt)
-        return try CalendarAIDraft.decode(from: result.response).eventDraft()
+        let result = try await api.tool(prompt: prompt)
+        return try CalendarAIDraft.decode(from: result).eventDraft()
     }
 
     private func createCalendarDeletionWithAI(
@@ -731,8 +745,8 @@ final class AppModel {
 
         \(calendar.modelContext())
         """
-        let result = try await api.respond(to: prompt)
-        let selection = try CalendarAIDeleteSelection.decode(from: result.response)
+        let result = try await api.tool(prompt: prompt)
+        let selection = try CalendarAIDeleteSelection.decode(from: result)
         let selectedIDs = Set(selection.eventIDs)
         let futureIDs = Set(selection.futureSeriesEventIDs ?? [])
         let items = calendar.events
