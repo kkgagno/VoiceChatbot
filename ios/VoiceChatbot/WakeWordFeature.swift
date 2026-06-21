@@ -205,8 +205,14 @@ private enum KeychainValue {
 
 struct WakeWordView: View {
     @Bindable var model: AppModel
+    @Bindable var wakeWord: WakeWordService
     @State private var accessKey = ""
     @State private var importingKeyword = false
+
+    init(model: AppModel) {
+        self.model = model
+        self.wakeWord = model.wakeWord
+    }
 
     var body: some View {
         Form {
@@ -224,34 +230,34 @@ struct WakeWordView: View {
             }
 
             Section("Wake word") {
-                Toggle("Enable wake word", isOn: $model.wakeWord.isEnabled)
-                Picker("Keyword", selection: $model.wakeWord.keyword) {
+                Toggle("Enable wake word", isOn: $wakeWord.isEnabled)
+                Picker("Keyword", selection: $wakeWord.keyword) {
                     ForEach(WakeKeyword.allCases) {
                         Text($0.rawValue).tag($0)
                     }
                 }
-                if model.wakeWord.keyword == .custom {
+                if wakeWord.keyword == .custom {
                     Button("Import iOS .ppn Keyword") {
                         importingKeyword = true
                     }
-                    if !model.wakeWord.customKeywordName.isEmpty {
-                        Text(model.wakeWord.customKeywordName)
+                    if !wakeWord.customKeywordName.isEmpty {
+                        Text(wakeWord.customKeywordName)
                             .foregroundStyle(.secondary)
                     }
                 }
                 VStack(alignment: .leading) {
-                    Text("Sensitivity \(model.wakeWord.sensitivity.formatted(.number.precision(.fractionLength(2))))")
-                    Slider(value: $model.wakeWord.sensitivity, in: 0...1, step: 0.05)
+                    Text("Sensitivity \(wakeWord.sensitivity.formatted(.number.precision(.fractionLength(2))))")
+                    Slider(value: $wakeWord.sensitivity, in: 0...1, step: 0.05)
                 }
             }
 
             Section {
-                Button(model.wakeWord.isListening ? "Stop Wake Mode" : "Save and Start Wake Mode") {
-                    model.wakeWord.accessKey = accessKey
+                Button(wakeWord.isListening ? "Stop Wake Mode" : "Save and Start Wake Mode") {
+                    wakeWord.accessKey = accessKey
                     model.applyWakeWordSettings()
                 }
                 .buttonStyle(.borderedProminent)
-                Text(model.wakeWord.statusMessage)
+                Text(wakeWord.statusMessage)
                     .foregroundStyle(.secondary)
             }
 
@@ -264,16 +270,16 @@ struct WakeWordView: View {
         }
         .navigationTitle("Wake Word")
         .navigationBarTitleDisplayMode(.inline)
-        .task { accessKey = model.wakeWord.accessKey }
+        .task { accessKey = wakeWord.accessKey }
         .fileImporter(
             isPresented: $importingKeyword,
             allowedContentTypes: [UTType(filenameExtension: "ppn") ?? .data]
         ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
+            guard case .success(let url) = result else { return }
             do {
-                try model.wakeWord.importCustomKeyword(from: url)
+                try wakeWord.importCustomKeyword(from: url)
             } catch {
-                model.wakeWord.statusMessage = error.localizedDescription
+                wakeWord.statusMessage = error.localizedDescription
             }
         }
     }
