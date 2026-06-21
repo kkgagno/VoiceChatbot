@@ -25,7 +25,9 @@ enum HealthQuestionParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let unrelatedTopics = [
             "weather", "calendar", "appointment", "send a text", "send a message",
-            "text ", "message ", "youtube", "image", "video", "model", "comfy"
+            "text ", "message ", "youtube", "image", "video", "model", "comfy",
+            "search", "online", "web", "internet", "look up", "lookup", "latest",
+            "news", "current events", "website", "url", "link"
         ]
         if unrelatedTopics.contains(where: lowered.contains) {
             return false
@@ -34,10 +36,12 @@ enum HealthQuestionParser {
             "is that", "was that", "does that", "what about", "how about",
             "why", "normal", "healthy", "good", "bad", "better", "worse",
             "yesterday", "last night", "two nights ago", "compared", "trend",
-            "should i", "could that", "what does that mean"
+            "should i", "could that", "what does that mean", "my health",
+            "my heart", "my sleep", "my steps", "my weight", "my workout",
+            "those numbers", "that number", "that reading", "those readings",
+            "that result", "those results"
         ]
         return followUpPhrases.contains(where: lowered.contains)
-            || lowered.split(separator: " ").count <= 12
     }
 }
 
