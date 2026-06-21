@@ -150,6 +150,31 @@ actor VoiceChatAPI {
         return try await perform(request)
     }
 
+    func prepareCalendarEvent(
+        text: String,
+        currentDateTime: String,
+        timeZone: String
+    ) async throws -> CalendarAIDraft {
+        var request = try makeRequest(path: "/api/calendar-draft", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            CalendarPreparationRequest(
+                text: text,
+                currentDateTime: currentDateTime,
+                timeZone: timeZone
+            )
+        )
+        return try await perform(request)
+    }
+
+    func groundedAnswer(prompt: String) async throws -> String {
+        var request = try makeRequest(path: "/api/grounded-answer", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(ToolRequest(prompt: prompt))
+        let result: GroundedAnswerResponse = try await perform(request)
+        return result.answer
+    }
+
     func sendMessage(
         text: String,
         attachments: [PendingAttachment],
@@ -249,6 +274,16 @@ private struct ToolResponse: Decodable {
 
 private struct TextMessagePreparationRequest: Encodable {
     let text: String
+}
+
+private struct CalendarPreparationRequest: Encodable {
+    let text: String
+    let currentDateTime: String
+    let timeZone: String
+}
+
+private struct GroundedAnswerResponse: Decodable {
+    let answer: String
 }
 
 struct TextMessagePreparation: Decodable {

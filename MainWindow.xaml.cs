@@ -122,6 +122,8 @@ public partial class MainWindow : Window
             HandlePhoneRemoteChatAsync,
             HandlePhoneRemoteToolAsync,
             HandlePhoneRemoteTextMessageAsync,
+            HandlePhoneRemoteCalendarAsync,
+            HandlePhoneRemoteGroundedAnswerAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
             async (text, ct) =>
             {
@@ -5770,6 +5772,91 @@ public partial class MainWindow : Window
         finally
         {
             _phoneRemoteChatLock.Release();
+        }
+    }
+
+    private async Task<StructuredCalendarEventResult> HandlePhoneRemoteCalendarAsync(
+        PhoneRemoteCalendarRequest request,
+        CancellationToken ct)
+    {
+        return await RunStructuredPhoneRequestAsync(
+            "calendar",
+            (model, token) => _ollama.PrepareCalendarEventAsync(
+                model,
+                request.Text.Trim(),
+                request.CurrentDateTime.Trim(),
+                request.TimeZone.Trim(),
+                token),
+            ct);
+    }
+
+    private async Task<StructuredGroundedAnswerResult> HandlePhoneRemoteGroundedAnswerAsync(
+        string prompt,
+        CancellationToken ct)
+    {
+        return await RunStructuredPhoneRequestAsync(
+            "grounded answer",
+            (model, token) => _ollama.AnswerGroundedQuestionAsync(model, prompt, token),
+            ct);
+    }
+
+    private async Task<T> RunStructuredPhoneRequestAsync<T>(
+        string feature,
+        Func<string, CancellationToken, Task<T>> operation,
+        CancellationToken ct)
+    {
+        await _phoneRemoteChatLock.WaitAsync(ct);
+        try
+        {
+            var model = await Dispatcher.InvokeAsync(() => ModelCombo.Text);
+            if (string.IsNullOrWhiteSpace(model))
+                throw new InvalidOperationException("Select a model in the desktop app first.");
+
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    return await operation(model, ct);
+                }
+                catch (Exception ex) when (attempt < 3 && !ct.IsCancellationRequested)
+                {
+                    lastError = ex;
+                    await Task.Delay(TimeSpan.FromMilliseconds(350 * attempt), ct);
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    break;
+                }
+            }
+
+            var failure = lastError ?? new InvalidOperationException(
+                $"The structured {feature} request failed after three attempts.");
+            LogPhoneFeatureFailure(feature, failure);
+            throw failure;
+        }
+        finally
+        {
+            _phoneRemoteChatLock.Release();
+        }
+    }
+
+    private static void LogPhoneFeatureFailure(string feature, Exception error)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VoiceChatbot");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "phone-feature-errors.log"),
+                $"[{DateTimeOffset.Now:O}] {feature}: {error}\n");
+        }
+        catch
+        {
+            // Diagnostic logging must never replace the original feature error.
         }
     }
 

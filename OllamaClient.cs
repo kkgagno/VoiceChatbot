@@ -203,6 +203,161 @@ public class OllamaClient : IDisposable
             "The model returned an empty structured text-message result.");
     }
 
+    public async Task<StructuredCalendarEventResult> PrepareCalendarEventAsync(
+        string model,
+        string userRequest,
+        string currentDateTime,
+        string timeZone,
+        CancellationToken ct = default)
+    {
+        if (!IsOpenAiCompatible)
+            throw new InvalidOperationException(
+                "Structured calendar preparation requires the OpenAI-compatible provider.");
+
+        var prompt =
+            $"Current local date and time: {currentDateTime}\n" +
+            $"Time zone: {timeZone}\n" +
+            $"User request: {userRequest}";
+        var body = new
+        {
+            model,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "system",
+                    content =
+                        "Convert the user's request into exactly one calendar event. " +
+                        "Resolve relative dates from the supplied current local date, time, and time zone. " +
+                        "When the year is omitted, choose the next future occurrence. " +
+                        "Infer a concise title and use a one-hour duration when no duration or end is given. " +
+                        "Use ISO-8601 timestamps with an explicit UTC offset. " +
+                        "Put only useful supplied details in notes; never invent people, places, or facts."
+                },
+                new { role = "user", content = prompt }
+            },
+            temperature = 0.1,
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new
+                {
+                    name = "calendar_event",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            title = new { type = "string" },
+                            start = new { type = "string" },
+                            end = new { type = "string" },
+                            notes = new { type = "string" }
+                        },
+                        required = new[] { "title", "start", "end", "notes" },
+                        additionalProperties = false
+                    }
+                }
+            }
+        };
+
+        var result = await SendStructuredOpenAiRequestAsync<StructuredCalendarEventResult>(
+            body,
+            "calendar event",
+            ct);
+        if (string.IsNullOrWhiteSpace(result.Title) ||
+            !DateTimeOffset.TryParse(result.Start, out var start) ||
+            !DateTimeOffset.TryParse(result.End, out var end) ||
+            end <= start)
+        {
+            throw new InvalidOperationException(
+                "The model returned an invalid calendar title or date range.");
+        }
+        return result;
+    }
+
+    public async Task<StructuredGroundedAnswerResult> AnswerGroundedQuestionAsync(
+        string model,
+        string prompt,
+        CancellationToken ct = default)
+    {
+        if (!IsOpenAiCompatible)
+            throw new InvalidOperationException(
+                "Grounded iPhone answers require the OpenAI-compatible provider.");
+
+        var body = new
+        {
+            model,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "system",
+                    content =
+                        "Answer from only the private live data and instructions in the user prompt. " +
+                        "Never invent missing values. Return a clear, natural spoken answer."
+                },
+                new { role = "user", content = prompt }
+            },
+            temperature = 0.2,
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new
+                {
+                    name = "grounded_answer",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            answer = new { type = "string" }
+                        },
+                        required = new[] { "answer" },
+                        additionalProperties = false
+                    }
+                }
+            }
+        };
+
+        var result = await SendStructuredOpenAiRequestAsync<StructuredGroundedAnswerResult>(
+            body,
+            "grounded answer",
+            ct);
+        if (string.IsNullOrWhiteSpace(result.Answer))
+            throw new InvalidOperationException("The model returned an empty grounded answer.");
+        return result;
+    }
+
+    private async Task<T> SendStructuredOpenAiRequestAsync<T>(
+        object body,
+        string resultName,
+        CancellationToken ct)
+    {
+        using var request = CreateOpenAiRequest(
+            HttpMethod.Post,
+            $"{_openAiBaseUrl}/chat/completions");
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(body),
+            Encoding.UTF8,
+            "application/json");
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessWithBodyAsync(response, ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var document = JsonDocument.Parse(json);
+        var content = document.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString() ?? "";
+        var result = JsonSerializer.Deserialize<T>(
+            content,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        return result ?? throw new InvalidOperationException(
+            $"The model returned an empty structured {resultName} result.");
+    }
+
     // ---- Chat (streaming) ----
     public async Task ChatStreamAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, int contextTokens, Action<string> onToken, Action<string> onComplete, Action<Exception> onError,
@@ -738,3 +893,11 @@ public sealed record StructuredTextMessageResult(
     string Body,
     bool NeedsClarification,
     string ClarificationQuestion);
+
+public sealed record StructuredCalendarEventResult(
+    string Title,
+    string Start,
+    string End,
+    string Notes);
+
+public sealed record StructuredGroundedAnswerResult(string Answer);

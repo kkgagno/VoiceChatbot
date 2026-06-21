@@ -28,6 +28,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
     private readonly Func<string, CancellationToken, Task<string>> _toolAsync;
     private readonly Func<string, CancellationToken, Task<StructuredTextMessageResult>> _textMessageAsync;
+    private readonly Func<PhoneRemoteCalendarRequest, CancellationToken, Task<StructuredCalendarEventResult>> _calendarAsync;
+    private readonly Func<string, CancellationToken, Task<StructuredGroundedAnswerResult>> _groundedAnswerAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<string, CancellationToken, Task<string?>> _speakAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
@@ -44,6 +46,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
         Func<string, CancellationToken, Task<string>> toolAsync,
         Func<string, CancellationToken, Task<StructuredTextMessageResult>> textMessageAsync,
+        Func<PhoneRemoteCalendarRequest, CancellationToken, Task<StructuredCalendarEventResult>> calendarAsync,
+        Func<string, CancellationToken, Task<StructuredGroundedAnswerResult>> groundedAnswerAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
         Func<string, CancellationToken, Task<string?>> speakAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
@@ -53,6 +57,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         _chatAsync = chatAsync;
         _toolAsync = toolAsync;
         _textMessageAsync = textMessageAsync;
+        _calendarAsync = calendarAsync;
+        _groundedAnswerAsync = groundedAnswerAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _speakAsync = speakAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
@@ -219,6 +225,56 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                     detail: ex.Message,
                     statusCode: StatusCodes.Status500InternalServerError,
                     title: "Structured text-message request failed");
+            }
+        });
+
+        app.MapPost("/api/calendar-draft", async (
+            PhoneRemoteCalendarRequest request,
+            HttpRequest httpRequest,
+            CancellationToken ct) =>
+        {
+            if (!IsAuthorized(httpRequest))
+                return Results.Unauthorized();
+            if (string.IsNullOrWhiteSpace(request.Text) ||
+                string.IsNullOrWhiteSpace(request.CurrentDateTime) ||
+                string.IsNullOrWhiteSpace(request.TimeZone))
+            {
+                return Results.BadRequest(new { error = "Calendar request context is incomplete." });
+            }
+
+            try
+            {
+                return Results.Json(await _calendarAsync(request, ct));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Structured calendar request failed");
+            }
+        });
+
+        app.MapPost("/api/grounded-answer", async (
+            PhoneRemoteToolRequest request,
+            HttpRequest httpRequest,
+            CancellationToken ct) =>
+        {
+            if (!IsAuthorized(httpRequest))
+                return Results.Unauthorized();
+            if (string.IsNullOrWhiteSpace(request.Prompt))
+                return Results.BadRequest(new { error = "No grounded prompt was provided." });
+
+            try
+            {
+                return Results.Json(await _groundedAnswerAsync(request.Prompt.Trim(), ct));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Grounded answer request failed");
             }
         });
 
@@ -1521,6 +1577,10 @@ public sealed record PhoneRemoteModelState(string Provider, string Model, string
 public sealed record PhoneRemoteTextRequest(string Text, bool KeepDocumentsActive = false);
 public sealed record PhoneRemoteToolRequest(string Prompt);
 public sealed record PhoneRemoteTextMessageRequest(string Text);
+public sealed record PhoneRemoteCalendarRequest(
+    string Text,
+    string CurrentDateTime,
+    string TimeZone);
 public sealed record PhoneRemoteSpeakRequest(string Text);
 
 public sealed record PhoneRemoteDocument(string FileName, DocumentTextResult Document);

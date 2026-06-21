@@ -647,7 +647,7 @@ final class AppModel {
             \(calendar.modelContext())
             """
             do {
-                let answer = try await api.tool(prompt: groundedPrompt)
+                let answer = try await api.groundedAnswer(prompt: groundedPrompt)
                 messages.append(ChatEntry(role: .user, text: text))
                 messages.append(ChatEntry(role: .assistant, text: answer))
                 if isConversationActive {
@@ -809,11 +809,11 @@ final class AppModel {
             """
             let answer: String
             do {
-                answer = try await api.tool(prompt: prompt)
+                answer = try await api.groundedAnswer(prompt: prompt)
             } catch {
                 await refreshStatus()
                 guard status?.ok == true else { throw error }
-                answer = try await api.tool(prompt: prompt)
+                answer = try await api.groundedAnswer(prompt: prompt)
             }
             healthDiscussionTurns.append(
                 HealthDiscussionTurn(role: "User", text: text)
@@ -899,22 +899,12 @@ final class AppModel {
     private func createCalendarDraftWithAI(from request: String) async throws -> CalendarEventDraft {
         let now = Date.now.formatted(date: .complete, time: .complete)
         let timeZone = TimeZone.current.identifier
-        let prompt = """
-        You are an expert calendar assistant. Convert the user's request into one calendar event.
-        Resolve relative dates using the supplied current local date, time, and time zone.
-        If the year is omitted, choose the next future occurrence. Infer a concise useful title.
-        Infer a sensible duration: use one hour when no duration or ending time is stated.
-        Put useful extra details in notes, but do not invent people, locations, or facts.
-
-        Return ONLY one JSON object with exactly these string fields:
-        {"title":"...","start":"ISO-8601 with UTC offset","end":"ISO-8601 with UTC offset","notes":"..."}
-
-        Current local date and time: \(now)
-        Time zone: \(timeZone)
-        User request: \(request)
-        """
-        let result = try await api.tool(prompt: prompt)
-        return try CalendarAIDraft.decode(from: result).eventDraft()
+        let result = try await api.prepareCalendarEvent(
+            text: request,
+            currentDateTime: now,
+            timeZone: timeZone
+        )
+        return try result.eventDraft()
     }
 
     private func createCalendarDeletionWithAI(
