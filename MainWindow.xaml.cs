@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -1296,6 +1297,7 @@ public partial class MainWindow : Window
     private string GetEffectiveSystemPrompt(string? currentUserText = null)
     {
         var basePrompt = SystemPromptBox.Text;
+        basePrompt += "\n\n" + GetEasternDateTimeSystemContext();
         if (IsCodeOrScriptRequest(currentUserText))
         {
             basePrompt += "\n\n" + GetCodeArtifactSystemInstruction(currentUserText);
@@ -1321,6 +1323,29 @@ public partial class MainWindow : Window
             basePrompt += "\n\n" + recentWebContext;
 
         return basePrompt;
+    }
+
+    private static string GetEasternDateTimeSystemContext()
+    {
+        TimeZoneInfo eastern;
+        try
+        {
+            eastern = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            eastern = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        }
+
+        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, eastern);
+        var zoneName = eastern.IsDaylightSavingTime(now) ? "EDT" : "EST";
+        var offset = now.ToString("zzz", CultureInfo.InvariantCulture);
+        return
+            "[Current date and time]\n" +
+            $"It is {now:dddd, MMMM d, yyyy 'at' h:mm:ss tt} {zoneName} (UTC{offset}).\n" +
+            "Use this as the authoritative current date, weekday, year, and time of day. " +
+            "Interpret relative references such as today, tomorrow, yesterday, tonight, " +
+            "this morning, and this weekend from this timestamp.";
     }
 
     private static bool IsCodeOrScriptRequest(string? text)
