@@ -120,6 +120,7 @@ public partial class MainWindow : Window
             (stream, ct) => _speech.ContainsSpeechWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
             HandlePhoneRemoteToolAsync,
+            HandlePhoneRemoteTextMessageAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
             async (text, ct) =>
             {
@@ -5707,6 +5708,24 @@ public partial class MainWindow : Window
                     maxTokens,
                     ct,
                     contextTokens));
+        }
+        finally
+        {
+            _phoneRemoteChatLock.Release();
+        }
+    }
+
+    private async Task<StructuredTextMessageResult> HandlePhoneRemoteTextMessageAsync(
+        string request,
+        CancellationToken ct)
+    {
+        await _phoneRemoteChatLock.WaitAsync(ct);
+        try
+        {
+            var model = await Dispatcher.InvokeAsync(() => ModelCombo.Text);
+            if (string.IsNullOrWhiteSpace(model))
+                throw new InvalidOperationException("Select a model in the desktop app first.");
+            return await _ollama.PrepareTextMessageAsync(model, request, ct);
         }
         finally
         {

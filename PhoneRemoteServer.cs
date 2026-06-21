@@ -27,6 +27,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<Stream, CancellationToken, Task<bool>> _detectSpeechAsync;
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
     private readonly Func<string, CancellationToken, Task<string>> _toolAsync;
+    private readonly Func<string, CancellationToken, Task<StructuredTextMessageResult>> _textMessageAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<string, CancellationToken, Task<string?>> _speakAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
@@ -42,6 +43,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<Stream, CancellationToken, Task<bool>> detectSpeechAsync,
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
         Func<string, CancellationToken, Task<string>> toolAsync,
+        Func<string, CancellationToken, Task<StructuredTextMessageResult>> textMessageAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
         Func<string, CancellationToken, Task<string?>> speakAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
@@ -50,6 +52,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         _detectSpeechAsync = detectSpeechAsync;
         _chatAsync = chatAsync;
         _toolAsync = toolAsync;
+        _textMessageAsync = textMessageAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _speakAsync = speakAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
@@ -193,6 +196,29 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                     detail: ex.Message,
                     statusCode: StatusCodes.Status500InternalServerError,
                     title: "AI tool request failed");
+            }
+        });
+
+        app.MapPost("/api/text-message", async (
+            PhoneRemoteTextMessageRequest request,
+            HttpRequest httpRequest,
+            CancellationToken ct) =>
+        {
+            if (!IsAuthorized(httpRequest))
+                return Results.Unauthorized();
+            if (string.IsNullOrWhiteSpace(request.Text))
+                return Results.BadRequest(new { error = "No text request was provided." });
+
+            try
+            {
+                return Results.Json(await _textMessageAsync(request.Text.Trim(), ct));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Structured text-message request failed");
             }
         });
 
@@ -1494,6 +1520,7 @@ public sealed record PhoneRemoteModelState(string Provider, string Model, string
 
 public sealed record PhoneRemoteTextRequest(string Text, bool KeepDocumentsActive = false);
 public sealed record PhoneRemoteToolRequest(string Prompt);
+public sealed record PhoneRemoteTextMessageRequest(string Text);
 public sealed record PhoneRemoteSpeakRequest(string Text);
 
 public sealed record PhoneRemoteDocument(string FileName, DocumentTextResult Document);

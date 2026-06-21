@@ -576,28 +576,9 @@ final class AppModel {
     private func handleTextMessageCommand(_ text: String) async -> Bool {
         guard TextMessageCommandParser.mightBeCommunicationRequest(text) else { return false }
 
-        let intent: TextMessageAIIntent
+        let intent: TextMessagePreparation
         do {
-            let intentPrompt = """
-            Decide whether the user is asking to compose and send an SMS/iMessage to a person.
-            Understand natural requests such as “Send Jane that I am late,” “Tell Jane I will
-            arrive at six,” “Let my sister know dinner moved,” and “Message Mike about tomorrow.”
-            Requests for you to answer, explain, write content, send files, or tell the user
-            something are NOT text-message requests.
-
-            If it is a text request, also extract the recipient wording and draft the message.
-            Preserve the user's intended tone. Do not add a signature or claim it was sent.
-
-            Return ONLY one JSON object:
-            {"isTextMessage":true,"recipient":"Jane","body":"message content"}
-            For a non-text request return:
-            {"isTextMessage":false,"recipient":"","body":""}
-
-            User request:
-            \(text)
-            """
-            let intentResult = try await api.tool(prompt: intentPrompt)
-            intent = try TextMessageAIIntent.decode(from: intentResult)
+            intent = try await api.prepareTextMessage(text)
             guard intent.isTextMessage else { return false }
         } catch {
             messages.append(ChatEntry(role: .user, text: text))
@@ -615,9 +596,9 @@ final class AppModel {
         messages.append(ChatEntry(role: .user, text: text))
         conversationState = .thinking
         do {
-            guard let recipient = intent.recipient?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  let body = intent.body?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !recipient.isEmpty,
+            let recipient = intent.recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = intent.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !recipient.isEmpty,
                   !body.isEmpty
             else {
                 throw ContactsFeatureError.invalidAIDraft

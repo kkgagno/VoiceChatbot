@@ -117,6 +117,78 @@ public class OllamaClient : IDisposable
             : "";
     }
 
+    public async Task<StructuredTextMessageResult> PrepareTextMessageAsync(
+        string model,
+        string userRequest,
+        CancellationToken ct = default)
+    {
+        if (!IsOpenAiCompatible)
+            throw new InvalidOperationException(
+                "Structured text-message preparation requires the OpenAI-compatible provider.");
+
+        var body = new
+        {
+            model,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "system",
+                    content =
+                        "Determine whether the user wants to compose an SMS/iMessage. " +
+                        "If true, extract the recipient wording and draft the message. " +
+                        "Do not add a signature or claim anything was sent."
+                },
+                new { role = "user", content = userRequest }
+            },
+            temperature = 0.1,
+            max_tokens = 256,
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new
+                {
+                    name = "text_message_request",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            isTextMessage = new { type = "boolean" },
+                            recipient = new { type = "string" },
+                            body = new { type = "string" }
+                        },
+                        required = new[] { "isTextMessage", "recipient", "body" },
+                        additionalProperties = false
+                    }
+                }
+            }
+        };
+
+        using var request = CreateOpenAiRequest(
+            HttpMethod.Post,
+            $"{_openAiBaseUrl}/chat/completions");
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(body),
+            Encoding.UTF8,
+            "application/json");
+        using var response = await _http.SendAsync(request, ct);
+        await EnsureSuccessWithBodyAsync(response, ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var document = JsonDocument.Parse(json);
+        var content = document.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString() ?? "";
+        var result = JsonSerializer.Deserialize<StructuredTextMessageResult>(
+            content,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        return result ?? throw new InvalidOperationException(
+            "The model returned an empty structured text-message result.");
+    }
+
     // ---- Chat (streaming) ----
     public async Task ChatStreamAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, int contextTokens, Action<string> onToken, Action<string> onComplete, Action<Exception> onError,
@@ -645,3 +717,8 @@ public class OllamaClient : IDisposable
 
     public void Dispose() => _http.Dispose();
 }
+
+public sealed record StructuredTextMessageResult(
+    bool IsTextMessage,
+    string Recipient,
+    string Body);

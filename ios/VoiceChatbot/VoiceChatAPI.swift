@@ -143,6 +143,13 @@ actor VoiceChatAPI {
         return result.response
     }
 
+    func prepareTextMessage(_ text: String) async throws -> TextMessagePreparation {
+        var request = try makeRequest(path: "/api/text-message", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(TextMessagePreparationRequest(text: text))
+        return try await perform(request)
+    }
+
     func sendMessage(
         text: String,
         attachments: [PendingAttachment],
@@ -238,6 +245,16 @@ private struct ToolRequest: Encodable {
 
 private struct ToolResponse: Decodable {
     let response: String
+}
+
+private struct TextMessagePreparationRequest: Encodable {
+    let text: String
+}
+
+struct TextMessagePreparation: Decodable {
+    let isTextMessage: Bool
+    let recipient: String
+    let body: String
 }
 
 private struct SpeechDetectionResponse: Decodable {
