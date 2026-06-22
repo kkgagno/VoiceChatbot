@@ -62,8 +62,8 @@ public class AppSettings
     // Window
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;
-    public double WindowWidth { get; set; } = 1100;
-    public double WindowHeight { get; set; } = 750;
+    public double WindowWidth { get; set; } = 1500;
+    public double WindowHeight { get; set; } = 980;
 
     // Face presence / local identity. Disabled by default to preserve current behavior.
     public FaceFeatureSettings FaceFeatures { get; set; } = new();

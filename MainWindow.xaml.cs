@@ -296,13 +296,16 @@ public partial class MainWindow : Window
         _history.MaxMessages = _settings.MaxContextMessages;
 
         // Window position
-        if (_settings.WindowLeft >= 0 && _settings.WindowTop >= 0)
+        if (_settings.WindowLeft >= SystemParameters.VirtualScreenLeft &&
+            _settings.WindowTop >= SystemParameters.VirtualScreenTop &&
+            _settings.WindowLeft < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 120 &&
+            _settings.WindowTop < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 80)
         {
             Left = _settings.WindowLeft;
             Top = _settings.WindowTop;
         }
-        Width = _settings.WindowWidth;
-        Height = _settings.WindowHeight;
+        Width = Math.Max(_settings.WindowWidth, MinWidth);
+        Height = Math.Max(_settings.WindowHeight, MinHeight);
     }
 
     private async Task RefreshFaceProfileChoicesAsync()
@@ -5874,7 +5877,9 @@ public partial class MainWindow : Window
     {
         var border = new Border
         {
-            Background = FindResource("PrimaryBrush") as SolidColorBrush,
+            Background = FindResource("UserBubbleBrush") as SolidColorBrush,
+            BorderBrush = FindResource("UserBubbleBorderBrush") as SolidColorBrush,
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12, 12, 4, 12),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(60, 4, 16, 4),
@@ -5888,10 +5893,10 @@ public partial class MainWindow : Window
             Text = "You",
             FontSize = 10,
             FontWeight = FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
+            Foreground = new SolidColorBrush(Color.FromRgb(145, 105, 0)),
             Margin = new Thickness(0, 0, 0, 4)
         };
-        var body = CreateSelectableText(text, Brushes.White);
+        var body = CreateSelectableText(text, Brushes.Black);
 
         stack.Children.Add(header);
         foreach (var imagePath in imagePaths ?? Enumerable.Empty<string>())
@@ -5950,6 +5955,8 @@ public partial class MainWindow : Window
         var border = new Border
         {
             Background = FindResource("CardBgBrush") as SolidColorBrush,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(183, 215, 174)),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12, 12, 12, 4),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(16, 4, 60, 4),
