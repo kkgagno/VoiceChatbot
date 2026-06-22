@@ -131,6 +131,48 @@
                 </Setter>
             </Style>
 
+            <Style x:Key="ThemeSwitch" TargetType="ToggleButton">
+                <Setter Property="Width" Value="108"/>
+                <Setter Property="Height" Value="34"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Background" Value="#E4E7EA"/>
+                <Setter Property="BorderBrush" Value="{StaticResource SurfaceBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Grid>
+                                <Border x:Name="track"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="17"/>
+                                <TextBlock x:Name="lightLabel" Text="Light"
+                                           Foreground="#222222" FontSize="11" FontWeight="SemiBold"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,13,0"/>
+                                <TextBlock x:Name="darkLabel" Text="Dark"
+                                           Foreground="White" FontSize="11" FontWeight="SemiBold"
+                                           HorizontalAlignment="Left" VerticalAlignment="Center"
+                                           Margin="13,0,0,0" Visibility="Collapsed"/>
+                                <Ellipse x:Name="thumb" Width="28" Height="28"
+                                         Fill="White" Stroke="#C7CCD1" StrokeThickness="1"
+                                         HorizontalAlignment="Left" Margin="2,0,0,0"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="track" Property="Background" Value="#111111"/>
+                                    <Setter TargetName="thumb" Property="HorizontalAlignment" Value="Right"/>
+                                    <Setter TargetName="thumb" Property="Margin" Value="0,0,2,0"/>
+                                    <Setter TargetName="lightLabel" Property="Visibility" Value="Collapsed"/>
+                                    <Setter TargetName="darkLabel" Property="Visibility" Value="Visible"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- ComboBox - NO custom style, use Windows default -->
             
             <!-- ComboBoxItem - BLACK text -->

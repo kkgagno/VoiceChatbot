@@ -50,6 +50,63 @@ struct HealthDiscussionTurn {
     let text: String
 }
 
+enum HealthAnswerValidator {
+    static func correctingWeekdays(in answer: String) -> String {
+        let pattern =
+            #"\b(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),\s+"#
+            + #"(January|February|March|April|May|June|July|August|September|October|November|December)\s+"#
+            + #"(\d{1,2}),\s+(\d{4})\b"#
+        guard let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else { return answer }
+
+        let matches = expression.matches(
+            in: answer,
+            range: NSRange(answer.startIndex..., in: answer)
+        )
+        guard !matches.isEmpty else { return answer }
+
+        let monthNames = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        let weekdayNames = [
+            "Sunday", "Monday", "Tuesday", "Wednesday",
+            "Thursday", "Friday", "Saturday"
+        ]
+        var corrected = answer
+
+        for match in matches.reversed() {
+            guard match.numberOfRanges == 5,
+                  let wholeRange = Range(match.range(at: 0), in: corrected),
+                  let monthRange = Range(match.range(at: 2), in: corrected),
+                  let dayRange = Range(match.range(at: 3), in: corrected),
+                  let yearRange = Range(match.range(at: 4), in: corrected),
+                  let month = monthNames.firstIndex(where: {
+                      $0.caseInsensitiveCompare(String(corrected[monthRange])) == .orderedSame
+                  }),
+                  let day = Int(corrected[dayRange]),
+                  let year = Int(corrected[yearRange])
+            else { continue }
+
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .current
+            guard let date = calendar.date(
+                from: DateComponents(year: year, month: month + 1, day: day)
+            ) else { continue }
+            let weekdayIndex = calendar.component(.weekday, from: date) - 1
+            guard weekdayNames.indices.contains(weekdayIndex) else { continue }
+
+            let replacement =
+                "\(weekdayNames[weekdayIndex]), "
+                + "\(monthNames[month]) \(day), \(year)"
+            corrected.replaceSubrange(wholeRange, with: replacement)
+        }
+        return corrected
+    }
+}
+
 @MainActor
 @Observable
 final class HealthService {
@@ -179,6 +236,9 @@ final class HealthService {
 
         Daily activity (one row per local calendar day; missing means no readable sample):
         \(activityRows)
+
+        Activity facts calculated directly on this iPhone:
+        \(Self.activityFacts(steps: stepValues))
 
         Heart:
         - Recent heart-rate samples (BPM): \(Self.sampleText(heartValues, limit: 15))
@@ -366,6 +426,15 @@ final class HealthService {
             day = next
         }
         return rows.joined(separator: "\n")
+    }
+
+    private static func activityFacts(steps: [Date: Double]) -> String {
+        guard let peak = steps.max(by: { $0.value < $1.value }) else {
+            return "- Highest-step day: unavailable because no readable step samples were found."
+        }
+        return "- Highest-step day: "
+            + "\(peak.key.formatted(date: .complete, time: .omitted)) = "
+            + "\(peak.value.formatted(.number.precision(.fractionLength(0)))) steps."
     }
 
     private static func sleepText(_ samples: [HKCategorySample]) -> String {

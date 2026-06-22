@@ -44,6 +44,8 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    public bool DarkMode { get; set; } = false;
+    public bool SettingsPanelOpen { get; set; } = true;
 
     // Web Search
     public string TavilyApiKey { get; set; } = DefaultTavilyApiKey;
@@ -62,8 +64,9 @@ public class AppSettings
     // Window
     public double WindowLeft { get; set; } = -1;
     public double WindowTop { get; set; } = -1;
-    public double WindowWidth { get; set; } = 1500;
-    public double WindowHeight { get; set; } = 980;
+    public double WindowWidth { get; set; } = 1100;
+    public double WindowHeight { get; set; } = 900;
+    public int DesktopLayoutVersion { get; set; } = 0;
 
     // Face presence / local identity. Disabled by default to preserve current behavior.
     public FaceFeatureSettings FaceFeatures { get; set; } = new();

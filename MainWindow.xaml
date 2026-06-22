@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Voice Chatbot 2.0"
-        Width="1500" Height="980"
-        MinWidth="1280" MinHeight="760"
+        Width="1100" Height="900"
+        MinWidth="980" MinHeight="720"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource DarkBgBrush}"
         Closing="Window_Closing"
@@ -14,24 +14,19 @@
     </Window.Resources>
 
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="340" MinWidth="310"/>
-            <ColumnDefinition Width="1"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
 
 
         <!-- ===================== LEFT PANEL ===================== -->
-        <Border Grid.Column="0" Background="#F4F5F6" CornerRadius="0">
+        <Border x:Name="SettingsPanel" Width="340" HorizontalAlignment="Left"
+                Margin="0,66,0,0" Panel.ZIndex="10"
+                Background="#F4F5F6" BorderBrush="{StaticResource SurfaceBorderBrush}"
+                BorderThickness="0,0,1,0" CornerRadius="0">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
                 <StackPanel>
 
                     <!-- Title -->
                     <TextBlock Text="VOICE CHATBOT 2.0" FontSize="17" FontWeight="Bold"
                                Foreground="#111111" HorizontalAlignment="Center" Margin="0,10,0,14"/>
-                    <Button x:Name="SchedulerBtn" Content="Scheduler" Style="{StaticResource ActionButton}"
-                            Click="Scheduler_Click" Margin="0,0,0,8"/>
-
                     <!-- Connection -->
                     <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                         <StackPanel>
@@ -410,11 +405,8 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Divider -->
-        <Border Grid.Column="1" Background="{StaticResource SurfaceBorderBrush}" Width="1"/>
-
         <!-- ===================== RIGHT PANEL - Chat ===================== -->
-        <Grid Grid.Column="2">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -432,7 +424,7 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Status indicator -->
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="54,0,0,0">
                         <Ellipse x:Name="StateIndicator" Width="12" Height="12" Fill="{StaticResource SuccessBrush}" Margin="0,0,10,0"/>
                         <TextBlock x:Name="StateLabel" Text="Ready" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
@@ -440,6 +432,15 @@
 
                     <!-- Quick actions -->
                     <StackPanel Orientation="Horizontal" Grid.Column="1">
+                        <ToggleButton x:Name="DarkModeToggle"
+                                      Style="{StaticResource ThemeSwitch}"
+                                      Click="DarkModeToggle_Click"
+                                      Margin="0,0,8,0"
+                                      ToolTip="Switch between light and dark appearance"/>
+                        <Button x:Name="SchedulerBtn" Content="Scheduler"
+                                Style="{StaticResource ActionButton}"
+                                Click="Scheduler_Click" Margin="0,0,8,0"
+                                Width="92"/>
                         <Button x:Name="MicBtn" Content="Mic" Style="{StaticResource ActionButton}" 
                                 Click="MicToggle_Click" Margin="0,0,8,0" Width="80"/>
                         <Button x:Name="TranscribeBtn" Content="Transcribe" Style="{StaticResource ActionButton}"
@@ -594,5 +595,14 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <Button x:Name="SettingsMenuButton" Content="☰"
+                Panel.ZIndex="20"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Style="{StaticResource ActionButton}"
+                Click="SettingsMenuButton_Click"
+                Width="42" Height="38" Padding="0"
+                FontSize="18" Margin="12,14,0,0"
+                ToolTip="Show or hide settings"/>
     </Grid>
 </Window>

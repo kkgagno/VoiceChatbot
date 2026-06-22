@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -82,6 +83,7 @@ public partial class MainWindow : Window
     private readonly List<PendingDocumentAttachment> _pendingDocuments = new();
     private readonly List<PendingDocumentAttachment> _activeDocuments = new();
     private readonly List<PendingDocumentAttachment> _activePhoneDocuments = new();
+    private readonly Dictionary<DependencyObject, ThemeSnapshot> _themeSnapshots = new();
     private readonly SemaphoreSlim _phoneRemoteChatLock = new(1, 1);
     private TranscriptionWindow? _transcriptionWindow;
     private string _latestLiveTranscript = "";
@@ -147,6 +149,7 @@ public partial class MainWindow : Window
         try
         {
             ApplySettings();
+            ApplyTheme(_settings.DarkMode);
             SetupSliderBindings();
             SetupTimers();
 
@@ -235,6 +238,13 @@ public partial class MainWindow : Window
 
     private void ApplySettings()
     {
+        if (_settings.DesktopLayoutVersion < 3)
+        {
+            _settings.WindowWidth = 1100;
+            _settings.WindowHeight = 900;
+            _settings.DesktopLayoutVersion = 3;
+        }
+
         OllamaUrlBox.Text = _settings.OllamaUrl;
         OpenAiUrlBox.Text = _settings.OpenAiCompatibleUrl;
         OpenAiApiKeyBox.Password = _settings.OpenAiCompatibleApiKey;
@@ -259,6 +269,9 @@ public partial class MainWindow : Window
         TtsToggle.IsChecked = _settings.TtsEnabled;
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
+        DarkModeToggle.IsChecked = _settings.DarkMode;
+        DarkModeToggle.Content = _settings.DarkMode ? "Light" : "Dark";
+        SetSettingsPanelOpen(_settings.SettingsPanelOpen, save: false);
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         WebSearchToggle.Content = _settings.WebSearchEnabled ? "Web Search ON" : "Web Search OFF";
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
@@ -375,6 +388,8 @@ public partial class MainWindow : Window
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
+        _settings.DarkMode = DarkModeToggle.IsChecked == true;
+        _settings.SettingsPanelOpen = SettingsPanel.Visibility == Visibility.Visible;
         _settings.WebSearchEnabled = WebSearchToggle.IsChecked == true;
         var tavilyKey = TavilyApiKeyBox.Password.Trim();
         _settings.TavilyApiKey = string.IsNullOrWhiteSpace(tavilyKey)
@@ -5713,6 +5728,259 @@ public partial class MainWindow : Window
         }
     }
 
+    private void DarkModeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DarkMode = DarkModeToggle.IsChecked == true;
+        DarkModeToggle.Content = _settings.DarkMode ? "Light" : "Dark";
+        ApplyTheme(_settings.DarkMode);
+        SaveSettings();
+    }
+
+    private void SettingsMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetSettingsPanelOpen(SettingsPanel.Visibility != Visibility.Visible, save: true);
+    }
+
+    private void SetSettingsPanelOpen(bool isOpen, bool save)
+    {
+        SettingsPanel.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        SettingsMenuButton.ToolTip = isOpen ? "Hide settings" : "Show settings";
+        _settings.SettingsPanelOpen = isOpen;
+        if (save)
+            SaveSettings();
+    }
+
+    private void ApplyTheme(bool darkMode)
+    {
+        UpdateLayout();
+        ApplyThemeToVisualTree(this, darkMode);
+    }
+
+    private void ApplyThemeToVisualTree(DependencyObject root, bool darkMode)
+    {
+        if (root is Border themedBubble &&
+            themedBubble.Tag as string is "UserBubble" or "AssistantBubble")
+        {
+            ApplyFixedChatBubbleTheme(themedBubble);
+            return;
+        }
+
+        ApplyThemeToElement(root, darkMode);
+        // Do not recolor the private template parts inside a Windows control.
+        // The control-level palette already supplies a matched foreground,
+        // background, and border. Walking into its template was applying a
+        // second inversion and causing white-on-white ComboBoxes and toggles.
+        if (root is Control && root is not Window)
+            return;
+
+        var childCount = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < childCount; index++)
+            ApplyThemeToVisualTree(VisualTreeHelper.GetChild(root, index), darkMode);
+    }
+
+    private static void ApplyFixedChatBubbleTheme(Border bubble)
+    {
+        var isUser = bubble.Tag as string == "UserBubble";
+        bubble.Background = new SolidColorBrush(
+            isUser ? Color.FromRgb(255, 249, 222) : Color.FromRgb(238, 248, 232));
+        bubble.BorderBrush = new SolidColorBrush(
+            isUser ? Color.FromRgb(235, 181, 38) : Color.FromRgb(159, 199, 147));
+
+        SetDescendantTextColor(bubble, Brushes.Black);
+        if (bubble.Child is Panel panel)
+        {
+            foreach (var button in FindVisualChildren<Button>(panel))
+            {
+                button.Foreground = Brushes.Black;
+                button.Background = Brushes.White;
+                button.BorderBrush = new SolidColorBrush(Color.FromRgb(205, 209, 212));
+            }
+        }
+    }
+
+    private static void SetDescendantTextColor(DependencyObject root, Brush color)
+    {
+        switch (root)
+        {
+            case TextBlock textBlock:
+                textBlock.Foreground = color;
+                break;
+            case TextBox textBox:
+                textBox.Foreground = color;
+                textBox.CaretBrush = color;
+                break;
+        }
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+            SetDescendantTextColor(VisualTreeHelper.GetChild(root, index), color);
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+                yield return match;
+            foreach (var descendant in FindVisualChildren<T>(child))
+                yield return descendant;
+        }
+    }
+
+    private void ApplyThemeToElement(DependencyObject element, bool darkMode)
+    {
+        if (!_themeSnapshots.TryGetValue(element, out var snapshot))
+        {
+            snapshot = ThemeSnapshot.Capture(element);
+            _themeSnapshots[element] = snapshot;
+        }
+        snapshot.Apply(element, darkMode);
+    }
+
+    private static Brush ThemeBrush(Brush? original, bool darkMode)
+    {
+        if (!darkMode || original is not SolidColorBrush solid)
+            return original ?? Brushes.Transparent;
+
+        var color = solid.Color;
+        if (color.A == 0)
+            return original;
+
+        var spread = Math.Max(color.R, Math.Max(color.G, color.B)) -
+                     Math.Min(color.R, Math.Min(color.G, color.B));
+        if (spread > 16)
+            return original;
+
+        var value = (color.R + color.G + color.B) / 3;
+        byte inverted = value switch
+        {
+            >= 248 => 10,
+            >= 235 => 20,
+            >= 210 => 34,
+            >= 150 => 92,
+            >= 90 => 175,
+            >= 35 => 224,
+            _ => 248
+        };
+        return new SolidColorBrush(Color.FromArgb(color.A, inverted, inverted, inverted));
+    }
+
+    private sealed class ThemeSnapshot
+    {
+        public Brush? Background { get; init; }
+        public Brush? Foreground { get; init; }
+        public Brush? BorderBrush { get; init; }
+
+        public static ThemeSnapshot Capture(DependencyObject element) =>
+            element switch
+            {
+                Control control => new ThemeSnapshot
+                {
+                    Background = control.Background,
+                    Foreground = control.Foreground,
+                    BorderBrush = control.BorderBrush
+                },
+                Border border => new ThemeSnapshot
+                {
+                    Background = border.Background,
+                    BorderBrush = border.BorderBrush
+                },
+                Panel panel => new ThemeSnapshot { Background = panel.Background },
+                TextBlock text => new ThemeSnapshot { Foreground = text.Foreground },
+                _ => new ThemeSnapshot()
+            };
+
+        public void Apply(DependencyObject element, bool darkMode)
+        {
+            switch (element)
+            {
+                case ComboBox comboBox:
+                    comboBox.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(18, 18, 18)) : Background);
+                    comboBox.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode ? Brushes.White : Foreground);
+                    comboBox.SetCurrentValue(Control.BorderBrushProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(92, 92, 92)) : BorderBrush);
+                    break;
+                case ComboBoxItem comboItem:
+                    comboItem.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(18, 18, 18)) : Background);
+                    comboItem.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode ? Brushes.White : Foreground);
+                    break;
+                case PasswordBox passwordBox:
+                    passwordBox.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(10, 10, 10)) : Background);
+                    passwordBox.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode ? Brushes.White : Foreground);
+                    passwordBox.SetCurrentValue(Control.BorderBrushProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(88, 88, 88)) : BorderBrush);
+                    passwordBox.CaretBrush = darkMode ? Brushes.White : Foreground;
+                    break;
+                case TextBox textBox:
+                    textBox.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode && Background != Brushes.Transparent
+                            ? new SolidColorBrush(Color.FromRgb(10, 10, 10))
+                            : Background);
+                    textBox.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode ? Brushes.White : Foreground);
+                    textBox.SetCurrentValue(Control.BorderBrushProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(88, 88, 88)) : BorderBrush);
+                    textBox.CaretBrush = darkMode ? Brushes.White : Foreground;
+                    break;
+                case ToggleButton toggleButton:
+                    var isChecked = toggleButton.IsChecked == true;
+                    toggleButton.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode
+                            ? isChecked ? Brushes.White : new SolidColorBrush(Color.FromRgb(10, 10, 10))
+                            : Background);
+                    toggleButton.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode && isChecked ? Brushes.Black :
+                        darkMode ? Brushes.White : Foreground);
+                    toggleButton.SetCurrentValue(Control.BorderBrushProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(52, 52, 52)) : BorderBrush);
+                    break;
+                case Button button:
+                    var originalColor = (Background as SolidColorBrush)?.Color;
+                    var originalIsNearBlack = originalColor is Color buttonColor &&
+                        buttonColor.R < 45 && buttonColor.G < 45 && buttonColor.B < 45;
+                    button.SetCurrentValue(Control.BackgroundProperty,
+                        darkMode && originalIsNearBlack
+                            ? Brushes.White
+                            : darkMode && originalColor is Color colored &&
+                              Math.Max(colored.R, Math.Max(colored.G, colored.B)) -
+                              Math.Min(colored.R, Math.Min(colored.G, colored.B)) > 20
+                                ? Background
+                                : darkMode
+                                    ? new SolidColorBrush(Color.FromRgb(10, 10, 10))
+                                    : Background);
+                    button.SetCurrentValue(Control.ForegroundProperty,
+                        darkMode && originalIsNearBlack ? Brushes.Black :
+                        darkMode ? Brushes.White : Foreground);
+                    button.SetCurrentValue(Control.BorderBrushProperty,
+                        darkMode ? new SolidColorBrush(Color.FromRgb(52, 52, 52)) : BorderBrush);
+                    break;
+                case Control control:
+                    control.SetCurrentValue(Control.BackgroundProperty, ThemeBrush(Background, darkMode));
+                    control.SetCurrentValue(Control.ForegroundProperty, ThemeBrush(Foreground, darkMode));
+                    control.SetCurrentValue(Control.BorderBrushProperty, ThemeBrush(BorderBrush, darkMode));
+                    break;
+                case Border border:
+                    border.SetCurrentValue(Border.BackgroundProperty, ThemeBrush(Background, darkMode));
+                    border.SetCurrentValue(Border.BorderBrushProperty, ThemeBrush(BorderBrush, darkMode));
+                    break;
+                case Panel panel:
+                    panel.SetCurrentValue(Panel.BackgroundProperty, ThemeBrush(Background, darkMode));
+                    break;
+                case TextBlock text:
+                    text.SetCurrentValue(TextBlock.ForegroundProperty, ThemeBrush(Foreground, darkMode));
+                    break;
+            }
+        }
+    }
+
     private async Task<string> HandlePhoneRemoteToolAsync(string prompt, CancellationToken ct)
     {
         await _phoneRemoteChatLock.WaitAsync(ct);
@@ -5880,6 +6148,7 @@ public partial class MainWindow : Window
             Background = FindResource("UserBubbleBrush") as SolidColorBrush,
             BorderBrush = FindResource("UserBubbleBorderBrush") as SolidColorBrush,
             BorderThickness = new Thickness(1),
+            Tag = "UserBubble",
             CornerRadius = new CornerRadius(12, 12, 4, 12),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(60, 4, 16, 4),
@@ -5917,6 +6186,7 @@ public partial class MainWindow : Window
         stack.Children.Add(body);
         border.Child = stack;
         ChatPanel.Children.Add(border);
+        ApplyThemeToVisualTree(border, _settings.DarkMode);
         ScrollChat();
         return border;
     }
@@ -5957,6 +6227,7 @@ public partial class MainWindow : Window
             Background = FindResource("CardBgBrush") as SolidColorBrush,
             BorderBrush = new SolidColorBrush(Color.FromRgb(183, 215, 174)),
             BorderThickness = new Thickness(1),
+            Tag = "AssistantBubble",
             CornerRadius = new CornerRadius(12, 12, 12, 4),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(16, 4, 60, 4),
@@ -5991,6 +6262,7 @@ public partial class MainWindow : Window
         stack.Children.Add(actions);
         border.Child = stack;
         ChatPanel.Children.Add(border);
+        ApplyThemeToVisualTree(border, _settings.DarkMode);
         ScrollChat();
         return new AssistantMessageUi(body, content, actions);
     }
@@ -6128,6 +6400,7 @@ public partial class MainWindow : Window
 
         wrapper.Child = stack;
         content.Children.Add(wrapper);
+        ApplyThemeToVisualTree(wrapper, _settings.DarkMode);
     }
 
     private void AddSystemMessage(string text)
@@ -6137,6 +6410,7 @@ public partial class MainWindow : Window
         block.TextAlignment = TextAlignment.Center;
         block.Margin = new Thickness(0, 8, 0, 4);
         ChatPanel.Children.Add(block);
+        ApplyThemeToVisualTree(block, _settings.DarkMode);
         ScrollChat();
     }
 

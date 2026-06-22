@@ -318,7 +318,10 @@ public class OllamaClient : IDisposable
                     role = "system",
                     content =
                         "Answer from only the private live data and instructions in the user prompt. " +
-                        "Never invent missing values. Return a clear, natural spoken answer."
+                        "Never invent missing values. Copy all weekday and calendar-date labels exactly " +
+                        "as supplied; never independently calculate a weekday from a date. When the prompt " +
+                        "contains device-calculated summary facts, treat those facts as authoritative. " +
+                        "Return a clear, natural spoken answer."
                 },
                 new { role = "user", content = prompt }
             },

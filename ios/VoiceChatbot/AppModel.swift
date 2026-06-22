@@ -803,6 +803,8 @@ final class AppModel {
             Clearly distinguish missing data from zero. Do not diagnose, prescribe treatment, or
             pretend to be the user's doctor. Use a medical caution only when the data or question
             genuinely warrants it; do not repeat generic disclaimers in every answer.
+            Copy weekday and date labels exactly from the live data. Never calculate or substitute
+            a weekday yourself. Prefer the iPhone-calculated activity facts for peak/minimum questions.
 
             Recent private health discussion on this iPhone:
             \(priorDiscussion.isEmpty ? "No prior health discussion." : priorDiscussion)
@@ -812,14 +814,15 @@ final class AppModel {
 
             \(healthDiscussionData)
             """
-            let answer: String
+            let rawAnswer: String
             do {
-                answer = try await api.groundedAnswer(prompt: prompt)
+                rawAnswer = try await api.groundedAnswer(prompt: prompt)
             } catch {
                 await refreshStatus()
                 guard status?.ok == true else { throw error }
-                answer = try await api.groundedAnswer(prompt: prompt)
+                rawAnswer = try await api.groundedAnswer(prompt: prompt)
             }
+            let answer = HealthAnswerValidator.correctingWeekdays(in: rawAnswer)
             healthDiscussionTurns.append(
                 HealthDiscussionTurn(role: "User", text: text)
             )
