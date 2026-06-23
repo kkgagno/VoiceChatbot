@@ -4674,7 +4674,9 @@ public partial class MainWindow : Window
         _transcriptionWindow = new TranscriptionWindow(
             _speech,
             SummarizeLiveTranscriptAsync,
-            OnLiveTranscriptionContextUpdated)
+            OnLiveTranscriptionContextUpdated,
+            _settings.LiveTranscriberSystemPrompt,
+            SaveLiveTranscriberSystemPrompt)
         {
             Owner = this
         };
@@ -4723,6 +4725,12 @@ public partial class MainWindow : Window
     {
         _latestLiveTranscript = transcript.Trim();
         _latestLiveTranscriptSummary = summary.Trim();
+    }
+
+    private void SaveLiveTranscriberSystemPrompt(string prompt)
+    {
+        _settings.LiveTranscriberSystemPrompt = prompt.Trim();
+        SettingsManager.Save(_settings);
     }
 
     private async void SummarizeConversation_Click(object sender, RoutedEventArgs e)

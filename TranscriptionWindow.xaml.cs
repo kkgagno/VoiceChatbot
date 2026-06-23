@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -15,9 +16,14 @@ public partial class TranscriptionWindow : Window
     private readonly SpeechEngine _speech;
     private readonly Func<string, string, CancellationToken, Task<string>> _summarizeAsync;
     private readonly Action<string, string> _contextUpdated;
+    private readonly Action<string> _saveSystemPrompt;
     private readonly StringBuilder _transcript = new();
     private readonly object _chunkSync = new();
     private readonly SemaphoreSlim _chunkLock = new(1, 1);
+    private const int SampleRate = 16000;
+    private const int BytesPerSample = 2;
+    private const int ChunkSeconds = 7;
+    private const int OverlapMilliseconds = 1200;
     private CancellationTokenSource? _recordingCts;
     private WaveInEvent? _waveIn;
     private MemoryStream? _chunkBuffer;
@@ -27,12 +33,18 @@ public partial class TranscriptionWindow : Window
     public TranscriptionWindow(
         SpeechEngine speech,
         Func<string, string, CancellationToken, Task<string>> summarizeAsync,
-        Action<string, string> contextUpdated)
+        Action<string, string> contextUpdated,
+        string initialSystemPrompt,
+        Action<string> saveSystemPrompt)
     {
         InitializeComponent();
         _speech = speech;
         _summarizeAsync = summarizeAsync;
         _contextUpdated = contextUpdated;
+        _saveSystemPrompt = saveSystemPrompt;
+        SystemPromptBox.Text = string.IsNullOrWhiteSpace(initialSystemPrompt)
+            ? "You are a live transcriber and summarizer. Produce accurate, concise transcripts from spoken audio. When summarizing, preserve decisions, action items, names, dates, numbers, and important context. Do not invent details."
+            : initialSystemPrompt;
     }
 
     public bool IsTranscribing => _isTranscribing;
@@ -63,7 +75,7 @@ public partial class TranscriptionWindow : Window
             _chunkStartedUtc = DateTime.UtcNow;
             _waveIn = new WaveInEvent
             {
-                WaveFormat = new WaveFormat(16000, 16, 1),
+                WaveFormat = new WaveFormat(SampleRate, 16, 1),
                 BufferMilliseconds = 100,
                 DeviceNumber = _speech.MicDeviceIndex
             };
@@ -110,7 +122,8 @@ public partial class TranscriptionWindow : Window
                 return;
 
             _chunkBuffer.Write(e.Buffer, 0, e.BytesRecorded);
-            shouldFlush = (DateTime.UtcNow - _chunkStartedUtc).TotalSeconds >= 4.0 && _chunkBuffer.Length > 16000;
+            shouldFlush = (DateTime.UtcNow - _chunkStartedUtc).TotalSeconds >= ChunkSeconds &&
+                _chunkBuffer.Length > SampleRate * BytesPerSample;
         }
 
         if (shouldFlush)
@@ -130,9 +143,16 @@ public partial class TranscriptionWindow : Window
                 if (_chunkBuffer == null || _chunkBuffer.Length < 16000)
                     return;
 
-                chunk = BuildWavStream(_chunkBuffer.ToArray());
+                var rawAudio = _chunkBuffer.ToArray();
+                chunk = BuildWavStream(rawAudio);
                 _chunkBuffer.Dispose();
                 _chunkBuffer = _isTranscribing ? new MemoryStream() : null;
+                if (_chunkBuffer != null)
+                {
+                    var overlapBytes = Math.Min(rawAudio.Length, SampleRate * BytesPerSample * OverlapMilliseconds / 1000);
+                    if (overlapBytes > 0)
+                        _chunkBuffer.Write(rawAudio, rawAudio.Length - overlapBytes, overlapBytes);
+                }
                 _chunkStartedUtc = DateTime.UtcNow;
             }
         }
@@ -171,10 +191,14 @@ public partial class TranscriptionWindow : Window
 
     private void AppendTranscript(string text)
     {
+        text = RemoveLikelyOverlap(_transcript.ToString(), text.Trim());
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
         if (_transcript.Length > 0)
             _transcript.AppendLine();
 
-        _transcript.Append(text.Trim());
+        _transcript.Append(text);
         TranscriptBox.Text = _transcript.ToString();
         TranscriptBox.ScrollToEnd();
         EmptyTranscriptText.Visibility = string.IsNullOrWhiteSpace(TranscriptBox.Text)
@@ -227,9 +251,28 @@ public partial class TranscriptionWindow : Window
         StatusText.Text = _isTranscribing ? $"Transcribing live with {_speech.GetTranscriptionBackendStatus()}..." : "Ready";
     }
 
+    private void SavePrompt_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSystemPrompt();
+    }
+
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        SaveSystemPrompt();
         StopTranscribing();
+    }
+
+    private void SaveSystemPrompt()
+    {
+        var prompt = SystemPromptBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            StatusText.Text = "System message was empty, so it was not saved.";
+            return;
+        }
+
+        _saveSystemPrompt(prompt);
+        StatusText.Text = "Transcriber system message saved.";
     }
 
     private void UpdateStats()
@@ -241,7 +284,7 @@ public partial class TranscriptionWindow : Window
     private static MemoryStream BuildWavStream(byte[] audioData)
     {
         var wavStream = new MemoryStream();
-        const int sampleRate = 16000;
+        const int sampleRate = SampleRate;
         const short bitsPerSample = 16;
         const short channels = 1;
         const short audioFormat = 1;
@@ -269,5 +312,39 @@ public partial class TranscriptionWindow : Window
 
         wavStream.Position = 0;
         return wavStream;
+    }
+
+    private static string RemoveLikelyOverlap(string existingTranscript, string nextText)
+    {
+        if (string.IsNullOrWhiteSpace(existingTranscript) || string.IsNullOrWhiteSpace(nextText))
+            return nextText.Trim();
+
+        var existing = NormalizeForOverlap(existingTranscript);
+        var next = NormalizeForOverlap(nextText);
+        if (string.IsNullOrWhiteSpace(existing) || string.IsNullOrWhiteSpace(next))
+            return nextText.Trim();
+
+        var nextWords = nextText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (nextWords.Length == 0)
+            return nextText.Trim();
+
+        var normalizedNextWords = next.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var maxWords = Math.Min(12, normalizedNextWords.Length);
+        for (var words = maxWords; words >= 3; words--)
+        {
+            var prefix = string.Join(' ', normalizedNextWords.Take(words));
+            if (existing.EndsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return string.Join(' ', nextWords.Skip(words)).Trim();
+        }
+
+        return nextText.Trim();
+    }
+
+    private static string NormalizeForOverlap(string text)
+    {
+        var lower = text.ToLowerInvariant();
+        lower = Regex.Replace(lower, @"[^\p{L}\p{N}']+", " ");
+        lower = Regex.Replace(lower, @"\s+", " ");
+        return lower.Trim();
     }
 }

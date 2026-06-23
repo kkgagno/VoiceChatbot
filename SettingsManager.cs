@@ -34,6 +34,7 @@ public class AppSettings
     public string WhisperModelSize { get; set; } = "small";
     public string TranscriptionBackend { get; set; } = "Whisper.net";
     public string ExternalNpuTranscriberCommand { get; set; } = DefaultRyzenAiWhisperCommand;
+    public string LiveTranscriberSystemPrompt { get; set; } = "You are a live transcriber and summarizer. Produce accurate, concise transcripts from spoken audio. When summarizing, preserve decisions, action items, names, dates, numbers, and important context. Do not invent details.";
 
     // Voice Output
     public string VoiceName { get; set; } = "am_onyx (American Male)";

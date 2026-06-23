@@ -13,7 +13,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="140"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="180"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -38,10 +39,18 @@
 
         <Border Grid.Row="1" Background="#313244" CornerRadius="6" Padding="10" Margin="0,0,0,10">
             <StackPanel>
-                <TextBlock Text="TRANSCRIBER SYSTEM MESSAGE" Foreground="#A6ADC8" FontSize="10" FontWeight="Bold" Margin="0,0,0,5"/>
+                <Grid Margin="0,0,0,5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="TRANSCRIBER SYSTEM MESSAGE" Foreground="#A6ADC8" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <Button x:Name="SavePromptBtn" Grid.Column="1" Content="Save Message" Click="SavePrompt_Click"
+                            Background="#A6E3A1" Foreground="#11111B" BorderThickness="0"
+                            Padding="10,5" MinWidth="105"/>
+                </Grid>
                 <TextBox x:Name="SystemPromptBox" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="58" MaxHeight="92"
-                         Foreground="#11111B" Background="#F5F5FA" BorderBrush="#585B70"
-                         Text="You are a live transcriber and summarizer. Produce accurate, concise transcripts from spoken audio. When summarizing, preserve decisions, action items, names, dates, numbers, and important context. Do not invent details."/>
+                         Foreground="#11111B" Background="#F5F5FA" BorderBrush="#585B70"/>
             </StackPanel>
         </Border>
 
@@ -68,14 +77,17 @@
                     Padding="16,7" MinWidth="105"/>
         </Grid>
 
-        <Border Grid.Row="4" Background="#181825" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+        <GridSplitter Grid.Row="4" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                      Background="#45475A" ShowsPreview="True" Margin="0,0,0,10"/>
+
+        <Border Grid.Row="5" Background="#181825" CornerRadius="6" Padding="12" Margin="0,0,0,10">
             <TextBox x:Name="SummaryBox" TextWrapping="Wrap" AcceptsReturn="True"
                      VerticalScrollBarVisibility="Auto" BorderThickness="0"
                      Background="#181825" Foreground="#CDD6F4" FontSize="13"
                      IsReadOnly="True"/>
         </Border>
 
-        <TextBlock Grid.Row="5" Text="The main chat can use this transcript and summary as context."
+        <TextBlock Grid.Row="6" Text="The main chat can use this transcript and summary as context."
                    Foreground="#A6ADC8" FontSize="11"/>
     </Grid>
 </Window>
