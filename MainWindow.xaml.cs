@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private bool _desktopModelRunning;
     private bool _comfyUiRunning;
     private bool _serviceControlBusy;
+    private bool _restoringRecentChat;
     private string _desktopRunningModel = "";
 
     private double ChatContentWidth => Math.Max(360, ChatScroll.ActualWidth - 64);
@@ -108,6 +109,7 @@ public partial class MainWindow : Window
         _settings = SettingsManager.Load();
         _schedulerStore = SchedulerStore.Load();
         _history = new ConversationHistory();
+        _history.Changed += SaveRecentChatSnapshot;
         _ollama = new OllamaClient(_settings.OllamaUrl);
         _hermesSsh = new HermesSshClient();
         _piAgent = new PiAgentService(GetDefaultPiWorkingDirectory());
@@ -152,6 +154,7 @@ public partial class MainWindow : Window
             ApplyTheme(_settings.DarkMode);
             SetupSliderBindings();
             SetupTimers();
+            RestoreRecentChat();
 
             // Initialize speech - may fail on some systems
             try
@@ -4725,6 +4728,45 @@ public partial class MainWindow : Window
     {
         _latestLiveTranscript = transcript.Trim();
         _latestLiveTranscriptSummary = summary.Trim();
+    }
+
+    private void RestoreRecentChat()
+    {
+        var messages = RecentChatStore.Load(_settings.MaxContextMessages);
+        if (messages.Count == 0)
+            return;
+
+        _restoringRecentChat = true;
+        try
+        {
+            _history.ReplaceAll(messages);
+            ChatPanel.Children.Clear();
+            foreach (var message in _history.GetAll())
+            {
+                if (message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                    AddUserMessage(message.Content);
+                else if (message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+                    AddAssistantMessage(message.Content);
+            }
+        }
+        finally
+        {
+            _restoringRecentChat = false;
+        }
+
+        ScrollChat();
+    }
+
+    private void SaveRecentChatSnapshot()
+    {
+        if (_restoringRecentChat)
+            return;
+
+        var messages = _history.GetAll();
+        if (messages.Count == 0)
+            RecentChatStore.Clear();
+        else
+            RecentChatStore.Save(messages, _history.MaxMessages);
     }
 
     private void SaveLiveTranscriberSystemPrompt(string prompt)
