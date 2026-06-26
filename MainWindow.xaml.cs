@@ -6839,6 +6839,7 @@ public partial class MainWindow : Window
         // Remove common leftover citation fragments.
         cleaned = Regex.Replace(cleaned, "\\b\\d+†L\\d+(?:-L\\d+)?\\b", "");
 
+        cleaned = CleanSpeechDiagramMarkup(cleaned);
         cleaned = NormalizeSpeechNumbers(cleaned);
 
         cleaned = Regex.Replace(cleaned, "\\s+([,.!?;:])", "$1");
@@ -6846,6 +6847,48 @@ public partial class MainWindow : Window
         cleaned = Regex.Replace(cleaned, "[ \\t]{2,}", " ");
 
         return cleaned.Trim();
+    }
+
+    private static string CleanSpeechDiagramMarkup(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+
+        var cleaned = text
+            .Replace("→", ". ")
+            .Replace("←", ". ")
+            .Replace("↓", ". ")
+            .Replace("↑", ". ")
+            .Replace("⇒", ". ")
+            .Replace("⇐", ". ")
+            .Replace("↔", ". ")
+            .Replace("↕", ". ");
+
+        // LaTeX arrows and math wrappers are useful visually, but terrible aloud:
+        // "$\downarrow$", "\rightarrow", "\leftarrow", etc.
+        cleaned = Regex.Replace(
+            cleaned,
+            @"\$?\s*\\(?:downarrow|uparrow|leftarrow|rightarrow|to|Rightarrow|Leftarrow|leftrightarrow)\s*\$?",
+            ". ",
+            RegexOptions.IgnoreCase);
+
+        // Strip common math/display wrappers left behind by diagrams.
+        cleaned = Regex.Replace(cleaned, @"\$\s*", "");
+        cleaned = Regex.Replace(cleaned, @"\s*\$", "");
+
+        // Mermaid/ASCII/tree connector noise.
+        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[-=]{2,}|[|│┃]+|[+`'└├┌┐┘┤┬┴─━]+)\s*$", "");
+        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[|│┃]\s*)+", "");
+        cleaned = Regex.Replace(cleaned, @"\s*(?:-{1,2}>|<-{1,2}|=>|<=)\s*", ". ");
+        cleaned = Regex.Replace(cleaned, @"\s+[|│┃]\s+", ". ");
+
+        // Don't speak literal markdown emphasis/backticks around labels.
+        cleaned = Regex.Replace(cleaned, @"[`*_]{1,3}", "");
+
+        // Collapse repeated sentence breaks created by stripped arrows.
+        cleaned = Regex.Replace(cleaned, @"(?:\s*\.\s*){2,}", ". ");
+        cleaned = Regex.Replace(cleaned, @"(?m)^[ \t]*\.[ \t]*$", "");
+
+        return cleaned;
     }
 
     private static string NormalizeSpeechNumbers(string text)
