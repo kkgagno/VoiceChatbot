@@ -6338,7 +6338,7 @@ public partial class MainWindow : Window
 
         while (position < text.Length)
         {
-            var fenceStart = text.IndexOf("```", position, StringComparison.Ordinal);
+            var fenceStart = FindFenceLineStart(text, position);
             if (fenceStart < 0)
             {
                 AddAssistantTextPart(assistantMessage.Content, text[position..], foreground);
@@ -6368,7 +6368,7 @@ public partial class MainWindow : Window
                 codeStart = fenceStart + 3;
             }
 
-            var fenceEnd = text.IndexOf("```", codeStart, StringComparison.Ordinal);
+            var fenceEnd = FindFenceLineStart(text, codeStart);
             var codeEnd = fenceEnd >= 0 ? fenceEnd : text.Length;
             var code = text[codeStart..codeEnd].Trim('\r', '\n');
             AddAssistantCodeBlock(assistantMessage.Content, language, code);
@@ -6376,12 +6376,39 @@ public partial class MainWindow : Window
             if (fenceEnd < 0)
                 break;
 
-            position = fenceEnd + 3;
+            var closingLineEnd = text.IndexOf('\n', fenceEnd + 3);
+            position = closingLineEnd >= 0 ? closingLineEnd + 1 : fenceEnd + 3;
         }
     }
 
     private static bool ContainsFencedCodeBlock(string text) =>
-        !string.IsNullOrWhiteSpace(text) && text.Contains("```", StringComparison.Ordinal);
+        FindFenceLineStart(text, 0) >= 0;
+
+    private static int FindFenceLineStart(string text, int startIndex)
+    {
+        if (string.IsNullOrWhiteSpace(text) || startIndex >= text.Length)
+            return -1;
+
+        var searchFrom = Math.Max(0, startIndex);
+        while (searchFrom < text.Length)
+        {
+            var fence = text.IndexOf("```", searchFrom, StringComparison.Ordinal);
+            if (fence < 0)
+                return -1;
+
+            var lineStart = fence;
+            while (lineStart > 0 && text[lineStart - 1] != '\n' && text[lineStart - 1] != '\r')
+                lineStart--;
+
+            var prefix = text[lineStart..fence];
+            if (string.IsNullOrWhiteSpace(prefix))
+                return fence;
+
+            searchFrom = fence + 3;
+        }
+
+        return -1;
+    }
 
     private void AddAssistantTextPart(StackPanel content, string text, Brush foreground)
     {
