@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,6 +19,7 @@ public sealed class ComfyUiImageClient : IDisposable
     private const int DefaultVideoWidth = 768;
     private const int DefaultVideoHeight = 1344;
     private const string QwenEditTwoImageWorkflowName = "image_qwen_image_edit_2511_2";
+    private const string Krea2WorkflowName = "image_krea2_turbo_t2i_OFFICIAL";
 
     private readonly HttpClient _http = new()
     {
@@ -25,6 +27,35 @@ public sealed class ComfyUiImageClient : IDisposable
     };
 
     public string BaseUrl { get; set; } = "http://localhost:8000";
+
+    public async Task<IReadOnlyList<string>> ListKrea2LorasAsync(CancellationToken ct)
+    {
+        var objectInfo = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/object_info", ct)
+            ?? new JsonObject();
+        var loras = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var classEntry in objectInfo)
+        {
+            var classType = classEntry.Key;
+            if (classEntry.Value is not JsonObject classInfo)
+                continue;
+
+            foreach (var inputName in new[] { "lora_name", "lora", "lora_name_1", "lora_1" })
+            {
+                if (!TryGetComboOptions(objectInfo, classType, inputName, out var options))
+                    continue;
+
+                foreach (var option in options)
+                {
+                    var fileName = Path.GetFileName(option);
+                    if (fileName.StartsWith("krea2", StringComparison.OrdinalIgnoreCase))
+                        loras.Add(option);
+                }
+            }
+        }
+
+        return loras.ToList();
+    }
 
     public async Task<GeneratedImageResult> CreateQwenImageAsync(
         string prompt,
@@ -41,6 +72,28 @@ public sealed class ComfyUiImageClient : IDisposable
             localPath,
             prompt,
             "Qwen Image 2512",
+            image.FileName,
+            image.Subfolder,
+            image.Type);
+    }
+
+    public async Task<GeneratedImageResult> CreateKrea2ImageAsync(
+        string prompt,
+        bool enableLora,
+        string loraName,
+        string aspectRatio,
+        CancellationToken ct)
+    {
+        var workflow = await LoadWorkflowAsync(Krea2WorkflowName, ct);
+        PatchKrea2Workflow(workflow, prompt, enableLora, loraName, aspectRatio);
+
+        var image = await QueueAndWaitForImageAsync(workflow, null, ct);
+        var localPath = await DownloadImageAsync(image, "krea2", ct);
+
+        return new GeneratedImageResult(
+            localPath,
+            prompt,
+            Krea2WorkflowName,
             image.FileName,
             image.Subfolder,
             image.Type);
@@ -1168,6 +1221,106 @@ public sealed class ComfyUiImageClient : IDisposable
                     inputs[key] = "VoiceChatbot_LTX2_3_IA2V";
             }
         }
+    }
+
+    private static void PatchKrea2Workflow(
+        Dictionary<string, object> workflow,
+        string prompt,
+        bool enableLora,
+        string loraName,
+        string aspectRatio)
+    {
+        aspectRatio = NormalizeKrea2AspectRatio(aspectRatio);
+        foreach (var node in workflow.Values.OfType<Dictionary<string, object>>())
+        {
+            var classType = node.TryGetValue("class_type", out var classObj) ? classObj?.ToString() ?? "" : "";
+            if (!node.TryGetValue("inputs", out var inputsObj) || inputsObj is not Dictionary<string, object> inputs)
+                continue;
+
+            var title = "";
+            if (node.TryGetValue("_meta", out var metaObj)
+                && metaObj is Dictionary<string, object> meta
+                && meta.TryGetValue("title", out var titleObj))
+            {
+                title = titleObj?.ToString() ?? "";
+            }
+
+            var lowerClass = classType.ToLowerInvariant();
+            var lowerTitle = title.ToLowerInvariant();
+            foreach (var key in inputs.Keys.ToList())
+            {
+                var lowerKey = key.ToLowerInvariant();
+
+                if (IsPromptInput(lowerClass, lowerTitle, lowerKey, inputs[key]))
+                    inputs[key] = prompt;
+
+                if (lowerKey is "seed" or "noise_seed")
+                    inputs[key] = Random.Shared.NextInt64(1, long.MaxValue);
+
+                if (IsKrea2EnableLoraInput(lowerTitle, lowerKey))
+                    inputs[key] = enableLora;
+
+                if (enableLora
+                    && !string.IsNullOrWhiteSpace(loraName)
+                    && IsKrea2LoraNameInput(lowerClass, lowerTitle, lowerKey))
+                {
+                    inputs[key] = loraName;
+                }
+
+                if (IsKrea2AspectRatioInput(lowerClass, lowerTitle, lowerKey))
+                    inputs[key] = aspectRatio;
+
+                if (lowerKey is "filename_prefix" or "prefix")
+                    inputs[key] = "VoiceChatbot_Krea2_Turbo";
+            }
+        }
+    }
+
+    private static bool IsKrea2EnableLoraInput(string lowerTitle, string lowerKey)
+    {
+        var normalizedKey = NormalizeWorkflowKey(lowerKey);
+        var normalizedTitle = NormalizeWorkflowKey(lowerTitle);
+        return normalizedKey is "enablelora" or "uselora" or "loraenabled" ||
+               normalizedKey.Contains("enablelora") ||
+               normalizedTitle.Contains("enablelora");
+    }
+
+    private static bool IsKrea2LoraNameInput(string lowerClass, string lowerTitle, string lowerKey)
+    {
+        var normalizedKey = NormalizeWorkflowKey(lowerKey);
+        return normalizedKey is "loraname" or "lora" ||
+               normalizedKey.Contains("loraname") ||
+               (lowerClass.Contains("lora") && normalizedKey.Contains("name")) ||
+               (lowerTitle.Contains("lora") && normalizedKey.Contains("name"));
+    }
+
+    private static bool IsKrea2AspectRatioInput(string lowerClass, string lowerTitle, string lowerKey)
+    {
+        var normalizedKey = NormalizeWorkflowKey(lowerKey);
+        return normalizedKey is "aspectratio" or "ratio" ||
+               normalizedKey.Contains("aspectratio") ||
+               (lowerClass.Contains("resolution") && normalizedKey.Contains("ratio")) ||
+               (lowerTitle.Contains("resolution") && normalizedKey.Contains("ratio"));
+    }
+
+    private static string NormalizeWorkflowKey(string value) =>
+        Regex.Replace(value.ToLowerInvariant(), "[^a-z0-9]", "");
+
+    private static string NormalizeKrea2AspectRatio(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed switch
+        {
+            "1:1" => "1:1 (Square)",
+            "3:2" => "3:2 (Photo)",
+            "4:3" => "4:3 (Standard)",
+            "16:9" => "16:9 (Widescreen)",
+            "21:9" => "21:9 (Ultrawide)",
+            "2:3" => "2:3 (Portrait Photo)",
+            "3:4" => "3:4 (Portrait Standard)",
+            "9:16" => "9:16 (Portrait Widescreen)",
+            _ => string.IsNullOrWhiteSpace(trimmed) ? "1:1 (Square)" : trimmed
+        };
     }
 
     private static void PatchQwenTwoImageEditWorkflow(Dictionary<string, object> workflow, string imageName1, string imageName2, string prompt)

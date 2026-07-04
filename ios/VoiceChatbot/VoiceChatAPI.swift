@@ -175,6 +175,29 @@ actor VoiceChatAPI {
         return result.answer
     }
 
+    func krea2Options() async throws -> Krea2Options {
+        try await request(path: "/api/krea2/options")
+    }
+
+    func createKrea2Image(
+        prompt: String,
+        enableLora: Bool,
+        loraName: String,
+        aspectRatio: String
+    ) async throws -> AssistantResponse {
+        var request = try makeRequest(path: "/api/krea2/create", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            Krea2CreateRequest(
+                prompt: prompt,
+                enableLora: enableLora,
+                loraName: loraName,
+                aspectRatio: aspectRatio
+            )
+        )
+        return try await perform(request)
+    }
+
     func sendMessage(
         text: String,
         attachments: [PendingAttachment],
@@ -284,6 +307,32 @@ private struct CalendarPreparationRequest: Encodable {
 
 private struct GroundedAnswerResponse: Decodable {
     let answer: String
+}
+
+struct Krea2Options: Decodable, Equatable {
+    let loras: [String]
+    let aspectRatios: [String]
+
+    static let fallback = Krea2Options(
+        loras: [],
+        aspectRatios: [
+            "1:1 (Square)",
+            "3:2 (Photo)",
+            "4:3 (Standard)",
+            "16:9 (Widescreen)",
+            "21:9 (Ultrawide)",
+            "2:3 (Portrait Photo)",
+            "3:4 (Portrait Standard)",
+            "9:16 (Portrait Widescreen)"
+        ]
+    )
+}
+
+private struct Krea2CreateRequest: Encodable {
+    let prompt: String
+    let enableLora: Bool
+    let loraName: String
+    let aspectRatio: String
 }
 
 struct TextMessagePreparation: Decodable {

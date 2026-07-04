@@ -32,6 +32,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<string, CancellationToken, Task<StructuredGroundedAnswerResult>> _groundedAnswerAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<string, CancellationToken, Task<string?>> _speakAsync;
+    private readonly Func<CancellationToken, Task<PhoneRemoteKrea2Options>> _krea2OptionsAsync;
+    private readonly Func<PhoneRemoteKrea2Request, CancellationToken, Task<PhoneRemoteAssistantResult>> _krea2CreateAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
     private readonly ConcurrentDictionary<string, string> _audioFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _imageFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +52,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<string, CancellationToken, Task<StructuredGroundedAnswerResult>> groundedAnswerAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
         Func<string, CancellationToken, Task<string?>> speakAsync,
+        Func<CancellationToken, Task<PhoneRemoteKrea2Options>> krea2OptionsAsync,
+        Func<PhoneRemoteKrea2Request, CancellationToken, Task<PhoneRemoteAssistantResult>> krea2CreateAsync,
         Func<PhoneRemoteModelState>? modelStateProvider = null)
     {
         _transcribeAsync = transcribeAsync;
@@ -61,6 +65,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         _groundedAnswerAsync = groundedAnswerAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _speakAsync = speakAsync;
+        _krea2OptionsAsync = krea2OptionsAsync;
+        _krea2CreateAsync = krea2CreateAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
     }
 
@@ -298,6 +304,44 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             return Results.Json(new { audioUrl = $"/audio/{id}" });
         });
 
+        app.MapGet("/api/krea2/options", async (HttpRequest request, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request))
+                return Results.Unauthorized();
+
+            try
+            {
+                return Results.Json(await _krea2OptionsAsync(ct));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Krea2 options request failed");
+            }
+        });
+
+        app.MapPost("/api/krea2/create", async (PhoneRemoteKrea2Request input, HttpRequest request, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request))
+                return Results.Unauthorized();
+            if (string.IsNullOrWhiteSpace(input.Prompt))
+                return Results.BadRequest(new { error = "Enter a Krea2 image prompt first." });
+
+            try
+            {
+                return Results.Json(await BuildResponseFromAssistantResultAsync(input.Prompt.Trim(), await _krea2CreateAsync(input, ct)));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Krea2 image request failed");
+            }
+        });
+
         app.MapPost("/api/message", async (HttpRequest request, CancellationToken ct) =>
         {
             if (!IsAuthorized(request))
@@ -501,6 +545,11 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private async Task<object> BuildResponseAsync(PhoneRemoteUserInput input, CancellationToken ct)
     {
         var result = await _chatAsync(input, ct);
+        return await BuildResponseFromAssistantResultAsync(input.Text, result);
+    }
+
+    private Task<object> BuildResponseFromAssistantResultAsync(string transcript, PhoneRemoteAssistantResult result)
+    {
         var modelState = _modelStateProvider();
         var audioUrl = "";
         if (!string.IsNullOrWhiteSpace(result.AudioPath) && File.Exists(result.AudioPath))
@@ -526,9 +575,9 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             videoUrl = $"/video/{id}";
         }
 
-        return new
+        return Task.FromResult<object>(new
         {
-            transcript = input.Text,
+            transcript,
             response = result.Response,
             audioUrl,
             imageUrl,
@@ -537,7 +586,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             activeProvider = modelState.Provider,
             activeModel = string.IsNullOrWhiteSpace(result.ActiveModel) ? modelState.Model : result.ActiveModel,
             activeEndpoint = string.IsNullOrWhiteSpace(result.ActiveEndpoint) ? modelState.Endpoint : result.ActiveEndpoint
-        };
+        });
     }
 
     private static string GetImageContentType(string path)
@@ -1582,6 +1631,15 @@ public sealed record PhoneRemoteCalendarRequest(
     string CurrentDateTime,
     string TimeZone);
 public sealed record PhoneRemoteSpeakRequest(string Text);
+public sealed record PhoneRemoteKrea2Request(
+    string Prompt,
+    bool EnableLora,
+    string LoraName,
+    string AspectRatio);
+
+public sealed record PhoneRemoteKrea2Options(
+    List<string> Loras,
+    List<string> AspectRatios);
 
 public sealed record PhoneRemoteDocument(string FileName, DocumentTextResult Document);
 

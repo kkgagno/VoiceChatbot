@@ -26,6 +26,10 @@ final class AppModel {
     var playingMessageID: UUID?
     var comfyOutput: ComfyOutput?
     var isRunningComfy = false
+    var krea2Options = Krea2Options.fallback
+    var krea2Output: ComfyOutput?
+    var isLoadingKrea2Options = false
+    var isRunningKrea2 = false
     var pendingCalendarEvent: CalendarEventDraft?
     var pendingCalendarDeletion: CalendarDeletionDraft?
     var pendingTextMessage: TextMessageDraft?
@@ -476,6 +480,57 @@ final class AppModel {
                 message: result.response,
                 imageData: imageData,
                 videoURL: videoURL
+            )
+        } catch {
+            fail(error)
+        }
+    }
+
+    func refreshKrea2Options() async {
+        guard !isLoadingKrea2Options else { return }
+        isLoadingKrea2Options = true
+        defer { isLoadingKrea2Options = false }
+        do {
+            krea2Options = try await api.krea2Options()
+        } catch {
+            // Keep the built-in resolution list available if ComfyUI is offline.
+            fail(error)
+        }
+    }
+
+    func runKrea2(
+        prompt: String,
+        enableLora: Bool,
+        loraName: String,
+        aspectRatio: String
+    ) async {
+        let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPrompt.isEmpty else {
+            failMessage("Enter a Krea2 image prompt first.")
+            return
+        }
+
+        isRunningKrea2 = true
+        krea2Output = nil
+        defer { isRunningKrea2 = false }
+
+        do {
+            let result = try await api.createKrea2Image(
+                prompt: cleanPrompt,
+                enableLora: enableLora,
+                loraName: enableLora ? loraName : "",
+                aspectRatio: aspectRatio
+            )
+
+            var imageData: Data?
+            if let path = result.imageURL, !path.isEmpty {
+                imageData = try await api.mediaData(relativePath: path)
+            }
+
+            krea2Output = ComfyOutput(
+                message: result.response,
+                imageData: imageData,
+                videoURL: nil
             )
         } catch {
             fail(error)

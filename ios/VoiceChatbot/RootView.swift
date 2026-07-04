@@ -9,6 +9,7 @@ private enum AppTab: Hashable {
     case transcription
     case models
     case comfy
+    case krea2
     case calendar
     case contacts
     case health
@@ -47,6 +48,12 @@ struct RootView: View {
             }
             .tabItem { Label("ComfyUI", systemImage: "square.stack.3d.up.fill") }
             .tag(AppTab.comfy)
+
+            NavigationStack {
+                Krea2View(model: model)
+            }
+            .tabItem { Label("Krea2", systemImage: "sparkles") }
+            .tag(AppTab.krea2)
 
             NavigationStack {
                 CalendarView(model: model)

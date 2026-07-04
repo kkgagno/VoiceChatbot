@@ -33,6 +33,17 @@ public partial class MainWindow : Window
     private const int MaxCurrentModelInputChars = 300000;
     private const int EstimatedCharsPerToken = 4;
     private const int ContextSafetyTokens = 4096;
+    private static readonly List<string> Krea2AspectRatios = new()
+    {
+        "1:1 (Square)",
+        "3:2 (Photo)",
+        "4:3 (Standard)",
+        "16:9 (Widescreen)",
+        "21:9 (Ultrawide)",
+        "2:3 (Portrait Photo)",
+        "3:4 (Portrait Standard)",
+        "9:16 (Portrait Widescreen)"
+    };
     private static readonly string SyncedVideoDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "VoiceChatbot",
@@ -137,6 +148,8 @@ public partial class MainWindow : Window
                     return null;
                 return await _speech.CreateSpeechAudioFileAsync(speechText, GetAssistantAudioDirectory());
             },
+            HandlePhoneKrea2OptionsAsync,
+            HandlePhoneKrea2CreateAsync,
             GetPhoneRemoteModelState);
         _faceIdentityManager = new FaceIdentityManager(
             FaceServiceFactory.CreateProfileStore(_settings.FaceFeatures.ModelOptions),
@@ -5128,6 +5141,63 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             var error = $"Phone image creation failed: {ex.Message}";
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (assistantMessage is not null)
+                    assistantMessage.Body.Text = error;
+                AddSystemMessage(error);
+                SetUIState("idle", "Ready");
+            });
+            return new PhoneRemoteAssistantResult(error, null);
+        }
+    }
+
+    private async Task<PhoneRemoteKrea2Options> HandlePhoneKrea2OptionsAsync(CancellationToken ct)
+    {
+        SaveImageSettingsFromUi();
+        var loras = await _comfyImages.ListKrea2LorasAsync(ct);
+        return new PhoneRemoteKrea2Options(loras.ToList(), Krea2AspectRatios.ToList());
+    }
+
+    private async Task<PhoneRemoteAssistantResult> HandlePhoneKrea2CreateAsync(PhoneRemoteKrea2Request request, CancellationToken ct)
+    {
+        AssistantMessageUi? assistantMessage = null;
+        var prompt = request.Prompt.Trim();
+        await Dispatcher.InvokeAsync(() =>
+        {
+            SaveImageSettingsFromUi();
+            AddUserMessage($"[iPhone Krea2] {prompt}");
+            _history.Add("user", $"Krea2 image request: {prompt}");
+            assistantMessage = AddAssistantMessage("Creating image with Krea2 Turbo on ComfyUI...");
+            SetUIState("processing", "Phone Krea2...");
+        });
+
+        try
+        {
+            var result = await _comfyImages.CreateKrea2ImageAsync(
+                prompt,
+                request.EnableLora,
+                request.LoraName.Trim(),
+                request.AspectRatio.Trim(),
+                ct);
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _latestGeneratedImagePath = result.LocalPath;
+                if (assistantMessage is not null)
+                {
+                    assistantMessage.Body.Text = BuildGeneratedImageMessage(result);
+                    AddGeneratedImageToAssistantMessage(assistantMessage, result.LocalPath);
+                }
+                _history.Add("assistant", BuildGeneratedImageHistoryText(result));
+                SetUIState("idle", "Ready");
+            });
+
+            return new PhoneRemoteAssistantResult(BuildGeneratedImageMessage(result), null, result.LocalPath);
+        }
+        catch (Exception ex)
+        {
+            var error = $"Krea2 image creation failed: {ex.Message}";
             await Dispatcher.InvokeAsync(() =>
             {
                 if (assistantMessage is not null)
