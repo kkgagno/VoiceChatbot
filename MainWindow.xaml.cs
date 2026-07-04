@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -413,7 +413,7 @@ public partial class MainWindow : Window
             ? AppSettings.DefaultTavilyApiKey
             : tavilyKey;
         _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
-            ? "http://localhost:8000"
+            ? AppSettings.DefaultComfyUiUrl
             : ComfyUrlBox.Text.Trim();
         _settings.ImageWidth = ParseBoundedInt(ImageWidthBox.Text, AppSettings.DefaultImageWidth, 256, 2048);
         _settings.ImageHeight = ParseBoundedInt(ImageHeightBox.Text, AppSettings.DefaultImageHeight, 256, 2048);
@@ -454,7 +454,7 @@ public partial class MainWindow : Window
     private void ConfigureImageClient()
     {
         _comfyImages.BaseUrl = string.IsNullOrWhiteSpace(_settings.ComfyUiUrl)
-            ? "http://localhost:8000"
+            ? AppSettings.DefaultComfyUiUrl
             : _settings.ComfyUiUrl;
     }
 
@@ -656,7 +656,7 @@ public partial class MainWindow : Window
         ComfyUrlBox.TextChanged += (s, e) =>
         {
             _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
-                ? "http://localhost:8000"
+                ? AppSettings.DefaultComfyUiUrl
                 : ComfyUrlBox.Text.Trim();
             ConfigureImageClient();
         };
@@ -2698,7 +2698,7 @@ public partial class MainWindow : Window
     private void SaveImageSettingsFromUi()
     {
         _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
-            ? "http://localhost:8000"
+            ? AppSettings.DefaultComfyUiUrl
             : ComfyUrlBox.Text.Trim();
         _settings.ImageWidth = ParseBoundedInt(ImageWidthBox.Text, AppSettings.DefaultImageWidth, 256, 2048);
         _settings.ImageHeight = ParseBoundedInt(ImageHeightBox.Text, AppSettings.DefaultImageHeight, 256, 2048);
@@ -6955,7 +6955,7 @@ public partial class MainWindow : Window
         cleaned = Regex.Replace(cleaned, "https?://\\S+", "");
 
         // Remove common leftover citation fragments.
-        cleaned = Regex.Replace(cleaned, "\\b\\d+†L\\d+(?:-L\\d+)?\\b", "");
+        cleaned = Regex.Replace(cleaned, "\\b\\d+â€ L\\d+(?:-L\\d+)?\\b", "");
 
         cleaned = CleanSpeechDiagramMarkup(cleaned);
         cleaned = NormalizeSpeechNumbers(cleaned);
@@ -6972,14 +6972,14 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         var cleaned = text
-            .Replace("→", ". ")
-            .Replace("←", ". ")
-            .Replace("↓", ". ")
-            .Replace("↑", ". ")
-            .Replace("⇒", ". ")
-            .Replace("⇐", ". ")
-            .Replace("↔", ". ")
-            .Replace("↕", ". ");
+            .Replace("â†’", ". ")
+            .Replace("â†", ". ")
+            .Replace("â†“", ". ")
+            .Replace("â†‘", ". ")
+            .Replace("â‡’", ". ")
+            .Replace("â‡", ". ")
+            .Replace("â†”", ". ")
+            .Replace("â†•", ". ");
 
         // LaTeX arrows and math wrappers are useful visually, but terrible aloud:
         // "$\downarrow$", "\rightarrow", "\leftarrow", etc.
@@ -6994,10 +6994,10 @@ public partial class MainWindow : Window
         cleaned = Regex.Replace(cleaned, @"\s*\$", "");
 
         // Mermaid/ASCII/tree connector noise.
-        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[-=]{2,}|[|│┃]+|[+`'└├┌┐┘┤┬┴─━]+)\s*$", "");
-        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[|│┃]\s*)+", "");
+        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[-=]{2,}|[|â”‚â”ƒ]+|[+`'â””â”œâ”Œâ”â”˜â”¤â”¬â”´â”€â”]+)\s*$", "");
+        cleaned = Regex.Replace(cleaned, @"(?m)^\s*(?:[|â”‚â”ƒ]\s*)+", "");
         cleaned = Regex.Replace(cleaned, @"\s*(?:-{1,2}>|<-{1,2}|=>|<=)\s*", ". ");
-        cleaned = Regex.Replace(cleaned, @"\s+[|│┃]\s+", ". ");
+        cleaned = Regex.Replace(cleaned, @"\s+[|â”‚â”ƒ]\s+", ". ");
 
         // Don't speak literal markdown emphasis/backticks around labels.
         cleaned = Regex.Replace(cleaned, @"[`*_]{1,3}", "");
@@ -7014,12 +7014,12 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         var cleaned = text
-            .Replace("≈", " about ")
-            .Replace("≥", " at least ")
-            .Replace("≤", " at most ")
-            .Replace("–", "-")
-            .Replace("—", "-")
-            .Replace("‑", "-");
+            .Replace("â‰ˆ", " about ")
+            .Replace("â‰¥", " at least ")
+            .Replace("â‰¤", " at most ")
+            .Replace("â€“", "-")
+            .Replace("â€”", "-")
+            .Replace("â€‘", "-");
 
         // Markdown table pipes sound awful in TTS. Turn table separators into pauses.
         cleaned = Regex.Replace(cleaned, "^\\s*\\|?\\s*:?-{2,}:?\\s*(?:\\|\\s*:?-{2,}:?\\s*)+\\|?\\s*$", "", RegexOptions.Multiline);
@@ -7097,18 +7097,18 @@ public partial class MainWindow : Window
 
         cleaned = Regex.Replace(
             cleaned,
-            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]*-[\s\u00A0\u202F]*([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|°?F|°?C)\b",
+            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]*-[\s\u00A0\u202F]*([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|Â°?F|Â°?C)\b",
             match => $"{NumberToWords(ParseSpeechNumber(match.Groups[1].Value))} to {NumberToWords(ParseSpeechNumber(match.Groups[2].Value))} {UnitToWords(match.Groups[3].Value)}");
 
         cleaned = Regex.Replace(
             cleaned,
-            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]+to[\s\u00A0\u202F]+([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|°?F|°?C)\b",
+            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]+to[\s\u00A0\u202F]+([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|Â°?F|Â°?C)\b",
             match => $"{NumberToWords(ParseSpeechNumber(match.Groups[1].Value))} to {NumberToWords(ParseSpeechNumber(match.Groups[2].Value))} {UnitToWords(match.Groups[3].Value)}",
             RegexOptions.IgnoreCase);
 
         cleaned = Regex.Replace(
             cleaned,
-            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|°?F|°?C)\b",
+            @"\b([0-9][0-9,]*)[\s\u00A0\u202F]*(meters?|metres?|m|feet|foot|ft|Â°?F|Â°?C)\b",
             match => $"{NumberToWords(ParseSpeechNumber(match.Groups[1].Value))} {UnitToWords(match.Groups[2].Value)}",
             RegexOptions.IgnoreCase);
 
@@ -7185,7 +7185,7 @@ public partial class MainWindow : Window
 
     private static string UnitToWords(string unit)
     {
-        return unit.Replace("°", "").ToLowerInvariant() switch
+        return unit.Replace("Â°", "").ToLowerInvariant() switch
         {
             "m" => "meters",
             "meter" => "meters",
@@ -7252,15 +7252,15 @@ public partial class MainWindow : Window
 
         var cleaned = text;
 
-        // Remove source citation artifacts like 【Title†L1-L2】 and (1†L1-L4).
-        cleaned = Regex.Replace(cleaned, "【[^】]*†[^】]*】", "");
-        cleaned = Regex.Replace(cleaned, "\\([^)]*†[^)]*\\)", "");
+        // Remove source citation artifacts like ã€Titleâ€ L1-L2ã€‘ and (1â€ L1-L4).
+        cleaned = Regex.Replace(cleaned, "ã€[^ã€‘]*â€ [^ã€‘]*ã€‘", "");
+        cleaned = Regex.Replace(cleaned, "\\([^)]*â€ [^)]*\\)", "");
 
         // Remove bracketed source/citation fragments, but keep normal prose in parentheses.
-        cleaned = Regex.Replace(cleaned, "\\[(?:\\d+|source|sources|citation|citations|cancelled|[^\\]]*†[^\\]]*)\\]", "", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, "\\[(?:\\d+|source|sources|citation|citations|cancelled|[^\\]]*â€ [^\\]]*)\\]", "", RegexOptions.IgnoreCase);
 
         // Remove common leftover citation fragments.
-        cleaned = Regex.Replace(cleaned, "\\b\\d+†L\\d+(?:-L\\d+)?\\b", "");
+        cleaned = Regex.Replace(cleaned, "\\b\\d+â€ L\\d+(?:-L\\d+)?\\b", "");
         cleaned = Regex.Replace(cleaned, "\\s+([,.!?;:])", "$1");
         cleaned = Regex.Replace(cleaned, "[ \\t]{2,}", " ");
 

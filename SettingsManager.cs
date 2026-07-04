@@ -10,6 +10,7 @@ public class AppSettings
     public const int DefaultImageWidth = 1080;
     public const int DefaultImageHeight = 1920;
     public const string DefaultTavilyApiKey = "";
+    public const string DefaultComfyUiUrl = "http://192.168.4.22:8000";
     public const string DefaultRyzenAiWhisperCommand = "call \"%USERPROFILE%\\VoiceChatbot\\tools\\ryzen-ai-whisper-transcribe.bat\" {input}";
     // Chat backend
     public string ChatProvider { get; set; } = "Ollama";
@@ -54,7 +55,7 @@ public class AppSettings
     public int MaxTokens { get; set; } = 2048;
 
     // Image generation / editing
-    public string ComfyUiUrl { get; set; } = "http://localhost:8000";
+    public string ComfyUiUrl { get; set; } = DefaultComfyUiUrl;
     public int ImageWidth { get; set; } = DefaultImageWidth;
     public int ImageHeight { get; set; } = DefaultImageHeight;
     public int QwenCreateSteps { get; set; } = 4;

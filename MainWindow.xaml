@@ -208,7 +208,7 @@
                             <TextBlock Text="IMAGE BACKEND" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
                             <TextBlock Text="ComfyUI URL" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
                             <TextBox x:Name="ComfyUrlBox" Foreground="Black" Background="White"
-                                     Text="http://localhost:8000" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
+                                     Text="http://192.168.4.22:8000" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
 
                             <TextBlock Text="Qwen Image Size" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
                             <Grid Margin="0,0,0,8">
