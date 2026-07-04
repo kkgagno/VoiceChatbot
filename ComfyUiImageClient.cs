@@ -231,7 +231,7 @@ public sealed class ComfyUiImageClient : IDisposable
                     ?? throw new InvalidOperationException("Workflow JSON was not an object.");
                 return await ConvertWorkflowToPromptAsync(node, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (HttpRequestException ex)
             {
                 lastError = ex;
             }
