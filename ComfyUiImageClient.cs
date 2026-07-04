@@ -40,15 +40,14 @@ public sealed class ComfyUiImageClient : IDisposable
             if (classEntry.Value is not JsonObject classInfo)
                 continue;
 
-            foreach (var inputName in new[] { "lora_name", "lora", "lora_name_1", "lora_1" })
+            foreach (var inputName in EnumerateLikelyLoraInputs(classInfo))
             {
                 if (!TryGetComboOptions(objectInfo, classType, inputName, out var options))
                     continue;
 
                 foreach (var option in options)
                 {
-                    var fileName = Path.GetFileName(option);
-                    if (fileName.StartsWith("krea2", StringComparison.OrdinalIgnoreCase))
+                    if (IsKrea2LoraOption(option))
                         loras.Add(option);
                 }
             }
@@ -1147,6 +1146,50 @@ public sealed class ComfyUiImageClient : IDisposable
             .ToList();
 
         return options.Count > 0;
+    }
+
+    private static IEnumerable<string> EnumerateLikelyLoraInputs(JsonObject classInfo)
+    {
+        var inputInfo = classInfo["input"] as JsonObject;
+        if (inputInfo is null)
+            yield break;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sectionName in new[] { "required", "optional" })
+        {
+            if (inputInfo[sectionName] is not JsonObject section)
+                continue;
+
+            foreach (var input in section)
+            {
+                var normalized = NormalizeWorkflowKey(input.Key);
+                if ((normalized.Contains("lora") || normalized.Contains("loraname"))
+                    && input.Value is JsonArray spec
+                    && spec[0] is JsonArray)
+                {
+                    if (seen.Add(input.Key))
+                        yield return input.Key;
+                }
+            }
+        }
+    }
+
+    private static bool IsKrea2LoraOption(string option)
+    {
+        if (string.IsNullOrWhiteSpace(option))
+            return false;
+
+        var normalized = NormalizeWorkflowKey(option);
+        if (normalized.StartsWith("krea2") || normalized.Contains("krea2safe"))
+            return true;
+
+        var parts = option
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return parts.Any(part =>
+            part.StartsWith("krea2", StringComparison.OrdinalIgnoreCase) ||
+            NormalizeWorkflowKey(part).StartsWith("krea2"));
     }
 
     private static JsonArray? GetInputSpec(JsonObject objectInfo, string classType, string inputName)
