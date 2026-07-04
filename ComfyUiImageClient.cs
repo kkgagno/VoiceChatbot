@@ -32,7 +32,7 @@ public sealed class ComfyUiImageClient : IDisposable
     {
         var objectInfo = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/object_info", ct)
             ?? new JsonObject();
-        var loras = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var loras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var classEntry in objectInfo)
         {
@@ -48,12 +48,14 @@ public sealed class ComfyUiImageClient : IDisposable
                 foreach (var option in options)
                 {
                     if (IsKrea2LoraOption(option))
-                        loras.Add(option);
+                        AddPreferredLoraOption(loras, option);
                 }
             }
         }
 
-        return loras.ToList();
+        return loras.Values
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public async Task<GeneratedImageResult> CreateQwenImageAsync(
@@ -1003,7 +1005,19 @@ public sealed class ComfyUiImageClient : IDisposable
     private static IEnumerable<string> GetWidgetInputNames(JsonObject nodeToken, JsonObject objectInfo, string classType)
     {
         var names = GetWidgetInputNamesFromNode(nodeToken).ToList();
-        return names.Count > 0 ? names : GetWidgetInputNamesFromObjectInfo(objectInfo, classType);
+        var objectInfoNames = GetWidgetInputNamesFromObjectInfo(objectInfo, classType).ToList();
+        var widgetValueCount = nodeToken["widgets_values"] is JsonArray values ? values.Count : 0;
+
+        if (objectInfoNames.Count >= widgetValueCount)
+            return objectInfoNames;
+
+        foreach (var objectInfoName in objectInfoNames)
+        {
+            if (!names.Contains(objectInfoName, StringComparer.OrdinalIgnoreCase))
+                names.Add(objectInfoName);
+        }
+
+        return names;
     }
 
     private static IEnumerable<string> GetWidgetInputNamesFromNode(JsonObject nodeToken)
@@ -1243,6 +1257,38 @@ public sealed class ComfyUiImageClient : IDisposable
         return parts.Any(part =>
             part.StartsWith("krea2", StringComparison.OrdinalIgnoreCase) ||
             NormalizeWorkflowKey(part).StartsWith("krea2"));
+    }
+
+    private static void AddPreferredLoraOption(Dictionary<string, string> loras, string option)
+    {
+        var key = NormalizeLoraOptionKey(option);
+        if (string.IsNullOrWhiteSpace(key))
+            return;
+
+        if (!loras.TryGetValue(key, out var existing) || IsBetterLoraOption(option, existing))
+            loras[key] = option;
+    }
+
+    private static string NormalizeLoraOptionKey(string option)
+    {
+        var fileName = option.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? option;
+        var withoutExtension = Path.GetFileNameWithoutExtension(fileName);
+        return NormalizeWorkflowKey(string.IsNullOrWhiteSpace(withoutExtension) ? fileName : withoutExtension);
+    }
+
+    private static bool IsBetterLoraOption(string candidate, string existing)
+    {
+        var candidateHasSafeTensor = candidate.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase);
+        var existingHasSafeTensor = existing.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase);
+        if (candidateHasSafeTensor != existingHasSafeTensor)
+            return candidateHasSafeTensor;
+
+        var candidateHasFolder = candidate.Contains('/') || candidate.Contains('\\');
+        var existingHasFolder = existing.Contains('/') || existing.Contains('\\');
+        if (candidateHasFolder != existingHasFolder)
+            return candidateHasFolder;
+
+        return candidate.Length > existing.Length;
     }
 
     private static JsonArray? GetInputSpec(JsonObject objectInfo, string classType, string inputName)

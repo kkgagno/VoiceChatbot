@@ -41,7 +41,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                         <TextBlock Text="LoRA" FontWeight="SemiBold" Foreground="#111111"/>
-                        <CheckBox x:Name="EnableLoraToggle" Content="Enable_lora?"
+                        <CheckBox x:Name="EnableLoraToggle" Content="Enable LoRA?"
                                   Foreground="#111111" Margin="0,8,0,4"
                                   Checked="EnableLoraToggle_Changed"
                                   Unchecked="EnableLoraToggle_Changed"/>
