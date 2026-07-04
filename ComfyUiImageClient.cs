@@ -244,8 +244,8 @@ public sealed class ComfyUiImageClient : IDisposable
     {
         var candidates = new List<string>
         {
-            "workflows/" + fileName,
-            "workflows/Krea2 Safe/" + fileName
+            "workflows/Krea2 Safe/" + fileName,
+            "workflows/" + fileName
         };
 
         try
