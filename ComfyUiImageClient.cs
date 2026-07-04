@@ -219,16 +219,11 @@ public sealed class ComfyUiImageClient : IDisposable
         var fileName = workflowName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
             ? workflowName
             : workflowName + ".json";
-        var encodedPath = Uri.EscapeDataString("workflows/" + fileName);
-        var urls = new[]
-        {
-            $"{NormalizeBaseUrl()}/api/userdata/{encodedPath}",
-            $"{NormalizeBaseUrl()}/api/userdata/workflows/{Uri.EscapeDataString(fileName)}"
-        };
 
         Exception? lastError = null;
-        foreach (var url in urls)
+        foreach (var relativePath in await GetCandidateWorkflowPathsAsync(fileName, ct))
         {
+            var url = $"{NormalizeBaseUrl()}/api/userdata/{Uri.EscapeDataString(relativePath)}";
             try
             {
                 var json = await _http.GetStringAsync(url, ct);
@@ -243,6 +238,64 @@ public sealed class ComfyUiImageClient : IDisposable
         }
 
         throw new InvalidOperationException($"Could not load ComfyUI workflow '{workflowName}': {lastError?.Message}");
+    }
+
+    private async Task<List<string>> GetCandidateWorkflowPathsAsync(string fileName, CancellationToken ct)
+    {
+        var candidates = new List<string>
+        {
+            "workflows/" + fileName,
+            "workflows/Krea2 Safe/" + fileName
+        };
+
+        try
+        {
+            await AddWorkflowMatchesFromDirectoryAsync("", fileName, candidates, ct);
+        }
+        catch
+        {
+            // Older or locked-down ComfyUI builds may not allow directory listing.
+            // The direct candidate paths above still cover the common saved-workflow layout.
+        }
+
+        return candidates
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task AddWorkflowMatchesFromDirectoryAsync(
+        string subdir,
+        string fileName,
+        List<string> candidates,
+        CancellationToken ct)
+    {
+        var dir = string.IsNullOrWhiteSpace(subdir)
+            ? "workflows"
+            : "workflows/" + subdir.Trim('/').Replace('\\', '/');
+        var url = $"{NormalizeBaseUrl()}/api/userdata?dir={Uri.EscapeDataString(dir)}";
+        var entries = await _http.GetFromJsonAsync<List<string>>(url, ct) ?? new List<string>();
+
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+                continue;
+
+            var normalizedEntry = entry.Replace('\\', '/').Trim('/');
+            var relativePath = string.IsNullOrWhiteSpace(subdir)
+                ? normalizedEntry
+                : subdir.Trim('/').Replace('\\', '/') + "/" + normalizedEntry;
+
+            if (normalizedEntry.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(Path.GetFileName(normalizedEntry), fileName, StringComparison.OrdinalIgnoreCase))
+                    candidates.Add("workflows/" + relativePath);
+            }
+            else
+            {
+                await AddWorkflowMatchesFromDirectoryAsync(relativePath, fileName, candidates, ct);
+            }
+        }
     }
 
     private async Task<ComfyImageRef> QueueAndWaitForImageAsync(Dictionary<string, object> workflow, string? saveNodeId, CancellationToken ct)
