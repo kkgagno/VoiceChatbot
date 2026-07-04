@@ -85,10 +85,9 @@ public sealed class ComfyUiImageClient : IDisposable
         string aspectRatio,
         CancellationToken ct)
     {
-        var workflow = await LoadWorkflowAsync(Krea2WorkflowName, ct);
-        PatchKrea2Workflow(workflow, prompt, enableLora, loraName, aspectRatio);
+        var workflow = BuildKrea2Workflow(prompt, enableLora, loraName, aspectRatio);
 
-        var image = await QueueAndWaitForImageAsync(workflow, null, ct);
+        var image = await QueueAndWaitForImageAsync(workflow, "29", ct);
         var localPath = await DownloadImageAsync(image, "krea2", ct);
 
         return new GeneratedImageResult(
@@ -338,6 +337,8 @@ public sealed class ComfyUiImageClient : IDisposable
             }
 
             var status = promptObj["status"] as JsonObject;
+            ThrowIfComfyExecutionFailed(status, "image workflow");
+
             var completed = status?["completed"]?.GetValue<bool>() == true;
             if (completed)
                 throw new InvalidOperationException("ComfyUI completed but did not return an image.");
@@ -376,6 +377,8 @@ public sealed class ComfyUiImageClient : IDisposable
                 return media;
 
             var status = promptObj["status"] as JsonObject;
+            ThrowIfComfyExecutionFailed(status, "video workflow");
+
             var completed = status?["completed"]?.GetValue<bool>() == true;
             if (completed)
                 throw new InvalidOperationException("ComfyUI completed but did not return a video.");
@@ -499,6 +502,103 @@ public sealed class ComfyUiImageClient : IDisposable
         };
     }
 
+    private Dictionary<string, object> BuildKrea2Workflow(string prompt, bool enableLora, string loraName, string aspectRatio)
+    {
+        var (width, height) = GetKrea2Dimensions(aspectRatio);
+        var modelNode = enableLora && !string.IsNullOrWhiteSpace(loraName) ? "15" : "10";
+
+        var workflow = new Dictionary<string, object>
+        {
+            ["10"] = Node("UNETLoader", new()
+            {
+                ["unet_name"] = "krea2_turbo_fp8_scaled.safetensors",
+                ["weight_dtype"] = "default"
+            }),
+            ["11"] = Node("CLIPLoader", new()
+            {
+                ["clip_name"] = "qwen3vl_4b_fp8_scaled.safetensors",
+                ["type"] = "krea2",
+                ["device"] = "default"
+            }),
+            ["12"] = Node("VAELoader", new()
+            {
+                ["vae_name"] = "qwen_image_vae.safetensors"
+            }),
+            ["6"] = Node("CLIPTextEncode", new()
+            {
+                ["clip"] = Link("11"),
+                ["text"] = prompt
+            }),
+            ["13"] = Node("ConditioningZeroOut", new()
+            {
+                ["conditioning"] = Link("6")
+            }),
+            ["51"] = Node("ConditioningKrea2Rebalance", new()
+            {
+                ["conditioning"] = Link("6"),
+                ["multiplier"] = 4.0,
+                ["per_layer_weights"] = "1.0,1.0,1.0,1.0,1.0,1.0,1.0,2.5,5.0,1.1,4.0,1.0"
+            }),
+            ["5"] = Node("EmptyLatentImage", new()
+            {
+                ["width"] = width,
+                ["height"] = height,
+                ["batch_size"] = 1
+            }),
+            ["3"] = Node("KSampler", new()
+            {
+                ["model"] = Link(modelNode),
+                ["positive"] = Link("51"),
+                ["negative"] = Link("13"),
+                ["latent_image"] = Link("5"),
+                ["seed"] = Random.Shared.NextInt64(1, long.MaxValue),
+                ["steps"] = 1,
+                ["cfg"] = 8.0,
+                ["sampler_name"] = "euler",
+                ["scheduler"] = "simple",
+                ["denoise"] = 1.0
+            }),
+            ["8"] = Node("VAEDecode", new()
+            {
+                ["samples"] = Link("3"),
+                ["vae"] = Link("12")
+            }),
+            ["29"] = Node("SaveImage", new()
+            {
+                ["images"] = Link("8"),
+                ["filename_prefix"] = "VoiceChatbot_Krea2_Turbo"
+            })
+        };
+
+        if (enableLora && !string.IsNullOrWhiteSpace(loraName))
+        {
+            workflow["15"] = Node("LoraLoaderModelOnly", new()
+            {
+                ["model"] = Link("10"),
+                ["lora_name"] = loraName,
+                ["strength_model"] = 0.8
+            });
+        }
+
+        return workflow;
+    }
+
+    private static (int Width, int Height) GetKrea2Dimensions(string aspectRatio)
+    {
+        var normalized = NormalizeKrea2AspectRatio(aspectRatio);
+        return normalized switch
+        {
+            "3:2 (Photo)" => (1216, 832),
+            "4:3 (Standard)" => (1152, 896),
+            "16:9 (Widescreen)" => (1344, 768),
+            "21:9 (Ultrawide)" => (1536, 640),
+            "2:3 (Portrait Photo)" => (832, 1216),
+            "3:4 (Portrait Standard)" => (896, 1152),
+            "9:16 (Portrait Widescreen)" => (768, 1344),
+            _ => (1024, 1024)
+        };
+    }
+
     private Dictionary<string, object> BuildQwenEditWorkflow(string inputImageName, string prompt, int steps)
     {
         return new()
@@ -612,9 +712,78 @@ public sealed class ComfyUiImageClient : IDisposable
             ? response.StatusCode.ToString()
             : response.ReasonPhrase;
 
+        var logPath = WriteComfyErrorLog(action, status, reason, body, detail);
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
-            ? $"ComfyUI failed while {action}: HTTP {status} {reason}."
-            : $"ComfyUI failed while {action}: HTTP {status} {reason}. {detail}");
+            ? $"ComfyUI failed while {action}: HTTP {status} {reason}. Full error: {logPath}"
+            : $"ComfyUI failed while {action}: HTTP {status} {reason}. {detail} Full error: {logPath}");
+    }
+
+    private static string WriteComfyErrorLog(string action, int status, string reason, string body, string detail)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VoiceChatbot");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "comfyui-last-error.txt");
+            File.WriteAllText(path,
+                $"Time: {DateTime.Now:O}{Environment.NewLine}" +
+                $"Action: {action}{Environment.NewLine}" +
+                $"HTTP: {status} {reason}{Environment.NewLine}" +
+                $"Summary: {detail}{Environment.NewLine}" +
+                $"{Environment.NewLine}Raw response:{Environment.NewLine}{body}");
+            return path;
+        }
+        catch
+        {
+            return "(could not write ComfyUI error log)";
+        }
+    }
+
+    private static void ThrowIfComfyExecutionFailed(JsonObject? status, string action)
+    {
+        if (status is null)
+            return;
+
+        var statusText = status["status_str"]?.GetValue<string>() ?? "";
+        if (!statusText.Equals("error", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var detail = ExtractComfyHistoryError(status);
+        var raw = status.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var logPath = WriteComfyErrorLog(action, 0, "ComfyUI execution error", raw, detail);
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
+            ? $"ComfyUI failed while running {action}. Full error: {logPath}"
+            : $"ComfyUI failed while running {action}: {detail} Full error: {logPath}");
+    }
+
+    private static string ExtractComfyHistoryError(JsonObject status)
+    {
+        if (status["messages"] is not JsonArray messages)
+            return "";
+
+        foreach (var message in messages.OfType<JsonArray>().Reverse())
+        {
+            var eventName = message.Count > 0 ? message[0]?.GetValue<string>() ?? "" : "";
+            if (!eventName.Equals("execution_error", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (message.Count < 2 || message[1] is not JsonObject details)
+                continue;
+
+            var nodeType = details["node_type"]?.GetValue<string>() ?? "";
+            var nodeId = details["node_id"]?.GetValue<string>() ?? "";
+            var exception = details["exception_message"]?.GetValue<string>() ?? "";
+            var pieces = new List<string>();
+            if (!string.IsNullOrWhiteSpace(nodeType) || !string.IsNullOrWhiteSpace(nodeId))
+                pieces.Add($"node {nodeId} {nodeType}".Trim());
+            if (!string.IsNullOrWhiteSpace(exception))
+                pieces.Add(exception);
+            return string.Join(": ", pieces);
+        }
+
+        return "";
     }
 
     private static string ExtractComfyError(string body)
@@ -1053,7 +1222,11 @@ public sealed class ComfyUiImageClient : IDisposable
                 if (first is JsonValue value && value.TryGetValue<string>(out var typeName))
                 {
                     if (IsWidgetType(typeName))
+                    {
                         yield return kvp.Key;
+                        foreach (var dynamicInputName in GetDynamicWidgetInputNames(kvp.Key, spec))
+                            yield return dynamicInputName;
+                    }
                     continue;
                 }
 
@@ -1067,7 +1240,36 @@ public sealed class ComfyUiImageClient : IDisposable
     {
         var normalized = typeName.Trim().ToUpperInvariant();
         return normalized is "STRING" or "INT" or "FLOAT" or "BOOLEAN" or "COMBO" or "SEED"
+            || normalized.StartsWith("COMFY_DYNAMICCOMBO", StringComparison.Ordinal)
             || normalized.EndsWith("_NAME", StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<string> GetDynamicWidgetInputNames(string parentInputName, JsonArray spec)
+    {
+        if (spec.Count < 2 || spec[1] is not JsonObject optionsObj)
+            yield break;
+        if (optionsObj["options"] is not JsonArray options)
+            yield break;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var option in options.OfType<JsonObject>())
+        {
+            if (option["inputs"] is not JsonObject optionInputs)
+                continue;
+
+            foreach (var sectionName in new[] { "required", "optional" })
+            {
+                if (optionInputs[sectionName] is not JsonObject section)
+                    continue;
+
+                foreach (var kvp in section)
+                {
+                    var name = $"{parentInputName}.{kvp.Key}";
+                    if (seen.Add(name))
+                        yield return name;
+                }
+            }
+        }
     }
 
     private static string GetNodeId(JsonObject node)

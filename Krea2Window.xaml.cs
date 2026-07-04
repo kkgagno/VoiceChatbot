@@ -94,7 +94,7 @@ public partial class Krea2Window : Window
         var loraName = enableLora ? LoraCombo.SelectedItem?.ToString() ?? "" : "";
         if (enableLora && string.IsNullOrWhiteSpace(loraName))
         {
-            StatusText.Text = "Enable_lora is on, but no Krea2 LoRA is selected.";
+            StatusText.Text = "Enable LoRA is on, but no Krea2 LoRA is selected.";
             return;
         }
 
@@ -123,6 +123,7 @@ public partial class Krea2Window : Window
         catch (Exception ex)
         {
             StatusText.Text = $"Krea2 failed: {ex.Message}";
+            ResultText.Text = ex.ToString();
         }
         finally
         {
