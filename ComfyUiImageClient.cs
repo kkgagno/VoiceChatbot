@@ -552,8 +552,8 @@ public sealed class ComfyUiImageClient : IDisposable
                 ["negative"] = Link("13"),
                 ["latent_image"] = Link("5"),
                 ["seed"] = Random.Shared.NextInt64(1, long.MaxValue),
-                ["steps"] = 1,
-                ["cfg"] = 8.0,
+                ["steps"] = 8,
+                ["cfg"] = 1.0,
                 ["sampler_name"] = "euler",
                 ["scheduler"] = "simple",
                 ["denoise"] = 1.0
