@@ -78,6 +78,7 @@ public partial class MainWindow : Window
     private FaceAccessDecision _faceAccessDecision = new();
     private ConversationHistory _history;
     private AppSettings _settings;
+    private Krea2Window? _krea2Window;
     private CancellationTokenSource? _chatCts;
     private DispatcherTimer _volumeTimer = null!;
     private DispatcherTimer _statusTimer = null!;
@@ -3954,6 +3955,25 @@ public partial class MainWindow : Window
         await RunQwenImageCreateAsync($"Create image: {prompt}", prompt);
     }
 
+    private void Krea2_Click(object sender, RoutedEventArgs e)
+    {
+        SaveImageSettingsFromUi();
+        if (_krea2Window != null)
+        {
+            if (_krea2Window.WindowState == WindowState.Minimized)
+                _krea2Window.WindowState = WindowState.Normal;
+            _krea2Window.Activate();
+            return;
+        }
+
+        _krea2Window = new Krea2Window(_comfyImages, Krea2AspectRatios)
+        {
+            Owner = this
+        };
+        _krea2Window.Closed += (_, _) => _krea2Window = null;
+        _krea2Window.Show();
+    }
+
     private async void EditImage_Click(object sender, RoutedEventArgs e)
     {
         var prompt = MessageInput.Text.Trim();
@@ -6607,6 +6627,7 @@ public partial class MainWindow : Window
         KeepDocumentActiveToggle.IsEnabled = state == "idle";
         CreateImageBtn.IsEnabled = state == "idle";
         EditImageBtn.IsEnabled = state == "idle";
+        Krea2Btn.IsEnabled = state == "idle";
         AudioBtn.IsEnabled = state == "idle";
         CreateVideoBtn.IsEnabled = state == "idle";
         MessageInput.IsEnabled = state == "idle";

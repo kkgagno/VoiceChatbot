@@ -578,6 +578,10 @@
                                     Style="{StaticResource ActionButton}" Margin="0,0,8,0"
                                     Click="EditImage_Click" MinWidth="70"
                                     ToolTip="Edit the attached or last generated image using Qwen Image Edit."/>
+                            <Button x:Name="Krea2Btn" Content="Krea2"
+                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
+                                    Click="Krea2_Click" MinWidth="75"
+                                    ToolTip="Open Krea2 Turbo image creation options."/>
                             <Button x:Name="AudioBtn" Content="Video Audio"
                                     Style="{StaticResource ActionButton}" Margin="0,0,8,0"
                                     Click="AttachVideoAudio_Click" MinWidth="105"

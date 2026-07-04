@@ -74,8 +74,17 @@ jobs:
             throw "Silero VAD runtime self-test failed with exit code $($process.ExitCode)."
           }
 
+      - name: Zip portable test build
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "artifacts/VoiceChatbot-VAD-Test/*" `
+            -DestinationPath "artifacts/VoiceChatbot-VAD-Test-win-x64.zip" `
+            -Force
+
       - uses: actions/upload-artifact@v4
         with:
           name: VoiceChatbot-VAD-Test-win-x64
-          path: artifacts/VoiceChatbot-VAD-Test
+          path: artifacts/VoiceChatbot-VAD-Test-win-x64.zip
+          if-no-files-found: error
           retention-days: 14
