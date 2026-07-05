@@ -6,12 +6,14 @@ on:
       - codex/ios-native-client
     paths:
       - "**/*.cs"
+      - "**/*.xaml"
       - "VoiceChatbot.csproj"
       - "Resources/Models/**"
       - ".github/workflows/windows-build.yml"
   pull_request:
     paths:
       - "**/*.cs"
+      - "**/*.xaml"
       - "VoiceChatbot.csproj"
       - "Resources/Models/**"
   workflow_dispatch:

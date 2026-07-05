@@ -14,6 +14,7 @@ New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 Get-ChildItem $artifactsDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
 $dotnetCandidates = @(
+    "$env:USERPROFILE\.dotnet-sdk-codex\dotnet.exe",
     "$env:USERPROFILE\.dotnet\dotnet.exe",
     "$env:ProgramFiles\dotnet\dotnet.exe",
     (Get-Command dotnet.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
