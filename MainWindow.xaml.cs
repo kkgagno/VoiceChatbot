@@ -5174,7 +5174,7 @@ public partial class MainWindow : Window
 
     private async Task<PhoneRemoteKrea2Options> HandlePhoneKrea2OptionsAsync(CancellationToken ct)
     {
-        SaveImageSettingsFromUi();
+        await Dispatcher.InvokeAsync(SaveImageSettingsFromUi);
         var loras = await _comfyImages.ListKrea2LorasAsync(ct);
         return new PhoneRemoteKrea2Options(loras.ToList(), Krea2AspectRatios.ToList());
     }

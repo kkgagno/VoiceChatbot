@@ -315,9 +315,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                 return Results.Json(new
                 {
                     loras = options.Loras,
-                    aspectRatios = options.AspectRatios,
-                    Loras = options.Loras,
-                    AspectRatios = options.AspectRatios
+                    aspectRatios = options.AspectRatios
                 });
             }
             catch (Exception ex)
