@@ -505,7 +505,9 @@ public sealed class ComfyUiImageClient : IDisposable
     private Dictionary<string, object> BuildKrea2Workflow(string prompt, bool enableLora, string loraName, string aspectRatio)
     {
         var (width, height) = GetKrea2Dimensions(aspectRatio);
-        var modelNode = enableLora && !string.IsNullOrWhiteSpace(loraName) ? "15" : "10";
+        var useLora = enableLora && !string.IsNullOrWhiteSpace(loraName);
+        var modelNode = useLora ? "15" : "10";
+        var positivePrompt = useLora ? AppendKrea2LoraTrigger(prompt, loraName) : prompt;
 
         var workflow = new Dictionary<string, object>
         {
@@ -527,7 +529,7 @@ public sealed class ComfyUiImageClient : IDisposable
             ["6"] = Node("CLIPTextEncode", new()
             {
                 ["clip"] = Link("11"),
-                ["text"] = prompt
+                ["text"] = positivePrompt
             }),
             ["13"] = Node("ConditioningZeroOut", new()
             {
@@ -570,7 +572,7 @@ public sealed class ComfyUiImageClient : IDisposable
             })
         };
 
-        if (enableLora && !string.IsNullOrWhiteSpace(loraName))
+        if (useLora)
         {
             workflow["15"] = Node("LoraLoaderModelOnly", new()
             {
@@ -581,6 +583,42 @@ public sealed class ComfyUiImageClient : IDisposable
         }
 
         return workflow;
+    }
+
+    private static string AppendKrea2LoraTrigger(string prompt, string loraName)
+    {
+        var trigger = GetKrea2LoraTrigger(loraName);
+        if (string.IsNullOrWhiteSpace(trigger))
+            return prompt;
+
+        if (prompt.Contains(trigger, StringComparison.OrdinalIgnoreCase))
+            return prompt;
+
+        return $"{prompt}, {trigger}";
+    }
+
+    private static string GetKrea2LoraTrigger(string loraName)
+    {
+        var name = Path.GetFileNameWithoutExtension(loraName).ToLowerInvariant();
+        name = name.Replace("krea2_", "", StringComparison.OrdinalIgnoreCase);
+
+        return name switch
+        {
+            "coolblue" => "cool blue color grading, cyan blue palette",
+            "darkbrush" => "dark brush painting style, expressive black brush strokes",
+            "dotmatrix" => "dot matrix print style, halftone dots",
+            "kidsdrawing" => "kids drawing style, playful childlike crayon illustration",
+            "neondrip" => "neon drip style, glowing paint drips",
+            "plasmoid" => "plasmoid style, luminous plasma energy",
+            "rainywindow" => "rainy window style, wet glass and raindrops",
+            "retroanime" => "retro anime style, vintage anime illustration",
+            "softwatercolor" => "soft watercolor style, gentle washed pigments",
+            "sunsetblur" => "sunset blur style, warm golden blurred light",
+            "vintagetarot" => "vintage tarot card style, ornate mystical illustration",
+            "warmpastel" => "warm pastel style, soft warm pastel colors",
+            "turbo_lora_rank_64_bf16" => "",
+            _ => name.Replace('_', ' ').Replace('-', ' ')
+        };
     }
 
     private static (int Width, int Height) GetKrea2Dimensions(string aspectRatio)
@@ -1355,6 +1393,12 @@ public sealed class ComfyUiImageClient : IDisposable
 
     private static void NormalizeConvertedInputs(Dictionary<string, object> inputs, JsonObject objectInfo, string classType)
     {
+        if (classType.Equals("ResizeImageMaskNode", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!inputs.ContainsKey("scale_method"))
+                inputs["scale_method"] = GetInputDefault(objectInfo, classType, "scale_method", "area");
+        }
+
         if (!classType.Equals("KSampler", StringComparison.OrdinalIgnoreCase))
             return;
 
@@ -1415,6 +1459,17 @@ public sealed class ComfyUiImageClient : IDisposable
             .ToList();
 
         return options.Count > 0;
+    }
+
+    private static object GetInputDefault(JsonObject objectInfo, string classType, string inputName, object fallback)
+    {
+        var spec = GetInputSpec(objectInfo, classType, inputName);
+        if (spec is null || spec.Count < 2 || spec[1] is not JsonObject options)
+            return fallback;
+
+        return options["default"] is JsonNode defaultNode
+            ? JsonNodeToObject(defaultNode)
+            : fallback;
     }
 
     private static IEnumerable<string> EnumerateLikelyLoraInputs(JsonObject classInfo)
