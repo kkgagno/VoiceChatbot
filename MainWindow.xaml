@@ -245,6 +245,17 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- ADK -->
+                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
+                        <StackPanel>
+                            <TextBlock Text="GOOGLE ADK" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
+                            <TextBlock Text="ADK URL" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
+                            <TextBox x:Name="AdkUrlBox" Foreground="Black" Background="White"
+                                     Text="http://127.0.0.1:8001/dev-ui/" Margin="0,0,0,4" BorderBrush="#CCCCCC"/>
+                            <TextBlock Text="The ADK button opens this web UI in a framed app window." FontSize="10" Foreground="#666666" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
                     <!-- Voice Input -->
                     <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                         <StackPanel>
@@ -557,6 +568,10 @@
                                     Style="{StaticResource ActionButton}" Margin="0,0,8,0"
                                     Click="CameraAsk_Click" MinWidth="80"
                                     ToolTip="Take one photo and ask what the assistant sees."/>
+                            <Button x:Name="AdkBtn" Content="ADK"
+                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
+                                    Click="Adk_Click" MinWidth="70"
+                                    ToolTip="Open the Google ADK web UI."/>
                             <Button x:Name="ImageBtn" Content="Image"
                                     Style="{StaticResource ActionButton}" Margin="0,0,8,0"
                                     Click="AttachImage_Click" MinWidth="80"

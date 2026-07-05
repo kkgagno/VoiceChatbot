@@ -79,6 +79,7 @@ public partial class MainWindow : Window
     private ConversationHistory _history;
     private AppSettings _settings;
     private Krea2Window? _krea2Window;
+    private AdkWindow? _adkWindow;
     private CancellationTokenSource? _chatCts;
     private DispatcherTimer _volumeTimer = null!;
     private DispatcherTimer _statusTimer = null!;
@@ -255,11 +256,11 @@ public partial class MainWindow : Window
 
     private void ApplySettings()
     {
-        if (_settings.DesktopLayoutVersion < 3)
+        if (_settings.DesktopLayoutVersion < 4)
         {
-            _settings.WindowWidth = 1100;
-            _settings.WindowHeight = 900;
-            _settings.DesktopLayoutVersion = 3;
+            _settings.WindowWidth = Math.Max(_settings.WindowWidth, 1220);
+            _settings.WindowHeight = Math.Max(_settings.WindowHeight, 900);
+            _settings.DesktopLayoutVersion = 4;
         }
 
         OllamaUrlBox.Text = _settings.OllamaUrl;
@@ -293,6 +294,9 @@ public partial class MainWindow : Window
         WebSearchToggle.Content = _settings.WebSearchEnabled ? "Web Search ON" : "Web Search OFF";
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
         ComfyUrlBox.Text = _settings.ComfyUiUrl;
+        AdkUrlBox.Text = string.IsNullOrWhiteSpace(_settings.AdkUrl)
+            ? AppSettings.DefaultAdkUrl
+            : _settings.AdkUrl;
         if (_settings.ImageWidth == 1328 && _settings.ImageHeight == 1328)
         {
             _settings.ImageWidth = AppSettings.DefaultImageWidth;
@@ -415,6 +419,9 @@ public partial class MainWindow : Window
         _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
             ? AppSettings.DefaultComfyUiUrl
             : ComfyUrlBox.Text.Trim();
+        _settings.AdkUrl = string.IsNullOrWhiteSpace(AdkUrlBox.Text)
+            ? AppSettings.DefaultAdkUrl
+            : AdkUrlBox.Text.Trim();
         _settings.ImageWidth = ParseBoundedInt(ImageWidthBox.Text, AppSettings.DefaultImageWidth, 256, 2048);
         _settings.ImageHeight = ParseBoundedInt(ImageHeightBox.Text, AppSettings.DefaultImageHeight, 256, 2048);
         _settings.QwenCreateSteps = ParseBoundedInt(QwenCreateStepsBox.Text, 4, 1, 80);
@@ -659,6 +666,12 @@ public partial class MainWindow : Window
                 ? AppSettings.DefaultComfyUiUrl
                 : ComfyUrlBox.Text.Trim();
             ConfigureImageClient();
+        };
+        AdkUrlBox.TextChanged += (s, e) =>
+        {
+            _settings.AdkUrl = string.IsNullOrWhiteSpace(AdkUrlBox.Text)
+                ? AppSettings.DefaultAdkUrl
+                : AdkUrlBox.Text.Trim();
         };
 
         // Voice combo change - guard against empty/null during init
@@ -3974,6 +3987,30 @@ public partial class MainWindow : Window
         _krea2Window.Show();
     }
 
+    private void Adk_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.AdkUrl = string.IsNullOrWhiteSpace(AdkUrlBox.Text)
+            ? AppSettings.DefaultAdkUrl
+            : AdkUrlBox.Text.Trim();
+        SettingsManager.Save(_settings);
+
+        if (_adkWindow != null)
+        {
+            if (_adkWindow.WindowState == WindowState.Minimized)
+                _adkWindow.WindowState = WindowState.Normal;
+            _adkWindow.Navigate(_settings.AdkUrl);
+            _adkWindow.Activate();
+            return;
+        }
+
+        _adkWindow = new AdkWindow(_settings.AdkUrl)
+        {
+            Owner = this
+        };
+        _adkWindow.Closed += (_, _) => _adkWindow = null;
+        _adkWindow.Show();
+    }
+
     private async void EditImage_Click(object sender, RoutedEventArgs e)
     {
         var prompt = MessageInput.Text.Trim();
@@ -6622,6 +6659,7 @@ public partial class MainWindow : Window
         // Enable/disable send
         SendBtn.IsEnabled = state == "idle";
         CameraBtn.IsEnabled = state == "idle";
+        AdkBtn.IsEnabled = state == "idle";
         ImageBtn.IsEnabled = state == "idle";
         DocumentBtn.IsEnabled = state == "idle";
         KeepDocumentActiveToggle.IsEnabled = state == "idle";
