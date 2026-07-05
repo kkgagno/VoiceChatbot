@@ -311,7 +311,14 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
             try
             {
-                return Results.Json(await _krea2OptionsAsync(ct));
+                var options = await _krea2OptionsAsync(ct);
+                return Results.Json(new
+                {
+                    loras = options.Loras,
+                    aspectRatios = options.AspectRatios,
+                    Loras = options.Loras,
+                    AspectRatios = options.AspectRatios
+                });
             }
             catch (Exception ex)
             {

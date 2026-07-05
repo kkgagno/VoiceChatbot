@@ -313,6 +313,28 @@ struct Krea2Options: Decodable, Equatable {
     let loras: [String]
     let aspectRatios: [String]
 
+    enum CodingKeys: String, CodingKey {
+        case loras
+        case aspectRatios
+        case pascalLoras = "Loras"
+        case pascalAspectRatios = "AspectRatios"
+    }
+
+    init(loras: [String], aspectRatios: [String]) {
+        self.loras = loras
+        self.aspectRatios = aspectRatios
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        loras = try container.decodeIfPresent([String].self, forKey: .loras)
+            ?? container.decodeIfPresent([String].self, forKey: .pascalLoras)
+            ?? []
+        aspectRatios = try container.decodeIfPresent([String].self, forKey: .aspectRatios)
+            ?? container.decodeIfPresent([String].self, forKey: .pascalAspectRatios)
+            ?? Krea2Options.fallback.aspectRatios
+    }
+
     static let fallback = Krea2Options(
         loras: [],
         aspectRatios: [
