@@ -41,6 +41,8 @@ Source: "..\bin\Release\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversi
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Setup Guide"; Filename: "{app}\README.md"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\VoiceChatbot"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\VoiceChatbot 2.0"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

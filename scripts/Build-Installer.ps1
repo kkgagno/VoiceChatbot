@@ -39,6 +39,25 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }
 
+$requiredRuntimeFiles = @(
+    "VoiceChatbot.exe",
+    "VoiceChatbot.runtimeconfig.json",
+    "coreclr.dll",
+    "hostfxr.dll",
+    "hostpolicy.dll"
+)
+foreach ($requiredRuntimeFile in $requiredRuntimeFiles) {
+    $requiredRuntimePath = Join-Path $publishDir $requiredRuntimeFile
+    if (-not (Test-Path $requiredRuntimePath)) {
+        throw "Self-contained publish is invalid. Missing required runtime file: $requiredRuntimeFile"
+    }
+}
+
+$runtimeConfigText = Get-Content (Join-Path $publishDir "VoiceChatbot.runtimeconfig.json") -Raw
+if ($runtimeConfigText -notmatch '"includedFrameworks"') {
+    throw "Self-contained publish is invalid. VoiceChatbot.runtimeconfig.json does not list included frameworks."
+}
+
 function Get-GitHubReleaseAsset {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
