@@ -147,20 +147,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(conversationState = ConversationState.Listening) }
                 val wav = recorder.recordSegment()
                 _state.update { it.copy(conversationState = ConversationState.Transcribing) }
-                val response = requireApi().chatAudio(wav)
-                val transcript = response.transcript.trim()
+                val transcript = requireApi().transcribe(wav)
                 if (transcript.isBlank()) {
                     _state.update {
                         it.copy(
-                            messages = it.messages + ChatEntry(role = Role.Assistant, text = response.response.ifBlank { "I did not catch that." }),
+                            messages = it.messages + ChatEntry(role = Role.Assistant, text = "I did not catch that."),
                             conversationState = ConversationState.Idle
                         )
                     }
-                    _state.update { it.copy(conversationState = ConversationState.Idle) }
                     return@launch
                 }
                 _state.update { it.copy(messages = it.messages + ChatEntry(role = Role.User, text = transcript)) }
-                applyAssistantResponse(response, play = true)
+                _state.update { it.copy(conversationState = ConversationState.Thinking) }
+                applyAssistantResponse(requireApi().respond(transcript, _state.value.keepDocumentsActive), play = true)
             }.onFailure { fail(it) }
         }
     }

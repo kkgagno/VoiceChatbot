@@ -56,8 +56,7 @@ class ConversationService : Service() {
                     sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Listening"))
                     val wav = recorder.recordSegment()
                     sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Transcribing"))
-                    val response = api.chatAudio(wav)
-                    val heard = response.transcript.trim()
+                    val heard = api.transcribe(wav)
                     if (heard.isNotBlank()) {
                         sendBroadcast(
                             Intent(BROADCAST_MESSAGE)
@@ -65,6 +64,7 @@ class ConversationService : Service() {
                                 .putExtra("text", heard)
                         )
                         sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Thinking"))
+                        val response = api.respond(heard, false)
                         sendBroadcast(
                             Intent(BROADCAST_MESSAGE)
                                 .putExtra("role", "Assistant")
