@@ -774,7 +774,10 @@ public class SpeechEngine : IDisposable
         PlayWavOnThread(filePath, deleteAfterPlayback: false);
     }
 
-    public async Task<string> TranscribeWavAsync(Stream wavStream, CancellationToken ct = default)
+    public async Task<string> TranscribeWavAsync(
+        Stream wavStream,
+        CancellationToken ct = default,
+        bool allowRyzenAiFallback = false)
     {
         if (IsRyzenAiSelected())
         {
@@ -794,13 +797,13 @@ public class SpeechEngine : IDisposable
                         return external;
                     }
 
-                    if (IsRyzenAiRequired())
+                    if (IsRyzenAiRequired(allowRyzenAiFallback))
                         return "";
                 }
                 catch (Exception ex)
                 {
                     Log?.Invoke($"AMD Ryzen AI Whisper transcription failed: {ex.Message}");
-                    if (IsRyzenAiRequired())
+                    if (IsRyzenAiRequired(allowRyzenAiFallback))
                         throw;
                 }
             }
@@ -857,9 +860,11 @@ public class SpeechEngine : IDisposable
         return TranscriptionBackend.Contains("AMD Ryzen AI Whisper", StringComparison.OrdinalIgnoreCase);
     }
 
-    private bool IsRyzenAiRequired()
+    private bool IsRyzenAiRequired(bool allowFallback = false)
     {
-        return IsRyzenAiSelected() && !TranscriptionBackend.Contains("fallback", StringComparison.OrdinalIgnoreCase);
+        return IsRyzenAiSelected()
+            && !allowFallback
+            && !TranscriptionBackend.Contains("fallback", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<string> TranscribeWithRyzenAiAsync(Stream wavStream, CancellationToken ct)

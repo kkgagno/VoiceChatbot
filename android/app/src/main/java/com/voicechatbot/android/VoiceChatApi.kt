@@ -46,6 +46,14 @@ class VoiceChatApi(
         return postMultipart<TranscriptionResponse>("/api/transcribe", body).transcript.trim()
     }
 
+    suspend fun chatAudio(wav: File): AssistantResponse {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("audio", "android.wav", wav.asRequestBody("audio/wav".toMediaType()))
+            .build()
+        return postMultipart("/api/chat", body)
+    }
+
     suspend fun detectSpeech(wav: File): Boolean {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)

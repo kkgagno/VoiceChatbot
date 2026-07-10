@@ -1,0 +1,122 @@
+package com.voicechatbot.android
+
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+class WavAudioPlayer {
+    private var track: AudioTrack? = null
+
+    suspend fun play(file: File, onDone: () -> Unit) = withContext(Dispatchers.IO) {
+        stop()
+        val wav = WavData.read(file)
+        val channelConfig = if (wav.channels == 1) {
+            AudioFormat.CHANNEL_OUT_MONO
+        } else {
+            AudioFormat.CHANNEL_OUT_STEREO
+        }
+        val encoding = when (wav.bitsPerSample) {
+            8 -> AudioFormat.ENCODING_PCM_8BIT
+            16 -> AudioFormat.ENCODING_PCM_16BIT
+            32 -> AudioFormat.ENCODING_PCM_FLOAT
+            else -> error("Unsupported WAV bit depth: ${wav.bitsPerSample}")
+        }
+        val minBuffer = AudioTrack.getMinBufferSize(wav.sampleRate, channelConfig, encoding)
+        val player = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(wav.sampleRate)
+                    .setChannelMask(channelConfig)
+                    .setEncoding(encoding)
+                    .build()
+            )
+            .setBufferSizeInBytes(maxOf(minBuffer, wav.pcm.size))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        track = player
+        try {
+            player.play()
+            var offset = 0
+            while (offset < wav.pcm.size && track === player) {
+                val written = player.write(wav.pcm, offset, wav.pcm.size - offset)
+                if (written <= 0) break
+                offset += written
+            }
+            player.stop()
+        } finally {
+            if (track === player) track = null
+            player.release()
+            onDone()
+        }
+    }
+
+    fun stop() {
+        val current = track ?: return
+        track = null
+        runCatching { current.pause() }
+        runCatching { current.flush() }
+        runCatching { current.stop() }
+        runCatching { current.release() }
+    }
+
+    private data class WavData(
+        val sampleRate: Int,
+        val channels: Int,
+        val bitsPerSample: Int,
+        val pcm: ByteArray
+    ) {
+        companion object {
+            fun read(file: File): WavData {
+                val bytes = file.readBytes()
+                fun ascii(offset: Int, length: Int) = bytes.decodeToString(offset, offset + length)
+                fun u16(offset: Int) = ByteBuffer.wrap(bytes, offset, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xffff
+                fun i32(offset: Int) = ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+
+                require(bytes.size >= 44 && ascii(0, 4) == "RIFF" && ascii(8, 4) == "WAVE") {
+                    "Not a WAV file."
+                }
+
+                var offset = 12
+                var channels = 1
+                var sampleRate = 16_000
+                var bits = 16
+                var dataStart = -1
+                var dataLength = 0
+
+                while (offset + 8 <= bytes.size) {
+                    val id = ascii(offset, 4)
+                    val size = i32(offset + 4)
+                    val body = offset + 8
+                    if (body + size > bytes.size) break
+                    when (id) {
+                        "fmt " -> {
+                            channels = u16(body + 2)
+                            sampleRate = i32(body + 4)
+                            bits = u16(body + 14)
+                        }
+                        "data" -> {
+                            dataStart = body
+                            dataLength = size
+                            break
+                        }
+                    }
+                    offset = body + size + (size and 1)
+                }
+
+                require(dataStart >= 0 && dataLength > 0) { "WAV data chunk missing." }
+                return WavData(sampleRate, channels, bits, bytes.copyOfRange(dataStart, dataStart + dataLength))
+            }
+        }
+    }
+}

@@ -134,7 +134,7 @@ public partial class MainWindow : Window
         _speech = new SpeechEngine();
         _camera = new CameraService();
         _phoneRemoteServer = new PhoneRemoteServer(
-            (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
+            (stream, ct) => _speech.TranscribeWavAsync(stream, ct, allowRyzenAiFallback: true),
             (stream, ct) => _speech.ContainsSpeechWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
             HandlePhoneRemoteToolAsync,

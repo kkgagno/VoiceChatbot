@@ -3,7 +3,6 @@ package com.voicechatbot.android
 import android.app.Application
 import android.content.ContentValues
 import android.content.Intent
-import android.media.MediaPlayer
 import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.MediaStore
@@ -57,8 +56,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         get() = getApplication()
     private val prefs = application.getSharedPreferences("voicechatbot", 0)
     private val recorder = AudioRecorder(application)
+    private val wavPlayer = WavAudioPlayer()
     private var api: VoiceChatApi? = null
-    private var player: MediaPlayer? = null
 
     private val _state = MutableStateFlow(loadState())
     val state: StateFlow<UiState> = _state
@@ -148,14 +147,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(conversationState = ConversationState.Listening) }
                 val wav = recorder.recordSegment()
                 _state.update { it.copy(conversationState = ConversationState.Transcribing) }
-                val transcript = requireApi().transcribe(wav)
+                val response = requireApi().chatAudio(wav)
+                val transcript = response.transcript.trim()
                 if (transcript.isBlank()) {
+                    _state.update {
+                        it.copy(
+                            messages = it.messages + ChatEntry(role = Role.Assistant, text = response.response.ifBlank { "I did not catch that." }),
+                            conversationState = ConversationState.Idle
+                        )
+                    }
                     _state.update { it.copy(conversationState = ConversationState.Idle) }
                     return@launch
                 }
                 _state.update { it.copy(messages = it.messages + ChatEntry(role = Role.User, text = transcript)) }
-                _state.update { it.copy(conversationState = ConversationState.Thinking) }
-                applyAssistantResponse(requireApi().respond(transcript, _state.value.keepDocumentsActive), play = true)
+                applyAssistantResponse(response, play = true)
             }.onFailure { fail(it) }
         }
     }
@@ -200,22 +205,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 stopAudio()
                 val file = requireApi().mediaFile(relativeUrl, "voicechat-audio-${System.currentTimeMillis()}.wav")
-                val mp = MediaPlayer().apply {
-                    setDataSource(file.absolutePath)
-                    setOnCompletionListener { stopAudio() }
-                    prepare()
-                    start()
-                }
-                player = mp
                 _state.update { it.copy(playingAudioUrl = relativeUrl) }
-            }.onFailure { fail(it) }
+                wavPlayer.play(file) {
+                    _state.update { it.copy(playingAudioUrl = null) }
+                }
+            }.onFailure {
+                _state.update { old -> old.copy(playingAudioUrl = null) }
+                fail(it)
+            }
         }
     }
 
     fun stopAudio() {
-        runCatching { player?.stop() }
-        runCatching { player?.release() }
-        player = null
+        wavPlayer.stop()
         _state.update { it.copy(playingAudioUrl = null) }
     }
 
