@@ -48,6 +48,7 @@ class ConversationService : Service() {
         val baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
         val api = VoiceChatApi(applicationContext, profile, baseUrl)
         val recorder = AudioRecorder(applicationContext)
+        val audioPlayer = WavAudioPlayer()
 
         worker?.cancel()
         worker = scope.launch {
@@ -71,6 +72,10 @@ class ConversationService : Service() {
                                 .putExtra("text", response.response)
                                 .putExtra("audioUrl", response.audioUrl)
                         )
+                        if (!response.audioUrl.isNullOrBlank()) {
+                            val audio = api.mediaFile(response.audioUrl, "voicechat-service-${System.currentTimeMillis()}.wav")
+                            audioPlayer.play(audio) {}
+                        }
                     }
                     delay(250)
                 } catch (e: Exception) {

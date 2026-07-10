@@ -98,7 +98,9 @@ class WavAudioPlayer {
                     val id = ascii(offset, 4)
                     val size = i32(offset + 4)
                     val body = offset + 8
-                    if (body + size > bytes.size) break
+                    if (size < 0 || body + size > bytes.size) {
+                        break
+                    }
                     when (id) {
                         "fmt " -> {
                             channels = u16(body + 2)
@@ -112,6 +114,26 @@ class WavAudioPlayer {
                         }
                     }
                     offset = body + size + (size and 1)
+                }
+
+                if (dataStart < 0) {
+                    val marker = "data".toByteArray()
+                    var i = 12
+                    while (i + 8 <= bytes.size) {
+                        if (bytes[i] == marker[0] &&
+                            bytes[i + 1] == marker[1] &&
+                            bytes[i + 2] == marker[2] &&
+                            bytes[i + 3] == marker[3]
+                        ) {
+                            val size = i32(i + 4)
+                            if (size > 0 && i + 8 + size <= bytes.size) {
+                                dataStart = i + 8
+                                dataLength = size
+                                break
+                            }
+                        }
+                        i++
+                    }
                 }
 
                 require(dataStart >= 0 && dataLength > 0) { "WAV data chunk missing." }

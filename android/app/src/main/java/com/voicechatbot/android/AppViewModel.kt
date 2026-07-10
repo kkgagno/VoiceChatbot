@@ -186,7 +186,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun receiveServiceMessage(role: String, text: String, audioUrl: String?) {
         val parsedRole = runCatching { Role.valueOf(role) }.getOrDefault(Role.System)
         _state.update { it.copy(messages = it.messages + ChatEntry(role = parsedRole, text = text, audioUrl = audioUrl)) }
-        if (parsedRole == Role.Assistant && !audioUrl.isNullOrBlank()) playAudio(audioUrl)
+        if (parsedRole == Role.Assistant && !audioUrl.isNullOrBlank() && !_state.value.serviceRunning) {
+            playAudio(audioUrl)
+        }
     }
 
     fun receiveServiceState(text: String) {
