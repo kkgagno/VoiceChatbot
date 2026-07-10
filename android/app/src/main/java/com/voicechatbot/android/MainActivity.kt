@@ -104,6 +104,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF39D7FF), secondary = Color(0xFF6B5DF6))) {
                 val viewModel: AppViewModel = viewModel()
+                LaunchedEffect(Unit) {
+                    viewModel.reloadStoredMessages()
+                }
                 ServiceBroadcastBridge(viewModel)
                 VoiceChatbotApp(viewModel)
             }

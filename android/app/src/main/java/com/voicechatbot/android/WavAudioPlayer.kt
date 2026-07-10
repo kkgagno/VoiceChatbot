@@ -3,6 +3,7 @@ package com.voicechatbot.android
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.MediaPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -11,10 +12,14 @@ import java.nio.ByteOrder
 
 class WavAudioPlayer {
     private var track: AudioTrack? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     suspend fun play(file: File, onDone: () -> Unit) = withContext(Dispatchers.IO) {
         stop()
-        val wav = WavData.read(file)
+        val wav = runCatching { WavData.read(file) }.getOrElse { wavError ->
+            playWithMediaPlayer(file, onDone, wavError)
+            return@withContext
+        }
         val channelConfig = if (wav.channels == 1) {
             AudioFormat.CHANNEL_OUT_MONO
         } else {
@@ -62,12 +67,56 @@ class WavAudioPlayer {
     }
 
     fun stop() {
+        val mp = mediaPlayer
+        mediaPlayer = null
+        runCatching { mp?.stop() }
+        runCatching { mp?.release() }
+
         val current = track ?: return
         track = null
         runCatching { current.pause() }
         runCatching { current.flush() }
         runCatching { current.stop() }
         runCatching { current.release() }
+    }
+
+    private fun playWithMediaPlayer(file: File, onDone: () -> Unit, wavError: Throwable) {
+        val player = MediaPlayer()
+        mediaPlayer = player
+        try {
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            player.setDataSource(file.absolutePath)
+            player.prepare()
+            player.start()
+            while (mediaPlayer === player && player.isPlaying) {
+                Thread.sleep(100)
+            }
+        } catch (mediaError: Throwable) {
+            throw IllegalStateException(
+                "Audio playback failed. WAV error: ${wavError.message}. " +
+                    "Fallback error: ${mediaError.message}. ${describeFile(file)}",
+                mediaError
+            )
+        } finally {
+            if (mediaPlayer === player) mediaPlayer = null
+            runCatching { player.release() }
+            onDone()
+        }
+    }
+
+    private fun describeFile(file: File): String {
+        val bytes = runCatching { file.readBytes() }.getOrDefault(ByteArray(0))
+        val header = bytes.take(32).joinToString(" ") { "%02X".format(it) }
+        val ascii = bytes.take(32).map {
+            val value = it.toInt() and 0xff
+            if (value in 32..126) value.toChar() else '.'
+        }.joinToString("")
+        return "Downloaded audio file: ${file.length()} bytes, header hex [$header], ascii [$ascii]"
     }
 
     private data class WavData(

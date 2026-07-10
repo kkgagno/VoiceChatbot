@@ -66,6 +66,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { refreshStatus() }
     }
 
+    fun reloadStoredMessages() {
+        val stored = ConversationStore.load(app)
+        if (stored.isNotEmpty()) {
+            _state.update { it.copy(messages = stored) }
+        }
+    }
+
     fun updateProfile(profile: ServerProfile) {
         prefs.edit()
             .putString("name", profile.name)
@@ -185,7 +192,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun receiveServiceMessage(role: String, text: String, audioUrl: String?) {
         val parsedRole = runCatching { Role.valueOf(role) }.getOrDefault(Role.System)
-        _state.update { it.copy(messages = it.messages + ChatEntry(role = parsedRole, text = text, audioUrl = audioUrl)) }
+        reloadStoredMessages()
         if (parsedRole == Role.Assistant && !audioUrl.isNullOrBlank() && !_state.value.serviceRunning) {
             playAudio(audioUrl)
         }
@@ -407,6 +414,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             vpnUrl = prefs.getString("vpnUrl", "http://minilagertha.tail2762b8.ts.net:5101") ?: "http://minilagertha.tail2762b8.ts.net:5101",
             pin = prefs.getString("pin", "") ?: ""
         )
-        return UiState(profile = profile)
+        return UiState(profile = profile, messages = ConversationStore.load(app))
     }
 }

@@ -54,24 +54,15 @@ class ConversationService : Service() {
         worker = scope.launch {
             while (true) {
                 try {
-                    sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Listening"))
+                    broadcastState("Listening")
                     val wav = recorder.recordSegment()
-                    sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Transcribing"))
+                    broadcastState("Transcribing")
                     val heard = api.transcribe(wav)
                     if (heard.isNotBlank()) {
-                        sendBroadcast(
-                            Intent(BROADCAST_MESSAGE)
-                                .putExtra("role", "User")
-                                .putExtra("text", heard)
-                        )
-                        sendBroadcast(Intent(BROADCAST_STATE).putExtra("state", "Thinking"))
+                        storeAndBroadcast(Role.User, heard)
+                        broadcastState("Thinking")
                         val response = api.respond(heard, false)
-                        sendBroadcast(
-                            Intent(BROADCAST_MESSAGE)
-                                .putExtra("role", "Assistant")
-                                .putExtra("text", response.response)
-                                .putExtra("audioUrl", response.audioUrl)
-                        )
+                        storeAndBroadcast(Role.Assistant, response.response, response.audioUrl)
                         if (!response.audioUrl.isNullOrBlank()) {
                             val audio = api.mediaFile(response.audioUrl, "voicechat-service-${System.currentTimeMillis()}.wav")
                             audioPlayer.play(audio) {}
@@ -79,15 +70,30 @@ class ConversationService : Service() {
                     }
                     delay(250)
                 } catch (e: Exception) {
-                    sendBroadcast(
-                        Intent(BROADCAST_MESSAGE)
-                            .putExtra("role", "System")
-                            .putExtra("text", e.message ?: "Conversation service error")
-                    )
+                    storeAndBroadcast(Role.System, e.message ?: "Conversation service error")
                     delay(1500)
                 }
             }
         }
+    }
+
+    private fun storeAndBroadcast(role: Role, text: String, audioUrl: String? = null) {
+        ConversationStore.append(applicationContext, role, text, audioUrl)
+        sendBroadcast(
+            Intent(BROADCAST_MESSAGE)
+                .setPackage(packageName)
+                .putExtra("role", role.name)
+                .putExtra("text", text)
+                .putExtra("audioUrl", audioUrl)
+        )
+    }
+
+    private fun broadcastState(state: String) {
+        sendBroadcast(
+            Intent(BROADCAST_STATE)
+                .setPackage(packageName)
+                .putExtra("state", state)
+        )
     }
 
     private fun createChannel() {
