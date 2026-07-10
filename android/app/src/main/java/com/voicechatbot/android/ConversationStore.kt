@@ -11,8 +11,13 @@ object ConversationStore {
 
     fun append(context: Context, role: Role, text: String, audioUrl: String? = null) {
         if (text.isBlank() && audioUrl.isNullOrBlank()) return
+        append(context, ChatEntry(role = role, text = text, audioUrl = audioUrl))
+    }
+
+    fun append(context: Context, entry: ChatEntry) {
+        if (entry.text.isBlank() && entry.audioUrl.isNullOrBlank()) return
         val messages = load(context).toMutableList()
-        messages += ChatEntry(role = role, text = text, audioUrl = audioUrl)
+        messages += entry
         save(context, messages.takeLast(MAX_MESSAGES))
     }
 

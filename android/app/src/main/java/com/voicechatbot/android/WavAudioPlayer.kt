@@ -98,8 +98,8 @@ class WavAudioPlayer {
             }
         } catch (mediaError: Throwable) {
             throw IllegalStateException(
-                "Audio playback failed. WAV error: ${wavError.message}. " +
-                    "Fallback error: ${mediaError.message}. ${describeFile(file)}",
+                "Audio playback failed. The PC returned an audio file Android could not play. " +
+                    "WAV: ${wavError.message}. Fallback: ${mediaError.message}. ${describeFile(file)}",
                 mediaError
             )
         } finally {
@@ -111,12 +111,12 @@ class WavAudioPlayer {
 
     private fun describeFile(file: File): String {
         val bytes = runCatching { file.readBytes() }.getOrDefault(ByteArray(0))
-        val header = bytes.take(32).joinToString(" ") { "%02X".format(it) }
-        val ascii = bytes.take(32).map {
+        val header = bytes.take(8).joinToString(" ") { "%02X".format(it) }
+        val ascii = bytes.take(16).map {
             val value = it.toInt() and 0xff
             if (value in 32..126) value.toChar() else '.'
         }.joinToString("")
-        return "Downloaded audio file: ${file.length()} bytes, header hex [$header], ascii [$ascii]"
+        return "Downloaded ${file.length()} bytes, header [$header], ascii [$ascii]."
     }
 
     private data class WavData(

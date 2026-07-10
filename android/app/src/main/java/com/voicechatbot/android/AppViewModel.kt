@@ -69,7 +69,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun reloadStoredMessages() {
         val stored = ConversationStore.load(app)
         if (stored.isNotEmpty()) {
-            _state.update { it.copy(messages = stored) }
+            _state.update {
+                val merged = (it.messages + stored)
+                    .distinctBy { message -> message.id }
+                    .takeLast(100)
+                it.copy(messages = merged)
+            }
+        }
+    }
+
+    private fun appendMessage(entry: ChatEntry) {
+        ConversationStore.append(app, entry)
+        _state.update {
+            it.copy(messages = (it.messages + entry).distinctBy { message -> message.id }.takeLast(100))
         }
     }
 
@@ -133,11 +145,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val text = _state.value.typedMessage.trim()
             val attachments = _state.value.attachments
             if (text.isBlank() && attachments.isEmpty()) return@launch
+            appendMessage(ChatEntry(role = Role.User, text = text.ifBlank { "Sent attachments" }))
             _state.update {
                 it.copy(
                     typedMessage = "",
                     attachments = emptyList(),
-                    messages = it.messages + ChatEntry(role = Role.User, text = text.ifBlank { "Sent attachments" }),
                     conversationState = ConversationState.Thinking
                 )
             }
@@ -156,15 +168,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(conversationState = ConversationState.Transcribing) }
                 val transcript = requireApi().transcribe(wav)
                 if (transcript.isBlank()) {
-                    _state.update {
-                        it.copy(
-                            messages = it.messages + ChatEntry(role = Role.Assistant, text = "I did not catch that."),
-                            conversationState = ConversationState.Idle
-                        )
-                    }
+                    appendMessage(ChatEntry(role = Role.Assistant, text = "I did not catch that."))
+                    _state.update { it.copy(conversationState = ConversationState.Idle) }
                     return@launch
                 }
-                _state.update { it.copy(messages = it.messages + ChatEntry(role = Role.User, text = transcript)) }
+                appendMessage(ChatEntry(role = Role.User, text = transcript))
                 _state.update { it.copy(conversationState = ConversationState.Thinking) }
                 applyAssistantResponse(requireApi().respond(transcript, _state.value.keepDocumentsActive), play = true)
             }.onFailure { fail(it) }
@@ -354,9 +362,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun applyAssistantResponse(response: AssistantResponse, play: Boolean = false) {
+        appendMessage(ChatEntry(role = Role.Assistant, text = response.response, audioUrl = response.audioUrl))
         _state.update {
             it.copy(
-                messages = it.messages + ChatEntry(role = Role.Assistant, text = response.response, audioUrl = response.audioUrl),
                 activeDocumentCount = response.activeDocumentCount,
                 status = it.status?.copy(
                     activeProvider = response.activeProvider ?: it.status.activeProvider,
@@ -399,12 +407,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun fail(error: Throwable) {
+        appendMessage(ChatEntry(role = Role.System, text = shortError(error)))
         _state.update {
             it.copy(
-                conversationState = ConversationState.Failed,
-                messages = it.messages + ChatEntry(role = Role.System, text = error.message ?: "Unknown error")
+                conversationState = ConversationState.Failed
             )
         }
+    }
+
+    private fun shortError(error: Throwable): String {
+        val message = error.message ?: "Unknown error"
+        return if (message.length <= 320) message else message.take(320) + "..."
     }
 
     private fun loadState(): UiState {
