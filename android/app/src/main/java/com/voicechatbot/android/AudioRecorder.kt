@@ -21,9 +21,9 @@ class AudioRecorder(private val context: Context) {
     private val encoding = AudioFormat.ENCODING_PCM_16BIT
 
     suspend fun recordSegment(
-        maxMillis: Long = 12_000,
-        silenceMillis: Long = 1_350,
-        preRollMillis: Long = 400
+        maxMillis: Long = 30_000,
+        silenceMillis: Long = 2_800,
+        preRollMillis: Long = 900
     ): File = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -54,7 +54,7 @@ class AudioRecorder(private val context: Context) {
                 val read = recorder.read(buffer, 0, buffer.size)
                 if (read <= 0) continue
                 val chunk = buffer.copyOf(read)
-                val voice = chunk.rms() > 650
+                val voice = chunk.rms() > 420
                 if (!speechStarted) {
                     preRoll.addLast(chunk)
                     preRollBytes += chunk.size

@@ -39,6 +39,7 @@ public class SpeechEngine : IDisposable
     private System.Timers.Timer? _listenTimeout;
     private WhisperFactory? _whisperFactory;
     private WhisperProcessor? _whisperProcessor;
+    private string _activeWhisperModelPath = "";
     private WaveInEvent? _waveIn;
     private SileroVad? _voiceActivityDetector;
     private SileroVad? _remoteVoiceActivityDetector;
@@ -226,6 +227,7 @@ public class SpeechEngine : IDisposable
             return;
         }
 
+        _activeWhisperModelPath = foundModel;
         _whisperFactory = WhisperFactory.FromPath(foundModel);
 
         var langCode = InputLanguage;
@@ -870,8 +872,9 @@ public class SpeechEngine : IDisposable
             if (wavStream.CanSeek)
                 wavStream.Position = 0;
 
+            using var processor = CreateWhisperProcessor();
             var result = new StringBuilder();
-            await foreach (var segment in _whisperProcessor.ProcessAsync(wavStream, ct).ConfigureAwait(false))
+            await foreach (var segment in processor.ProcessAsync(wavStream, ct).ConfigureAwait(false))
             {
                 var text = CleanWhisperSegment(segment.Text);
                 if (!string.IsNullOrWhiteSpace(text))
@@ -886,6 +889,21 @@ public class SpeechEngine : IDisposable
         {
             _whisperLock.Release();
         }
+    }
+
+    private WhisperProcessor CreateWhisperProcessor()
+    {
+        if (_whisperFactory == null)
+            throw new InvalidOperationException("Whisper is not initialized.");
+
+        var langCode = InputLanguage;
+        if (langCode == "en-US" || langCode == "en-GB") langCode = "en";
+        if (langCode.Contains('-')) langCode = langCode.Split('-')[0];
+
+        return _whisperFactory
+            .CreateBuilder()
+            .WithLanguage(langCode)
+            .Build();
     }
 
     public string GetTranscriptionBackendStatus()

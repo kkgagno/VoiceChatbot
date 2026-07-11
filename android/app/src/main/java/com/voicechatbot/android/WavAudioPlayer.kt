@@ -58,7 +58,24 @@ class WavAudioPlayer {
                 if (written <= 0) break
                 offset += written
             }
-            player.stop()
+            val bytesPerSample = when (wav.bitsPerSample) {
+                8 -> 1
+                16 -> 2
+                32 -> 4
+                else -> 2
+            }
+            val totalFrames = wav.pcm.size / (bytesPerSample * wav.channels.coerceAtLeast(1))
+            val deadline = System.currentTimeMillis() + maxOf(1_000L, (totalFrames * 1000L / wav.sampleRate) + 750L)
+            while (track === player &&
+                player.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                player.playbackHeadPosition < totalFrames &&
+                System.currentTimeMillis() < deadline
+            ) {
+                Thread.sleep(40)
+            }
+            if (track === player) {
+                player.stop()
+            }
         } finally {
             if (track === player) track = null
             player.release()
