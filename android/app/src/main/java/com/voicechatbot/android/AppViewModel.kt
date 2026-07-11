@@ -163,6 +163,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun oneShotVoice() {
         viewModelScope.launch {
             runCatching {
+                if (_state.value.serviceRunning) {
+                    stopBackgroundConversation()
+                }
+                stopAudio()
                 _state.update { it.copy(conversationState = ConversationState.Listening) }
                 val wav = recorder.recordSegment()
                 _state.update { it.copy(conversationState = ConversationState.Transcribing) }

@@ -147,6 +147,11 @@ class WavAudioPlayer {
                     val id = ascii(offset, 4)
                     val size = i32(offset + 4)
                     val body = offset + 8
+                    if (id == "data") {
+                        dataStart = body
+                        dataLength = if (size > 0 && body + size <= bytes.size) size else bytes.size - body
+                        break
+                    }
                     if (size < 0 || body + size > bytes.size) {
                         break
                     }
@@ -155,11 +160,6 @@ class WavAudioPlayer {
                             channels = u16(body + 2)
                             sampleRate = i32(body + 4)
                             bits = u16(body + 14)
-                        }
-                        "data" -> {
-                            dataStart = body
-                            dataLength = size
-                            break
                         }
                     }
                     offset = body + size + (size and 1)

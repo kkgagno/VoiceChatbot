@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -224,8 +225,15 @@ private fun Header(state: UiState, viewModel: AppViewModel) {
 
 @Composable
 private fun ChatScreen(state: UiState, viewModel: AppViewModel) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.messages.size) {
+        if (state.messages.isNotEmpty()) {
+            listState.animateScrollToItem(state.messages.lastIndex)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 14.dp),

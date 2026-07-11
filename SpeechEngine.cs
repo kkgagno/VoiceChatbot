@@ -758,7 +758,59 @@ public class SpeechEngine : IDisposable
 
         var savedPath = Path.Combine(outputDirectory, $"assistant_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.wav");
         File.Move(wavFile, savedPath);
+        NormalizeWavHeaderForAndroid(savedPath);
         return savedPath;
+    }
+
+    private static void NormalizeWavHeaderForAndroid(string path)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Length < 44 ||
+                bytes[0] != (byte)'R' || bytes[1] != (byte)'I' || bytes[2] != (byte)'F' || bytes[3] != (byte)'F' ||
+                bytes[8] != (byte)'W' || bytes[9] != (byte)'A' || bytes[10] != (byte)'V' || bytes[11] != (byte)'E')
+                return;
+
+            var dataOffset = -1;
+            for (var offset = 12; offset + 8 <= bytes.Length;)
+            {
+                if (bytes[offset] == (byte)'d' && bytes[offset + 1] == (byte)'a' &&
+                    bytes[offset + 2] == (byte)'t' && bytes[offset + 3] == (byte)'a')
+                {
+                    dataOffset = offset;
+                    break;
+                }
+
+                var chunkSize = BitConverter.ToInt32(bytes, offset + 4);
+                if (chunkSize < 0 || offset + 8 + chunkSize > bytes.Length)
+                {
+                    offset++;
+                    continue;
+                }
+
+                offset += 8 + chunkSize + (chunkSize & 1);
+            }
+
+            if (dataOffset < 0 || dataOffset + 8 > bytes.Length)
+                return;
+
+            WriteInt32LE(bytes, 4, bytes.Length - 8);
+            WriteInt32LE(bytes, dataOffset + 4, bytes.Length - dataOffset - 8);
+            File.WriteAllBytes(path, bytes);
+        }
+        catch
+        {
+            // Best effort only. If normalization fails, keep the generated file.
+        }
+    }
+
+    private static void WriteInt32LE(byte[] bytes, int offset, int value)
+    {
+        bytes[offset] = (byte)(value & 0xff);
+        bytes[offset + 1] = (byte)((value >> 8) & 0xff);
+        bytes[offset + 2] = (byte)((value >> 16) & 0xff);
+        bytes[offset + 3] = (byte)((value >> 24) & 0xff);
     }
 
     public void PlayAudioFile(string filePath)
