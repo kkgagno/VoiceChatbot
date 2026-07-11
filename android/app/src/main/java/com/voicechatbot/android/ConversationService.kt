@@ -55,7 +55,7 @@ class ConversationService : Service() {
             while (true) {
                 try {
                     broadcastState("Listening")
-                    val wav = recorder.recordSegment()
+                    val wav = recorder.recordSegment { candidate -> api.detectSpeech(candidate) }
                     broadcastState("Transcribing")
                     val heard = api.transcribe(wav)
                     if (heard.isNotBlank()) {

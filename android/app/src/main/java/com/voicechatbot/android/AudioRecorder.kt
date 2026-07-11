@@ -14,6 +14,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 class AudioRecorder(private val context: Context) {
     private val sampleRate = 16_000
@@ -21,9 +22,10 @@ class AudioRecorder(private val context: Context) {
     private val encoding = AudioFormat.ENCODING_PCM_16BIT
 
     suspend fun recordSegment(
-        maxMillis: Long = 30_000,
-        silenceMillis: Long = 2_800,
-        preRollMillis: Long = 900
+        maxMillis: Long = 300_000,
+        silenceMillis: Long = 2_400,
+        preRollMillis: Long = 1_000,
+        containsSpeech: (suspend (File) -> Boolean)? = null
     ): File = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -44,7 +46,11 @@ class AudioRecorder(private val context: Context) {
         val maxPreRollBytes = (sampleRate * 2 * preRollMillis / 1000).toInt()
         var preRollBytes = 0
         var speechStarted = false
-        var lastSpeechAt = System.currentTimeMillis()
+        var speechConfirmed = containsSpeech == null
+        var candidatePending = false
+        var lastVadCheckAt = System.currentTimeMillis()
+        var vadNonSpeechMillis = 0L
+        var noiseFloor = 0.004
         val start = System.currentTimeMillis()
         val buffer = ByteArray(frame)
 
@@ -54,24 +60,74 @@ class AudioRecorder(private val context: Context) {
                 val read = recorder.read(buffer, 0, buffer.size)
                 if (read <= 0) continue
                 val chunk = buffer.copyOf(read)
-                val voice = chunk.rms() > 420
+                val rms = chunk.normalizedRms()
+                val startThreshold = maxOf(0.009, noiseFloor * 2.4)
                 if (!speechStarted) {
                     preRoll.addLast(chunk)
                     preRollBytes += chunk.size
                     while (preRollBytes > maxPreRollBytes && preRoll.isNotEmpty()) {
                         preRollBytes -= preRoll.removeFirst().size
                     }
-                    if (voice) {
+                    if (rms < startThreshold) {
+                        noiseFloor = noiseFloor * 0.97 + rms * 0.03
+                    } else {
                         speechStarted = true
+                        speechConfirmed = containsSpeech == null
+                        candidatePending = false
+                        lastVadCheckAt = System.currentTimeMillis()
+                        vadNonSpeechMillis = 0
                         preRoll.forEach { pcm.write(it) }
                         preRoll.clear()
-                        lastSpeechAt = System.currentTimeMillis()
                     }
                 }
                 if (speechStarted) {
                     pcm.write(chunk)
-                    if (voice) lastSpeechAt = System.currentTimeMillis()
-                    if (System.currentTimeMillis() - lastSpeechAt > silenceMillis) break
+                    val recordedMillis = pcm.size().toLong() * 1000L / (sampleRate * 2L)
+                    val detector = containsSpeech
+                    if (detector != null && !candidatePending) {
+                        if (!speechConfirmed && recordedMillis >= 750) {
+                            candidatePending = true
+                            val candidate = writeCandidateWav(pcm.toByteArray())
+                            val ok = runCatching { detector(candidate) }.getOrDefault(false)
+                            candidate.delete()
+                            candidatePending = false
+                            if (ok) {
+                                speechConfirmed = true
+                                lastVadCheckAt = System.currentTimeMillis()
+                                vadNonSpeechMillis = 0
+                            } else {
+                                pcm.reset()
+                                preRoll.clear()
+                                preRollBytes = 0
+                                speechStarted = false
+                                speechConfirmed = false
+                                noiseFloor = 0.004
+                                continue
+                            }
+                        } else if (speechConfirmed && System.currentTimeMillis() - lastVadCheckAt >= 600) {
+                            candidatePending = true
+                            val recent = pcm.toByteArray().takeLast(sampleRate * 2).toByteArray()
+                            val candidate = writeCandidateWav(recent)
+                            val ok = runCatching { detector(candidate) }.getOrDefault(true)
+                            candidate.delete()
+                            candidatePending = false
+                            lastVadCheckAt = System.currentTimeMillis()
+                            if (ok) {
+                                vadNonSpeechMillis = 0
+                            } else {
+                                vadNonSpeechMillis += 600
+                            }
+                        }
+                    } else if (containsSpeech == null) {
+                        if (rms >= startThreshold) vadNonSpeechMillis = 0 else vadNonSpeechMillis += 250
+                    }
+
+                    if (speechConfirmed &&
+                        recordedMillis >= 350 &&
+                        vadNonSpeechMillis >= silenceMillis
+                    ) {
+                        break
+                    }
                 }
             }
         } finally {
@@ -82,6 +138,12 @@ class AudioRecorder(private val context: Context) {
         val output = File(context.cacheDir, "voicechat-${System.currentTimeMillis()}.wav")
         output.writeWav(pcm.toByteArray(), sampleRate)
         output
+    }
+
+    private fun writeCandidateWav(pcm: ByteArray): File {
+        val output = File(context.cacheDir, "voicechat-vad-${System.nanoTime()}.wav")
+        output.writeWav(pcm, sampleRate)
+        return output
     }
 
     private fun ByteArray.rms(): Int {
@@ -95,6 +157,20 @@ class AudioRecorder(private val context: Context) {
             i += 2
         }
         return if (count == 0) 0 else (sum / count).toInt()
+    }
+
+    private fun ByteArray.normalizedRms(): Double {
+        var sum = 0.0
+        var count = 0
+        var i = 0
+        while (i + 1 < size) {
+            val sample = ((this[i + 1].toInt() shl 8) or (this[i].toInt() and 0xff)).toShort().toInt()
+            val normalized = sample / 32768.0
+            sum += normalized * normalized
+            count++
+            i += 2
+        }
+        return if (count == 0) 0.0 else sqrt(sum / count)
     }
 
     private fun File.writeWav(pcm: ByteArray, sampleRate: Int) {
