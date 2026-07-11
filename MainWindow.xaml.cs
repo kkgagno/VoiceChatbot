@@ -6160,6 +6160,81 @@ public partial class MainWindow : Window
 
     private async Task<string> HandlePhoneRemoteToolAsync(string prompt, CancellationToken ct)
     {
+        if (TryBuildLlamaModelControlPlan(prompt, out var modelPlan))
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                AddSystemMessage($"Phone remote running model control: {modelPlan.Description}");
+                ModelControlStatusText.Text = modelPlan.Description;
+                _serviceControlBusy = true;
+                UpdateDesktopServiceControls();
+            });
+
+            try
+            {
+                var display = await RunLlamaModelControlPlanAsync(modelPlan, ct);
+                if (modelPlan.EndpointPort is int endpointPort)
+                {
+                    string endpointUrl = "";
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        endpointUrl = SetLlamaEndpointPort(endpointPort);
+                    });
+                    display += $"{Environment.NewLine}{Environment.NewLine}App endpoint set to {endpointUrl}";
+                    var readiness = await WaitForLlamaEndpointReadyAsync(endpointUrl, TimeSpan.FromSeconds(90), ct);
+                    display += $"{Environment.NewLine}{readiness.Message}";
+                    if (readiness.Ready && _settings.ChatProvider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await RunOnUiAsync(RefreshModelsInternal);
+                    }
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    var normalized = Regex.Replace(prompt.ToLowerInvariant(), @"[^a-z0-9.]+", " ").Trim();
+                    if (normalized.Contains("comfy", StringComparison.Ordinal))
+                    {
+                        _comfyUiRunning = !Regex.IsMatch(normalized, @"\b(stop|kill|shutdown|shut down|terminate|unload)\b");
+                    }
+                    else if (Regex.IsMatch(normalized, @"\b(stop|kill|shutdown|shut down|terminate|unload)\b"))
+                    {
+                        _desktopModelRunning = false;
+                        _desktopRunningModel = "";
+                        ModelControlStatusText.Text = "No model running. Select a batch file to launch.";
+                    }
+                    else if (modelPlan.EndpointPort.HasValue)
+                    {
+                        _desktopModelRunning = true;
+                        _desktopRunningModel = modelPlan.Description;
+                        ModelControlStatusText.Text = modelPlan.Description;
+                    }
+
+                    AddSystemMessage(display);
+                    UpdateDesktopServiceControls();
+                });
+
+                return display;
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    ModelControlStatusText.Text = $"Control failed: {ex.Message}";
+                    AddSystemMessage($"Model/Comfy control failed: {ex.Message}");
+                    UpdateDesktopServiceControls();
+                });
+                throw;
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _serviceControlBusy = false;
+                    UpdateDesktopServiceControls();
+                });
+            }
+        }
+
         await _phoneRemoteChatLock.WaitAsync(ct);
         try
         {

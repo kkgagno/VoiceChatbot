@@ -88,7 +88,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -310,6 +313,13 @@ private fun ActiveConversationBar(state: UiState, viewModel: AppViewModel) {
 @Composable
 private fun Composer(state: UiState, viewModel: AppViewModel) {
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    fun sendAndHideKeyboard() {
+        viewModel.sendTypedMessage()
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+    }
     val docPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { uri ->
             val name = uri.lastPathSegment?.substringAfterLast('/') ?: "document"
@@ -365,10 +375,13 @@ private fun Composer(state: UiState, viewModel: AppViewModel) {
                 placeholder = { Text("Message or paste URL") },
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                keyboardActions = KeyboardActions(onSend = { viewModel.sendTypedMessage() })
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Send
+                ),
+                keyboardActions = KeyboardActions(onSend = { sendAndHideKeyboard() })
             )
-            IconButton(onClick = { viewModel.sendTypedMessage() }) {
+            IconButton(onClick = { sendAndHideKeyboard() }) {
                 Icon(Icons.Default.Send, "Send", tint = Color(0xFF39D7FF))
             }
         }
