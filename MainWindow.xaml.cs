@@ -3078,7 +3078,10 @@ public partial class MainWindow : Window
         var patterns = new[]
         {
             @"^(?:please\s+)?edit\s+(?:this\s+)?(?:image|picture|photo)?\s*(?:and|to)?\s*(.+)$",
-            @"^(?:please\s+)?(?:change|modify)\s+(?:this\s+)?(?:image|picture|photo)\s+(?:to|and)?\s*(.+)$"
+            @"^(?:please\s+)?(?:change|modify)\s+(?:this\s+)?(?:image|picture|photo)\s+(?:to|and)?\s*(.+)$",
+            @"^(?:please\s+)?(?:add|remove|replace|put|place|insert)\s+(.+)\s+(?:in|on|into|from|to)\s+(?:this\s+)?(?:image|picture|photo)$",
+            @"^(?:please\s+)?(?:make|turn)\s+(?:this\s+)?(?:image|picture|photo)\s+(.+)$",
+            @"^(?:please\s+)?(?:make|turn)\s+it\s+(.+)$"
         };
 
         foreach (var pattern in patterns)
