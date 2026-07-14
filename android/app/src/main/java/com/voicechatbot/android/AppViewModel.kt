@@ -111,6 +111,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun replaceAttachment(uri: Uri, name: String, mimeType: String, kind: AttachmentKind) {
+        _state.update {
+            it.copy(
+                attachments = it.attachments.filterNot { attachment -> attachment.kind == kind } +
+                    PendingAttachment(name = name, mimeType = mimeType, uri = uri, kind = kind)
+            )
+        }
+    }
+
     fun clearAttachments() = _state.update { it.copy(attachments = emptyList()) }
 
     suspend fun refreshStatus() {
@@ -256,6 +265,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun runComfy() {
         viewModelScope.launch {
             val s = _state.value
+            val hasImage = s.attachments.any { it.kind == AttachmentKind.Image }
+            val hasAudio = s.attachments.any { it.kind == AttachmentKind.Audio }
+            val missingInput = when (s.comfyAction) {
+                ComfyAction.CreateImage -> null
+                ComfyAction.EditImage, ComfyAction.CreateVideo ->
+                    if (hasImage) null else "Choose a source image first."
+                ComfyAction.CreateVideoWithAudio -> when {
+                    !hasImage && !hasAudio -> "Choose a source image and an audio file first."
+                    !hasImage -> "Choose a source image first."
+                    !hasAudio -> "Choose an audio file first."
+                    else -> null
+                }
+            }
+            if (s.comfyPrompt.isBlank()) {
+                fail(IllegalArgumentException("Enter a ComfyUI prompt first."))
+                return@launch
+            }
+            if (missingInput != null) {
+                fail(IllegalArgumentException(missingInput))
+                return@launch
+            }
             val command = when (s.comfyAction) {
                 ComfyAction.CreateImage -> "create an image of ${s.comfyPrompt}"
                 ComfyAction.EditImage -> "edit this image ${s.comfyPrompt}"

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -434,11 +435,30 @@ private fun ModelsScreen(state: UiState, viewModel: AppViewModel, showChat: () -
 @Composable
 private fun ComfyScreen(state: UiState, viewModel: AppViewModel) {
     val context = LocalContext.current
-    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        viewModel.clearAttachments()
-        uris.forEachIndexed { index, uri ->
-            viewModel.addAttachment(uri, "Comfy-${index + 1}.jpg", context.contentResolver.getType(uri) ?: "image/jpeg", AttachmentKind.Image)
-        }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        viewModel.replaceAttachment(
+            uri = uri,
+            name = context.displayName(uri, "Comfy-Source.jpg"),
+            mimeType = context.contentResolver.getType(uri) ?: "image/jpeg",
+            kind = AttachmentKind.Image
+        )
+    }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        viewModel.replaceAttachment(
+            uri = uri,
+            name = context.displayName(uri, "Comfy-Audio.wav"),
+            mimeType = context.contentResolver.getType(uri) ?: "audio/wav",
+            kind = AttachmentKind.Audio
+        )
+    }
+    val sourceImage = state.attachments.firstOrNull { it.kind == AttachmentKind.Image }
+    val sourceAudio = state.attachments.firstOrNull { it.kind == AttachmentKind.Audio }
+    val canRun = when (state.comfyAction) {
+        ComfyAction.CreateImage -> state.comfyPrompt.isNotBlank()
+        ComfyAction.EditImage, ComfyAction.CreateVideo -> state.comfyPrompt.isNotBlank() && sourceImage != null
+        ComfyAction.CreateVideoWithAudio -> state.comfyPrompt.isNotBlank() && sourceImage != null && sourceAudio != null
     }
     Column(
         Modifier
@@ -464,15 +484,47 @@ private fun ComfyScreen(state: UiState, viewModel: AppViewModel) {
             }
         }
         if (state.comfyAction != ComfyAction.CreateImage) {
-            OutlinedButton(onClick = { mediaPicker.launch("image/*") }) { Text("Choose source image") }
-            Text("${state.attachments.size} source attachment(s)", color = Color.Gray)
+            Text("Source media", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Image, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (sourceImage == null) "Choose Source Image" else "Replace Source Image")
+            }
+            sourceImage?.let { attachment ->
+                Text("Image: ${attachment.name}", color = Color.LightGray)
+            }
+
+            if (state.comfyAction == ComfyAction.CreateVideoWithAudio) {
+                OutlinedButton(onClick = { audioPicker.launch("audio/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Waves, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (sourceAudio == null) "Choose Audio" else "Replace Audio")
+                }
+                sourceAudio?.let { attachment ->
+                    Text("Audio: ${attachment.name}", color = Color.LightGray)
+                }
+                if (sourceImage == null || sourceAudio == null) {
+                    Text("A source image and an audio file are both required.", color = Color(0xFFFFB74D))
+                }
+            }
         }
-        Button(onClick = { viewModel.runComfy() }, enabled = !state.comfyBusy && state.comfyPrompt.isNotBlank()) {
+        Button(onClick = { viewModel.runComfy() }, enabled = !state.comfyBusy && canRun) {
             Text(if (state.comfyBusy) "Running..." else state.comfyAction.title)
         }
         state.comfyImageUri?.let { ResultImage(it) }
         state.comfyVideoUri?.let { Text("Video saved: $it", color = Color(0xFF39D7FF)) }
     }
+}
+
+private fun Context.displayName(uri: Uri, fallback: String): String {
+    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (column >= 0 && cursor.moveToFirst()) {
+            val name = cursor.getString(column)
+            if (!name.isNullOrBlank()) return name
+        }
+    }
+    return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: fallback
 }
 
 @Composable
