@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -96,6 +98,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -511,8 +514,11 @@ private fun ComfyScreen(state: UiState, viewModel: AppViewModel) {
         Button(onClick = { viewModel.runComfy() }, enabled = !state.comfyBusy && canRun) {
             Text(if (state.comfyBusy) "Running..." else state.comfyAction.title)
         }
+        if (state.comfyResultMessage.isNotBlank()) {
+            Text(state.comfyResultMessage, color = Color(0xFF39D7FF))
+        }
         state.comfyImageUri?.let { ResultImage(it) }
-        state.comfyVideoUri?.let { Text("Video saved: $it", color = Color(0xFF39D7FF)) }
+        state.comfyVideoUri?.let { ResultVideo(it) }
     }
 }
 
@@ -667,6 +673,38 @@ private fun ResultImage(uri: Uri) {
             .height(360.dp)
             .background(Color.Black, RoundedCornerShape(18.dp)),
         contentScale = ContentScale.Fit
+    )
+}
+
+@Composable
+private fun ResultVideo(uri: Uri) {
+    val context = LocalContext.current
+    AndroidView(
+        factory = {
+            VideoView(context).apply {
+                val controls = MediaController(context)
+                controls.setAnchorView(this)
+                setMediaController(controls)
+                tag = uri.toString()
+                setVideoURI(uri)
+                setOnPreparedListener { player ->
+                    player.isLooping = false
+                    seekTo(1)
+                }
+            }
+        },
+        update = { view ->
+            if (view.tag != uri.toString()) {
+                view.stopPlayback()
+                view.tag = uri.toString()
+                view.setVideoURI(uri)
+                view.seekTo(1)
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .background(Color.Black, RoundedCornerShape(18.dp))
     )
 }
 

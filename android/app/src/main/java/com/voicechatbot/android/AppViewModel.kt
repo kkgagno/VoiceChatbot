@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.CalendarContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -42,6 +44,7 @@ data class UiState(
     val comfyBusy: Boolean = false,
     val comfyImageUri: Uri? = null,
     val comfyVideoUri: Uri? = null,
+    val comfyResultMessage: String = "",
     val kreaPrompt: String = "",
     val kreaEnableLora: Boolean = false,
     val kreaSelectedLora: String = "",
@@ -292,21 +295,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 ComfyAction.CreateVideo -> "create a ${s.comfySeconds} second video ${s.comfyPrompt}"
                 ComfyAction.CreateVideoWithAudio -> "create a ${s.comfySeconds} second video with audio ${s.comfyPrompt}"
             }
-            _state.update { it.copy(comfyBusy = true) }
+            _state.update {
+                it.copy(
+                    comfyBusy = true,
+                    comfyImageUri = null,
+                    comfyVideoUri = null,
+                    comfyResultMessage = "Running ${s.comfyAction.title} on the PC..."
+                )
+            }
             runCatching {
                 val response = requireApi().message(command, s.attachments, false)
                 val imageUri = response.imageUrl?.let { downloadToMedia(it, "VoiceChatbot-${System.currentTimeMillis()}.jpg", "image/jpeg") }
                 val videoUri = response.videoUrl?.let { downloadToMedia(it, "VoiceChatbot-${System.currentTimeMillis()}.mp4", "video/mp4") }
+                val resultMessage = when {
+                    videoUri != null -> "Video ready. It has also been saved to Movies/VoiceChatbot."
+                    imageUri != null -> "Image ready. It has also been saved to Pictures/VoiceChatbot."
+                    else -> response.response.ifBlank { "The PC completed the request but returned no media file." }
+                }
                 _state.update {
                     it.copy(
                         comfyBusy = false,
                         comfyImageUri = imageUri,
                         comfyVideoUri = videoUri,
+                        comfyResultMessage = resultMessage,
                         messages = it.messages + ChatEntry(role = Role.Assistant, text = response.response.ifBlank { "ComfyUI result ready." })
                     )
                 }
             }.onFailure {
-                _state.update { old -> old.copy(comfyBusy = false) }
+                _state.update { old -> old.copy(comfyBusy = false, comfyResultMessage = shortError(it)) }
                 fail(it)
             }
         }
@@ -420,9 +436,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val parent = if (mimeType.startsWith("video")) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "$parent/VoiceChatbot")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
         }
         val uri = resolver.insert(collection, values) ?: return null
-        resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+        try {
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+            }
+        } catch (error: Throwable) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
         return uri
     }
 

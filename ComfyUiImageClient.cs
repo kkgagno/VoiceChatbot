@@ -16,8 +16,6 @@ namespace VoiceChatbot;
 
 public sealed class ComfyUiImageClient : IDisposable
 {
-    private const int DefaultVideoWidth = 768;
-    private const int DefaultVideoHeight = 1344;
     private const string QwenEditTwoImageWorkflowName = "image_qwen_image_edit_2511_2";
     private const string Krea2WorkflowName = "image_krea2_turbo_t2i_OFFICIAL";
 
@@ -1568,7 +1566,6 @@ public sealed class ComfyUiImageClient : IDisposable
     {
         seconds = Math.Clamp(seconds, 1, 30);
         fps = Math.Clamp(fps, 1, 60);
-        var frames = Math.Clamp(seconds * fps, 1, 720);
 
         foreach (var node in workflow.Values.OfType<Dictionary<string, object>>())
         {
@@ -1595,26 +1592,25 @@ public sealed class ComfyUiImageClient : IDisposable
                     && IsAudioLoaderInput(lowerClass, lowerKey))
                     inputs[key] = audioName;
 
-                if (IsPromptInput(lowerClass, lowerTitle, lowerKey, inputs[key]))
+                // The official workflow contains a separate CLIPTextEncode negative prompt.
+                // Patching it with the positive motion prompt creates audio over a frozen image.
+                if (IsVideoPromptInput(lowerClass, lowerTitle, lowerKey, inputs[key]))
                     inputs[key] = prompt;
 
                 if (lowerKey is "seed" or "noise_seed")
                     inputs[key] = Random.Shared.NextInt64(1, long.MaxValue);
 
-                if (lowerKey is "seconds" or "duration" or "duration_seconds" or "video_seconds")
+                // Change only the exposed controls. Keep the workflow's width, height,
+                // duration, fps, and frame-count links intact on downstream processing nodes.
+                if (lowerClass.Contains("primitivefloat")
+                    && lowerTitle.Contains("duration")
+                    && lowerKey == "value")
                     inputs[key] = seconds;
 
-                if (IsVideoWidthInput(lowerTitle, lowerKey))
-                    inputs[key] = DefaultVideoWidth;
-
-                if (IsVideoHeightInput(lowerTitle, lowerKey))
-                    inputs[key] = DefaultVideoHeight;
-
-                if (lowerKey is "fps" or "frame_rate" or "framerate")
+                if (lowerClass.Contains("primitiveint")
+                    && lowerTitle.Contains("frame rate")
+                    && lowerKey == "value")
                     inputs[key] = fps;
-
-                if (lowerKey is "frames" or "num_frames" or "frame_count" or "length" or "video_frames")
-                    inputs[key] = frames;
 
                 if (lowerKey is "filename_prefix" or "prefix")
                     inputs[key] = "VoiceChatbot_LTX2_3_IA2V";
@@ -1788,20 +1784,19 @@ public sealed class ComfyUiImageClient : IDisposable
             || lowerKey.Contains("prompt_text");
     }
 
-    private static bool IsVideoWidthInput(string lowerTitle, string lowerKey)
+    private static bool IsVideoPromptInput(string lowerClass, string lowerTitle, string lowerKey, object value)
     {
-        if (lowerKey is "width" or "resize_type.width")
+        if (value is not string)
+            return false;
+        if (lowerClass.Contains("negative") || lowerTitle.Contains("negative") || lowerKey.Contains("negative"))
+            return false;
+
+        // Exposed positive prompt control in the official LTX 2.3 workflows.
+        if (lowerClass.Contains("primitivestring") && lowerTitle == "prompt" && lowerKey == "value")
             return true;
 
-        return lowerTitle is "width" && lowerKey is "value";
-    }
-
-    private static bool IsVideoHeightInput(string lowerTitle, string lowerKey)
-    {
-        if (lowerKey is "height" or "resize_type.height")
-            return true;
-
-        return lowerTitle is "height" && lowerKey is "value";
+        // Compatibility with API-format workflows that expose an explicit positive field.
+        return lowerKey is "prompt" or "positive" or "positive_prompt" or "prompt_text";
     }
 
     private static bool LooksLikeNegativePrompt(string text)

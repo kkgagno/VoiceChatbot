@@ -1450,7 +1450,9 @@ public partial class MainWindow : Window
 
     private async Task<int> GetContextTokensForRequestAsync(string model, CancellationToken ct)
     {
-        return await _ollama.GetModelContextTokensAsync(model, ct) ?? CodeContextTokens;
+        return await Task.Run(
+            async () => await _ollama.GetModelContextTokensAsync(model, ct).ConfigureAwait(false),
+            ct) ?? CodeContextTokens;
     }
 
     private List<ChatMessage> BuildMessagesForModel(string currentUserText, IEnumerable<string> currentImagesBase64)
@@ -2130,6 +2132,7 @@ public partial class MainWindow : Window
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText);
             var maxTokens = GetMaxTokensForRequest(modelUserText, model);
+            var temperature = TempSlider.Value;
             var contextTokens = await GetContextTokensForRequestAsync(model, _chatCts.Token);
             var droppedContextMessages = TrimMessagesToContextBudget(messagesForModel, systemPrompt, contextTokens, maxTokens);
             AddTokenEstimateDiagnostic(userText, messagesForModel, systemPrompt, contextTokens, maxTokens, droppedContextMessages);
@@ -2139,92 +2142,139 @@ public partial class MainWindow : Window
                 // Stream
                 SetUIState("thinking", "Thinking...");
                 var fullText = new StringBuilder();
-                await _ollama.ChatStreamAsync(
-                    model,
-                    messagesForModel,
-                    systemPrompt,
-                    TempSlider.Value,
-                    maxTokens,
-                    contextTokens,
-                    onToken: token =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            fullText.Append(token);
-                            var streamingText = fullText.ToString();
-                            var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
-                            assistantMessage.Body.Text = CleanDisplayText(streamingText, preserveCodeBlocks: shouldPreserveCode);
-                            ScrollChat();
-                        }, DispatcherPriority.Background);
-                    },
-                    onComplete: async full =>
+                var streamTextLock = new object();
+                var streamUpdateTimer = Stopwatch.StartNew();
+                var streamUpdatePending = 0;
+
+                void QueueStreamingUiUpdate(bool force = false)
+                {
+                    if (!force && streamUpdateTimer.ElapsedMilliseconds < 50)
+                        return;
+
+                    if (Interlocked.Exchange(ref streamUpdatePending, 1) == 1)
+                        return;
+
+                    streamUpdateTimer.Restart();
+                    _ = Dispatcher.BeginInvoke(() =>
                     {
                         try
                         {
-                            await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
+                            string streamingText;
+                            lock (streamTextLock)
+                                streamingText = fullText.ToString();
 
-                            var completed = await CompleteCodeArtifactIfNeededAsync(
-                                full,
-                                modelUserText,
-                                messagesForModel,
-                                systemPrompt,
-                                model,
-                                TempSlider.Value,
-                                maxTokens,
-                                contextTokens,
-                                _chatCts.Token);
-
-                            Dispatcher.Invoke(() =>
-                            {
-                                var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
-                                var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
-                                if (!string.IsNullOrWhiteSpace(cleaned))
-                                {
-                                    SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
-                                    _history.Add("assistant", cleaned);
-                                    SpeakLastResponse(cleaned, assistantMessage);
-                                }
-                                else
-                                {
-                                    SetUIState("idle", "Ready");
-                                }
-                            });
+                            var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
+                            assistantMessage.Body.Text = CleanDisplayText(streamingText, preserveCodeBlocks: shouldPreserveCode);
+                            ScrollChat();
                         }
-                        catch (Exception ex)
+                        finally
                         {
-                            Dispatcher.Invoke(() =>
+                            Interlocked.Exchange(ref streamUpdatePending, 0);
+                        }
+                    }, DispatcherPriority.Background);
+                }
+
+                await Task.Run(
+                    async () => await _ollama.ChatStreamAsync(
+                        model,
+                        messagesForModel,
+                        systemPrompt,
+                        temperature,
+                        maxTokens,
+                        contextTokens,
+                        onToken: token =>
+                        {
+                            lock (streamTextLock)
+                                fullText.Append(token);
+                            QueueStreamingUiUpdate();
+                        },
+                        onComplete: async full =>
+                        {
+                            try
+                            {
+                                lock (streamTextLock)
+                                {
+                                    fullText.Clear();
+                                    fullText.Append(full);
+                                }
+                                QueueStreamingUiUpdate(force: true);
+
+                                await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
+
+                                var completed = await CompleteCodeArtifactIfNeededAsync(
+                                    full,
+                                    modelUserText,
+                                    messagesForModel,
+                                    systemPrompt,
+                                    model,
+                                    temperature,
+                                    maxTokens,
+                                    contextTokens,
+                                    _chatCts.Token);
+
+                                string? speechToPlay = null;
+                                await Dispatcher.InvokeAsync(() =>
+                                {
+                                    var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
+                                    var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
+                                    if (!string.IsNullOrWhiteSpace(cleaned))
+                                    {
+                                        SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
+                                        _history.Add("assistant", cleaned);
+                                        speechToPlay = cleaned;
+                                    }
+                                    else
+                                    {
+                                        SetUIState("idle", "Ready");
+                                    }
+                                }, DispatcherPriority.Background);
+
+                                if (!string.IsNullOrWhiteSpace(speechToPlay))
+                                {
+                                    await Dispatcher.BeginInvoke(() =>
+                                    {
+                                        SpeakLastResponse(speechToPlay, assistantMessage);
+                                    }, DispatcherPriority.Background);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _ = Dispatcher.BeginInvoke(() =>
+                                {
+                                    assistantMessage.Body.Text = $"Error: {ex.Message}";
+                                    AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
+                                    SetUIState("idle", "Ready");
+                                }, DispatcherPriority.Background);
+                            }
+                        },
+                        onError: ex =>
+                        {
+                            _ = Dispatcher.BeginInvoke(() =>
                             {
                                 assistantMessage.Body.Text = $"Error: {ex.Message}";
-                                AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
+                                AddSystemMessage($"API Error: {ex.Message}");
                                 SetUIState("idle", "Ready");
-                            });
-                        }
-                    },
-                    onError: ex =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            assistantMessage.Body.Text = $"Error: {ex.Message}";
-                            AddSystemMessage($"API Error: {ex.Message}");
-                            SetUIState("idle", "Ready");
-                        });
-                    },
-                    ct: _chatCts.Token
-                );
+                            }, DispatcherPriority.Background);
+                        },
+                        ct: _chatCts.Token
+                    ).ConfigureAwait(false),
+                    _chatCts.Token);
             }
             else
             {
                 // Non-streaming
                 SetUIState("processing", "Generating...");
-                var response = await _ollama.ChatAsync(
-                    model,
-                    messagesForModel,
-                    systemPrompt,
-                    TempSlider.Value,
-                    maxTokens,
-                    _chatCts.Token,
-                    contextTokens
-                );
+                var response = await Task.Run(
+                    async () => await _ollama.ChatAsync(
+                        model,
+                        messagesForModel,
+                        systemPrompt,
+                        temperature,
+                        maxTokens,
+                        _chatCts.Token,
+                        contextTokens
+                    ).ConfigureAwait(false),
+                    _chatCts.Token);
                 AddBackendFinishDiagnostic("Backend usage", response.Length, maxTokens, contextTokens);
 
                 response = await CompleteCodeArtifactIfNeededAsync(
@@ -2233,7 +2283,7 @@ public partial class MainWindow : Window
                     messagesForModel,
                     systemPrompt,
                     model,
-                    TempSlider.Value,
+                    temperature,
                     maxTokens,
                     contextTokens,
                     _chatCts.Token);
@@ -3660,16 +3710,16 @@ public partial class MainWindow : Window
 
     private void OnSpeechRecognized(string text)
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             AddSystemMessage($"You said: \"{text}\"");
             SendMessage(text);
-        });
+        }, DispatcherPriority.Background);
     }
 
     private void OnSpeechFinished()
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             SetUIState("idle", "Ready");
             _speech.ReadyForNextSpeech();
@@ -3677,9 +3727,9 @@ public partial class MainWindow : Window
             if (_autoListening)
             {
                 // Restart recording for next utterance
-                Task.Delay(100).ContinueWith(_ =>
+                Task.Delay(100).ContinueWith(_ignored =>
                 {
-                    Dispatcher.Invoke(() =>
+                    Dispatcher.BeginInvoke(() =>
                     {
                         if (_autoListening && !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
                         {
@@ -3688,22 +3738,22 @@ public partial class MainWindow : Window
 
                             _speech.StartListening();
                         }
-                    });
+                    }, DispatcherPriority.Background);
                 });
             }
-        });
+        }, DispatcherPriority.Background);
     }
 
     private void OnListenTimedOut()
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             if (_autoListening)
             {
                 // No speech heard, restart listening
-                Task.Delay(300).ContinueWith(_ =>
+                Task.Delay(300).ContinueWith(_ignored =>
                 {
-                    Dispatcher.Invoke(() =>
+                    Dispatcher.BeginInvoke(() =>
                     {
                         if (_autoListening && !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
                         {
@@ -3712,14 +3762,14 @@ public partial class MainWindow : Window
 
                             _speech.StartListening();
                         }
-                    });
+                    }, DispatcherPriority.Background);
                 });
             }
             else
             {
                 SetUIState("idle", "Ready");
             }
-        });
+        }, DispatcherPriority.Background);
     }
 
     private void OnSpeechLog(string message)
@@ -3732,7 +3782,7 @@ public partial class MainWindow : Window
 
     private void OnVoiceStateChanged(VoiceState state)
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             switch (state)
             {
@@ -3749,7 +3799,7 @@ public partial class MainWindow : Window
                 case VoiceState.Processing:
                     StateIndicator.Fill = FindResource("WarningBrush") as SolidColorBrush;
                     StateLabel.Text = "Processing...";
-                    ActivityLabel.Text = "Sending to Ollama...";
+                    ActivityLabel.Text = "Thinking...";
                     break;
                 case VoiceState.Speaking:
                     StateIndicator.Fill = FindResource("SpeakingBrush") as SolidColorBrush;
@@ -3757,7 +3807,7 @@ public partial class MainWindow : Window
                     ActivityLabel.Text = "";
                     break;
             }
-        });
+        }, DispatcherPriority.Background);
     }
 
     // ==================== Button Handlers ====================
