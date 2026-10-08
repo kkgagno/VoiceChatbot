@@ -12,8 +12,8 @@ using Microsoft.Win32;
 namespace VoiceChatbot;
 
 // Knowledge folder ("Knowledge Folder" expander). The app indexes the owner's documents in the
-// background (KnowledgeService + Core/KnowledgeIndex) and, when the switch is on, adds the excerpts
-// that best match each desktop or phone message to that request as a system context message.
+// background (KnowledgeService + Core/KnowledgeIndex) and, when the switch is on, appends the
+// excerpts that best match each desktop or phone message to that message, like attached documents.
 public partial class MainWindow
 {
     // Startup catch-up indexing waits a little so it does not compete with loading models and speech.
@@ -253,8 +253,7 @@ public partial class MainWindow
 
     /// <summary>
     /// When the knowledge folder is on, adds the excerpts that best match the user's message to this
-    /// request as a system message just before the current user message, and notes in the chat which
-    /// files they came from. Shared by the desktop chat and the phone remote and safe on any thread.
+    /// request (appended to the current user message), and notes in the chat which files they came from. Shared by the desktop chat and the phone remote and safe on any thread.
     /// Best effort: if anything goes wrong the request simply goes without excerpts.
     /// </summary>
     private async Task AddKnowledgeContextAsync(List<ChatMessage> messages, string? userText, CancellationToken ct)
@@ -272,13 +271,8 @@ public partial class MainWindow
                 ? GetMemoryQueryText(userText)
                 : await Dispatcher.InvokeAsync(() => GetMemoryQueryText(userText));
             var hits = await Task.Run(() => _knowledge.Search(query, folder, maxChunks), ct);
-            if (hits.Count == 0)
+            if (hits.Count == 0 || !AppendToCurrentUserMessage(messages, KnowledgeIndex.FormatContext(hits, folder)))
                 return;
-
-            InsertTransientContexts(messages, new[]
-            {
-                new ChatMessage { Role = "system", Content = KnowledgeIndex.FormatContext(hits, folder) }
-            });
 
             var note = KnowledgeIndex.FormatNote(hits);
             if (Dispatcher.CheckAccess())
@@ -294,5 +288,31 @@ public partial class MainWindow
         {
             Debug.WriteLine($"Knowledge search failed: {ex.Message}");
         }
+    }
+
+    // The excerpts ride along in the user's turn, like attached documents. A system message in the
+    // middle of the chat breaks strict chat templates (Gemma under llama.cpp --jinja rejects roles
+    // that do not alternate), and document text should not get system-prompt authority.
+    private static bool AppendToCurrentUserMessage(List<ChatMessage> messages, string context)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+            return false;
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (!messages[i].Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            messages[i] = new ChatMessage
+            {
+                Role = messages[i].Role,
+                Content = $"{messages[i].Content}\n\n{context}",
+                ImagesBase64 = messages[i].ImagesBase64,
+                Timestamp = messages[i].Timestamp
+            };
+            return true;
+        }
+
+        return false;
     }
 }

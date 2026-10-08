@@ -20,16 +20,20 @@ public class ChatMessage
 
 public sealed class ChatMessageAddedEventArgs : EventArgs
 {
-    public ChatMessageAddedEventArgs(string role, string content)
+    public ChatMessageAddedEventArgs(string role, string content, ChatMessage? message = null)
     {
         Role = role;
         Content = content;
+        Message = message;
     }
 
     public string Role { get; }
 
     /// <summary>The full text, before the history's own truncation of very large messages.</summary>
     public string Content { get; }
+
+    /// <summary>The entry that was added to the history (so a handler can remove it again).</summary>
+    public ChatMessage? Message { get; }
 }
 
 public class ConversationHistory
@@ -70,18 +74,19 @@ public class ConversationHistory
 
     public void Add(string role, string content, IEnumerable<string>? imagesBase64)
     {
-        _messages.Add(new ChatMessage
+        var message = new ChatMessage
         {
             Role = role,
             Content = NormalizeStoredContent(content),
             ImagesBase64 = imagesBase64?.Where(i => !string.IsNullOrWhiteSpace(i)).ToList() ?? new List<string>()
-        });
+        };
+        _messages.Add(message);
         Trim();
 
         if (role.Equals("user", StringComparison.OrdinalIgnoreCase) ||
             role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
         {
-            MessageAdded?.Invoke(this, new ChatMessageAddedEventArgs(role, content ?? ""));
+            MessageAdded?.Invoke(this, new ChatMessageAddedEventArgs(role, content ?? "", message));
         }
     }
 

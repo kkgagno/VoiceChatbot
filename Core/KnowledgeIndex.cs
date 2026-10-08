@@ -368,7 +368,7 @@ public sealed class KnowledgeIndex
 
     // ==================== Prompt text ====================
 
-    /// <summary>The system context message for the model: a short instruction, then each excerpt under its file name.</summary>
+    /// <summary>The context block for the model (appended to the user message): a short instruction, then each excerpt under its file name.</summary>
     public static string FormatContext(IReadOnlyList<KnowledgeHit> hits, string? folder = null)
     {
         if (hits == null || hits.Count == 0)

@@ -102,33 +102,40 @@ public partial class MainWindow
     private void OnHistoryMessageAdded(object? sender, ChatMessageAddedEventArgs e)
     {
         if (Dispatcher.CheckAccess())
-            RecordHistoryMessage(e.Role, e.Content);
+            RecordHistoryMessage(e);
         else
-            Dispatcher.BeginInvoke(() => RecordHistoryMessage(e.Role, e.Content));
+            Dispatcher.BeginInvoke(() => RecordHistoryMessage(e));
     }
 
-    private void RecordHistoryMessage(string role, string content)
+    private void RecordHistoryMessage(ChatMessageAddedEventArgs e)
     {
         try
         {
+            var role = e.Role;
+            var content = e.Content;
             var isUser = role.Equals("user", StringComparison.OrdinalIgnoreCase);
             var imagePaths = isUser ? _pendingUserImagePaths : null;
             if (isUser)
                 _pendingUserImagePaths = new List<string>();
 
-            if (_restoringConversation || !_settings.SaveConversationHistory)
+            if (_restoringConversation)
+                return;
+
+            // The reply belongs to a conversation the user has already left (a reply that finished
+            // just as the chat was switched): keep it out of this chat's file and model context.
+            if (!isUser && _lastAssistantBubble != null && _lastAssistantBubbleEpoch != _conversationEpoch)
+            {
+                if (e.Message != null)
+                    _history.RemoveWhere(m => ReferenceEquals(m, e.Message));
+                return;
+            }
+
+            if (!_settings.SaveConversationHistory)
                 return;
 
             AssistantMessageUi? bubble = null;
-            if (!isUser)
-            {
-                // The reply belongs to a conversation the user has already left.
-                if (_lastAssistantBubble != null && _lastAssistantBubbleEpoch != _conversationEpoch)
-                    return;
-
-                if (_lastAssistantBubble != null && !_recordedBubbles.TryGetValue(_lastAssistantBubble, out _))
-                    bubble = _lastAssistantBubble;
-            }
+            if (!isUser && _lastAssistantBubble != null && !_recordedBubbles.TryGetValue(_lastAssistantBubble, out _))
+                bubble = _lastAssistantBubble;
 
             var now = DateTime.UtcNow;
             _currentConversation ??= ConversationStore.Create(now, ModelCombo.Text?.Trim() ?? "", _settings.ActivePersona);
@@ -202,9 +209,8 @@ public partial class MainWindow
                 else
                     message.ImagePaths.Add(path);
 
-                // Speech can finish after the user moved on; save whichever conversation owns the bubble.
                 if (_settings.SaveConversationHistory)
-                    QueueConversationSave(recorded.Conversation);
+                    SaveLateBubbleMedia(recorded);
                 return;
             }
 
@@ -224,6 +230,65 @@ public partial class MainWindow
     {
         var snapshot = conversation.Clone();
         _ = _conversationIo.Enqueue(() => SaveConversationSnapshot(snapshot));
+    }
+
+    /// <summary>
+    /// Saves audio/images that reached a bubble after its text was recorded. Speech can finish after
+    /// the user moved on, so a chat that is no longer open is patched in its file rather than
+    /// re-saved from the old copy in memory, which would undo a rename or drop messages added after
+    /// the chat was reopened.
+    /// </summary>
+    private void SaveLateBubbleMedia(RecordedMessage recorded)
+    {
+        var current = _currentConversation;
+        if (ReferenceEquals(current, recorded.Conversation))
+        {
+            QueueConversationSave(current);
+            return;
+        }
+
+        var source = recorded.Message.Clone();
+        if (current != null && current.Id == recorded.Conversation.Id)
+        {
+            // The chat was reopened since: copy the media onto the reopened copy of the message.
+            if (CopyMessageMedia(source, current.Messages))
+                QueueConversationSave(current);
+            return;
+        }
+
+        var id = recorded.Conversation.Id;
+        _ = _conversationIo.Enqueue(() =>
+        {
+            try
+            {
+                lock (_deletedConversationIds)
+                {
+                    if (_deletedConversationIds.Contains(id))
+                        return;
+                }
+
+                var saved = _conversationStore.Load(id);
+                if (saved != null && CopyMessageMedia(source, saved.Messages))
+                    _conversationStore.Save(saved);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Conversation history media save failed: {ex.Message}");
+            }
+        });
+    }
+
+    // Finds the stored copy of a message (same role and time) and gives it the source's audio/images.
+    private static bool CopyMessageMedia(StoredMessage source, IEnumerable<StoredMessage> messages)
+    {
+        var target = messages.LastOrDefault(m => m.Role == source.Role && m.TimestampUtc == source.TimestampUtc);
+        if (target == null)
+            return false;
+
+        target.AudioPath = source.AudioPath ?? target.AudioPath;
+        foreach (var path in source.ImagePaths.Where(p => !target.ImagePaths.Contains(p)))
+            target.ImagePaths.Add(path);
+        return true;
     }
 
     // Runs on the history queue.
@@ -352,9 +417,7 @@ public partial class MainWindow
 
         StartFreshConversation();
         _currentConversation = conversation;
-        ChatPanel.Children.Clear();
-        RenderStoredConversation(conversation);
-
+        // Context first, so the model context always matches the open chat even if drawing fails.
         var context = conversation.Messages
             .TakeLast(_history.MaxMessages)
             .Select(m => new ChatMessage { Role = m.Role, Content = m.Content, Timestamp = m.TimestampUtc.ToLocalTime() })
@@ -362,6 +425,9 @@ public partial class MainWindow
         _history.Seed(context);
         _conversationStartTime = DateTime.Now;
         CloseHistoryPanel();
+
+        ChatPanel.Children.Clear();
+        RenderStoredConversation(conversation);
 
         AddSystemMessage(context.Count < conversation.Messages.Count
             ? $"Reopened \"{conversation.DisplayTitle}\". The last {context.Count} of {conversation.Messages.Count} messages are back in context."
@@ -383,7 +449,16 @@ public partial class MainWindow
                 var local = message.TimestampUtc.ToLocalTime();
                 if (message.Role == "user")
                 {
-                    AddUserMessage(message.Content, message.ImagePaths.Where(File.Exists).ToList(), local);
+                    try
+                    {
+                        AddUserMessage(message.Content, message.ImagePaths.Where(File.Exists).ToList(), local);
+                    }
+                    catch (Exception ex)
+                    {
+                        // A saved image that can no longer be decoded: show the text alone.
+                        Debug.WriteLine($"Could not restore user message images: {ex.Message}");
+                        AddUserMessage(message.Content, null, local);
+                    }
                     continue;
                 }
 
@@ -391,11 +466,18 @@ public partial class MainWindow
                 SetAssistantMessageText(bubble, message.Content, renderCodeBlocks: ContainsFencedCodeBlock(message.Content));
                 _recordedBubbles.AddOrUpdate(bubble, new RecordedMessage(conversation, message));
 
-                if (!string.IsNullOrWhiteSpace(message.AudioPath) && File.Exists(message.AudioPath))
-                    AddAudioButtons(bubble, message.AudioPath);
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(message.AudioPath) && File.Exists(message.AudioPath))
+                        AddAudioButtons(bubble, message.AudioPath);
 
-                foreach (var imagePath in message.ImagePaths.Where(File.Exists))
-                    AddGeneratedImageToAssistantMessage(bubble, imagePath);
+                    foreach (var imagePath in message.ImagePaths.Where(File.Exists))
+                        AddGeneratedImageToAssistantMessage(bubble, imagePath);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Could not restore assistant message media: {ex.Message}");
+                }
             }
 
             if (conversation.Messages.Count == 0)

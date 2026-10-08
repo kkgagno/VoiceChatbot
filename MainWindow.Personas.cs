@@ -107,6 +107,9 @@ public partial class MainWindow
 
     private void SelectPersonaModel(Persona persona)
     {
+        // Startup selects _settings.Model once the model list has loaded; a persona picked before
+        // that must not be undone by it.
+        _settings.Model = persona.Model;
         var listed = ModelCombo.Items.OfType<string>()
             .FirstOrDefault(m => string.Equals(m, persona.Model, StringComparison.OrdinalIgnoreCase));
         if (listed != null)
