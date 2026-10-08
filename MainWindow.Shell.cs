@@ -300,8 +300,14 @@ public partial class MainWindow
     {
         foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>())
         {
+            // A rendered reply hides its plain text box; copy what is shown.
+            if (child is UIElement { Visibility: not Visibility.Visible })
+                continue;
+
             if (child is TextBox box)
                 parts.Add(box.Text);
+            else if (child is RichTextBox rich)
+                parts.Add(new System.Windows.Documents.TextRange(rich.Document.ContentStart, rich.Document.ContentEnd).Text.Trim());
             else
                 CollectText(child, parts);
         }

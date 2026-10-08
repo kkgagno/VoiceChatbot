@@ -96,7 +96,7 @@ public partial class MainWindow
             _settings.MaxTokens,
             ct);
 
-        var cleaned = CleanDisplayText(summary);
+        var cleaned = MarkdownText.ToPlainText(CleanDisplayText(summary));
         if (!string.IsNullOrWhiteSpace(cleaned))
             AddSystemMessage("Live transcript summary updated. Main chat has the latest transcription context.");
 
@@ -155,7 +155,7 @@ public partial class MainWindow
                 var memory = new ConversationMemory
                 {
                     Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                    Summary = CleanDisplayText(summary),
+                    Summary = MarkdownText.ToPlainText(CleanDisplayText(summary)),
                     Model = ModelCombo.Text,
                     MessageCount = _history.GetAll().Count,
                     DurationMinutes = (DateTime.Now - _conversationStartTime).TotalMinutes

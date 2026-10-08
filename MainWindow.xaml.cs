@@ -255,6 +255,7 @@ public partial class MainWindow : Window
         SystemPromptBox.Text = _settings.SystemPrompt;
         TempSlider.Value = _settings.Temperature;
         ApplyToolSettings();
+        ApplyMarkdownSettings();
         if (_settings.SilenceTimeout < 2.0)
             _settings.SilenceTimeout = 2.4;
         SilenceSlider.Value = _settings.SilenceTimeout;
@@ -367,6 +368,7 @@ public partial class MainWindow : Window
         _settings.SystemPrompt = SystemPromptBox.Text;
         _settings.Temperature = TempSlider.Value;
         SaveToolSettings();
+        SaveMarkdownSettings();
         _settings.InputLanguage = InputLangCombo.Text;
         _settings.SilenceTimeout = SilenceSlider.Value;
         _settings.NoiseSuppression = (int)NoiseSlider.Value;
@@ -805,7 +807,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Strips noisy formatting from text while preserving command/code content.
+    /// Removes noise (emojis, hashtags, citation artifacts, stray tags such as &lt;unused49&gt;) from a
+    /// reply while keeping its Markdown: replies are rendered as Markdown on screen, and CleanSpeechText
+    /// strips the syntax before speaking. Code is left as written.
     /// </summary>
     private static string CleanDisplayText(string text, bool preserveCodeBlocks = false)
     {
@@ -818,64 +822,7 @@ public partial class MainWindow : Window
         if (preserveCodeBlocks)
             return RemoveCitationArtifacts(text).Trim();
 
-        // 1. Strip emojis using char ranges
-        var sb = new System.Text.StringBuilder();
-        foreach (char c in text)
-        {
-            var cat = char.GetUnicodeCategory(c);
-            if (cat == System.Globalization.UnicodeCategory.Surrogate ||
-                cat == System.Globalization.UnicodeCategory.OtherSymbol)
-                continue;
-            int ci = (int)c;
-            if (ci >= 0x2600 && ci <= 0x27BF) continue;   // Misc symbols
-            if (ci >= 0xFE00 && ci <= 0xFEFF) continue;   // Variation selectors
-            sb.Append(c);
-        }
-        string cleaned = sb.ToString();
-
-        // 2. Remove generated source citation artifacts.
-        cleaned = RemoveCitationArtifacts(cleaned);
-
-        // 3. Strip code fences but keep the commands/content inside them.
-        cleaned = Regex.Replace(cleaned, "```[a-zA-Z0-9_-]*\\s*([\\s\\S]*?)```", "$1");
-
-        // 4. Strip inline code
-        cleaned = Regex.Replace(cleaned, "`[^`]+`", m => m.Value.Trim('`'));
-
-        // 5. Strip bold **text** or __text__
-        cleaned = Regex.Replace(cleaned, "\\*\\*(.+?)\\*\\*", "$1");
-        cleaned = Regex.Replace(cleaned, "__(.+?)__", "$1");
-
-        // 6. Strip italic *text* or _text_
-        cleaned = Regex.Replace(cleaned, "\\*(.+?)\\*", "$1");
-        cleaned = Regex.Replace(cleaned, "(?<!\\w)_(.+?)_(?!\\w)", "$1");
-
-        // 7. Strip headings # ## ### etc
-        cleaned = Regex.Replace(cleaned, "^#{1,6}\\s+", "", RegexOptions.Multiline);
-
-        // 8. Strip hashtags
-        cleaned = Regex.Replace(cleaned, "#\\w+", "");
-
-        // 9. Strip horizontal rules
-        cleaned = Regex.Replace(cleaned, "^[-*]{3,}\\s*$", "", RegexOptions.Multiline);
-
-        // 10. Strip bullet points
-        cleaned = Regex.Replace(cleaned, "^[\\-\\*]\\s+", "", RegexOptions.Multiline);
-
-        // 11. Strip numbered lists
-        cleaned = Regex.Replace(cleaned, "^\\d+\\.\\s+", "", RegexOptions.Multiline);
-
-        // 12. Strip links [text](url)
-        cleaned = Regex.Replace(cleaned, "\\[([^\\]]+)\\]\\([^)]+\\)", "$1");
-
-        // 13. Strip HTML tags
-        cleaned = Regex.Replace(cleaned, "<[^>]+>", "");
-
-        // 14. Clean up extra whitespace
-        cleaned = Regex.Replace(cleaned, "\\n{3,}", "\n\n");
-        cleaned = Regex.Replace(cleaned, "  +", " ");
-
-        return cleaned.Trim();
+        return MarkdownText.CleanForDisplay(RemoveCitationArtifacts(text));
     }
 
     private static bool LooksLikeOnlyUnusedTokens(string text)
@@ -914,6 +861,9 @@ public partial class MainWindow : Window
             : text;
 
         cleaned = RemoveCitationArtifacts(cleaned);
+
+        // Replies keep their Markdown for display; none of it should be read aloud.
+        cleaned = MarkdownText.StripForSpeech(cleaned);
 
         // Avoid reading raw URLs aloud.
         cleaned = Regex.Replace(cleaned, "https?://\\S+", "");
@@ -1182,8 +1132,9 @@ public partial class MainWindow : Window
 
         // Remove common leftover citation fragments.
         cleaned = Regex.Replace(cleaned, "\\b\\d+†L\\d+(?:-L\\d+)?\\b", "");
-        cleaned = Regex.Replace(cleaned, "\\s+([,.!?;:])", "$1");
-        cleaned = Regex.Replace(cleaned, "[ \\t]{2,}", " ");
+        // Only spaces inside a line: indentation (nested Markdown lists, code) and line breaks stay.
+        cleaned = Regex.Replace(cleaned, "(?<=\\S)[ \\t]+([,.!?;:])", "$1");
+        cleaned = Regex.Replace(cleaned, "(?<=\\S)[ \\t]{2,}", " ");
 
         return cleaned.Trim();
     }

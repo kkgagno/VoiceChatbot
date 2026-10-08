@@ -820,7 +820,7 @@ public partial class MainWindow
                             fullText.Append(token);
                             var streamingText = fullText.ToString();
                             var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
-                            assistantMessage.Body.Text = CleanDisplayText(streamingText, preserveCodeBlocks: shouldPreserveCode);
+                            assistantMessage.Body.Text = GetStreamingDisplayText(streamingText, shouldPreserveCode);
                             ScrollChat();
                         }, DispatcherPriority.Background);
                     },

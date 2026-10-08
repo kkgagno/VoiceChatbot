@@ -209,80 +209,8 @@ public partial class MainWindow
         return new AssistantMessageUi(body, content, actions);
     }
 
-    private void SetAssistantMessageText(AssistantMessageUi assistantMessage, string text, bool renderCodeBlocks = false)
-    {
-        if (!renderCodeBlocks || !ContainsFencedCodeBlock(text))
-        {
-            assistantMessage.Body.Text = text;
-            return;
-        }
-
-        RenderAssistantMessageWithCodeBlocks(assistantMessage, text);
-        ScrollChat();
-    }
-
-    private void RenderAssistantMessageWithCodeBlocks(AssistantMessageUi assistantMessage, string text)
-    {
-        assistantMessage.Content.Children.Clear();
-
-        var foreground = FindResource("TextPrimaryBrush") as Brush ?? Brushes.Black;
-        var position = 0;
-
-        while (position < text.Length)
-        {
-            var fenceStart = text.IndexOf("```", position, StringComparison.Ordinal);
-            if (fenceStart < 0)
-            {
-                AddAssistantTextPart(assistantMessage.Content, text[position..], foreground);
-                break;
-            }
-
-            if (fenceStart > position)
-                AddAssistantTextPart(assistantMessage.Content, text[position..fenceStart], foreground);
-
-            var codeStart = fenceStart + 3;
-            var lineEnd = text.IndexOf('\n', codeStart);
-            string language;
-            if (lineEnd >= 0)
-            {
-                language = text[codeStart..lineEnd].Trim();
-                codeStart = lineEnd + 1;
-            }
-            else
-            {
-                language = text[codeStart..].Trim();
-                codeStart = text.Length;
-            }
-
-            if (!Regex.IsMatch(language, "^[A-Za-z0-9_+.#-]*$"))
-            {
-                language = "";
-                codeStart = fenceStart + 3;
-            }
-
-            var fenceEnd = text.IndexOf("```", codeStart, StringComparison.Ordinal);
-            var codeEnd = fenceEnd >= 0 ? fenceEnd : text.Length;
-            var code = text[codeStart..codeEnd].Trim('\r', '\n');
-            AddAssistantCodeBlock(assistantMessage.Content, language, code);
-
-            if (fenceEnd < 0)
-                break;
-
-            position = fenceEnd + 3;
-        }
-    }
-
     private static bool ContainsFencedCodeBlock(string text) =>
         !string.IsNullOrWhiteSpace(text) && text.Contains("```", StringComparison.Ordinal);
-
-    private void AddAssistantTextPart(StackPanel content, string text, Brush foreground)
-    {
-        var trimmed = text.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed))
-            return;
-
-        content.Children.Add(CreateSelectableText(trimmed, foreground));
-    }
 
     private void AddAssistantCodeBlock(StackPanel content, string language, string code)
     {

@@ -503,11 +503,16 @@ public partial class MainWindow
             hermesCliTimeout.CancelAfter(hermesTimeout + TimeSpan.FromSeconds(10));
             var cliResult = await _hermesSsh.RunHermesCliAsync(hermesPromptForCli, hermesTimeout, hermesMaxTurns, hermesCliTimeout.Token);
             var cleaned = CleanDisplayText(cliResult.Stdout);
+            // Hermes' own answer is rendered as Markdown; timeouts and raw command output stay plain text.
+            var isHermesReply = !cliResult.TimedOut && !string.IsNullOrWhiteSpace(cleaned);
             if (cliResult.TimedOut)
                 cleaned = BuildHermesTimeoutMessage(hermesPrompt);
             if (string.IsNullOrWhiteSpace(cleaned))
                 cleaned = cliResult.ToDisplayText();
-            assistantMessage.Body.Text = cleaned;
+            if (isHermesReply)
+                SetAssistantMessageText(assistantMessage, cleaned);
+            else
+                assistantMessage.Body.Text = cleaned;
             _history.Add("assistant", $"Hermes result:\n{cleaned}");
             SpeakLastResponse(cleaned, assistantMessage);
             if (isModelControl || IsHermesApproval(hermesPrompt))
@@ -566,7 +571,7 @@ public partial class MainWindow
         {
             var response = await _piAgent.AskAsync(piPrompt, _chatCts.Token);
             var cleaned = CleanDisplayText(response);
-            assistantMessage.Body.Text = cleaned;
+            SetAssistantMessageText(assistantMessage, cleaned);
             _history.Add("assistant", $"Pi result:\n{cleaned}");
             SpeakLastResponse(cleaned, assistantMessage);
         }

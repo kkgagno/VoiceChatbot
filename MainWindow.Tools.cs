@@ -180,7 +180,7 @@ public partial class MainWindow
                     streamed.Append(token);
                     var text = streamed.ToString();
                     var preserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(text);
-                    assistantMessage.Body.Text = CleanDisplayText(text, preserveCodeBlocks: preserveCode);
+                    assistantMessage.Body.Text = GetStreamingDisplayText(text, preserveCode);
                     ScrollChat();
                 }, DispatcherPriority.Background);
             }
@@ -262,7 +262,7 @@ public partial class MainWindow
 
     private void MoveAssistantBubbleToEnd(AssistantMessageUi assistantMessage)
     {
-        DependencyObject node = assistantMessage.Body;
+        DependencyObject node = assistantMessage.Content;
         while (node is FrameworkElement element && element.Parent is not null && !ReferenceEquals(element.Parent, ChatPanel))
             node = element.Parent;
 

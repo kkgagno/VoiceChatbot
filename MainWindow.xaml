@@ -150,7 +150,7 @@
                                     <TextBlock Text="System prompt" Style="{StaticResource SectionLabel}"/>
                                     <TextBox x:Name="SystemPromptBox" TextWrapping="Wrap" AcceptsReturn="True"
                                              MinHeight="70" MaxHeight="160" VerticalScrollBarVisibility="Auto"
-                                             Text="You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. IMPORTANT: Never use emojis, hashtags, asterisks, markdown formatting, or special symbols in normal conversation. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block."/>
+                                             Text="You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Light Markdown such as short lists, bold text or a small table is fine because it is rendered on screen and removed before speaking. Avoid emojis and hashtags. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block."/>
                                 </StackPanel>
 
                                 <Grid>
@@ -167,6 +167,11 @@
                                               Style="{StaticResource SwitchToggle}" Click="UseToolsToggle_Click" Margin="0,12,0,2"/>
                                 <TextBlock Style="{StaticResource FieldHint}"
                                            Text="The model decides when to search the web, check the date and time, get a stock quote, read a web page or save a memory. Models without tool support fall back to plain chat automatically."/>
+
+                                <ToggleButton x:Name="RenderMarkdownToggle" Content="Format replies (Markdown)" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="RenderMarkdownToggle_Click" Margin="0,12,0,2"/>
+                                <TextBlock Style="{StaticResource FieldHint}"
+                                           Text="Shows headings, lists, tables, links and code blocks in finished replies. Formatting is never read aloud. Turn off for plain text."/>
                             </StackPanel>
                         </Expander>
 

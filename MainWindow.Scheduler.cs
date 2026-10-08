@@ -232,7 +232,9 @@ public partial class MainWindow
             var response = string.IsNullOrWhiteSpace(run.Error)
                 ? run.ResponseText
                 : $"Scheduled task error: {run.Error}";
-            var assistantMessage = AddAssistantMessage(response);
+            var assistantMessage = string.IsNullOrWhiteSpace(run.Error)
+                ? AddFinishedAssistantMessage(response)
+                : AddAssistantMessage(response);
             if (!string.IsNullOrWhiteSpace(run.AudioPath) && File.Exists(run.AudioPath))
                 AddAudioButtons(assistantMessage, run.AudioPath);
 
