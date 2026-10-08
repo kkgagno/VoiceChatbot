@@ -671,7 +671,7 @@ public partial class MainWindow
         };
         if (TryFindResource("UiFont") is FontFamily font)
             dialog.FontFamily = font;
-        WindowTheme.UseDarkTitleBar(dialog);
+        WindowTheme.UseThemedTitleBar(dialog);
 
         var panel = new StackPanel { Margin = new Thickness(20), Width = 360 };
         panel.Children.Add(new TextBlock

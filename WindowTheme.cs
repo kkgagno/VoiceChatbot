@@ -6,8 +6,8 @@ using System.Windows.Interop;
 namespace VoiceChatbot;
 
 /// <summary>
-/// Gives windows a dark title bar that matches the app theme (Windows 10 20H1+ / Windows 11).
-/// Silently does nothing on older systems.
+/// Gives windows a dark or light title bar that matches the app theme (Windows 10 20H1+ / Windows 11)
+/// and updates it when the theme changes. Silently does nothing on older systems.
 /// </summary>
 public static class WindowTheme
 {
@@ -18,9 +18,20 @@ public static class WindowTheme
     [DllImport("dwmapi.dll", PreserveSig = true)]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-    public static void UseDarkTitleBar(Window window)
+    /// <summary>Themes the title bar of <paramref name="window"/> once it has a handle.</summary>
+    public static void UseThemedTitleBar(Window window)
     {
         window.SourceInitialized += (_, _) => Apply(window);
+    }
+
+    /// <summary>Re-themes the title bar of every open window (after a theme change). UI thread only.</summary>
+    public static void ApplyToOpenWindows()
+    {
+        if (Application.Current == null)
+            return;
+
+        foreach (Window window in Application.Current.Windows)
+            Apply(window);
     }
 
     private static void Apply(Window window)
@@ -31,12 +42,14 @@ public static class WindowTheme
             if (hwnd == IntPtr.Zero)
                 return;
 
-            var enabled = 1;
-            if (DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref enabled, sizeof(int)) != 0)
-                DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeBefore20H1, ref enabled, sizeof(int));
+            var light = ThemeManager.IsLight;
+            var dark = light ? 0 : 1;
+            if (DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref dark, sizeof(int)) != 0)
+                DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeBefore20H1, ref dark, sizeof(int));
 
             // Windows 11: tint the caption to the window background (COLORREF is 0x00BBGGRR).
-            var caption = 0x00130D0B;
+            var rgb = Convert.ToInt32(ThemePalette.WindowBackground(light).TrimStart('#'), 16);
+            var caption = ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
             DwmSetWindowAttribute(hwnd, DwmwaCaptionColor, ref caption, sizeof(int));
         }
         catch (DllNotFoundException) { }

@@ -122,6 +122,8 @@ public class AppSettings
     public bool WindowMaximized { get; set; } = false;
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = 340;
+    // One of ThemePalette.Choices ("Dark", "Light", "Use Windows setting"); see ThemeManager.cs.
+    public string Theme { get; set; } = ThemePalette.Default;
     // Tray icon and global listen hotkey (MainWindow.Tray.cs). Minimizing hides to the tray only when this is on.
     public bool MinimizeToTray { get; set; } = false;
     // One of GlobalHotkeys.Choices ("Off", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Ctrl+Alt+L").

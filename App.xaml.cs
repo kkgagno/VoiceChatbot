@@ -43,6 +43,27 @@ public partial class App : Application
             catch { }
             args.SetObserved();
         };
+
+        // Read the settings here so the saved theme is in place before MainWindow (StartupUri) is created.
+        try
+        {
+            _startupSettings = SettingsManager.Load();
+            ThemeManager.Apply(_startupSettings.Theme);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not apply the saved theme.", ex);
+        }
+    }
+
+    private static AppSettings? _startupSettings;
+
+    /// <summary>The settings OnStartup read, once (MainWindow takes them instead of reading the file again).</summary>
+    internal static AppSettings? TakeStartupSettings()
+    {
+        var settings = _startupSettings;
+        _startupSettings = null;
+        return settings;
     }
 
     protected override void OnExit(ExitEventArgs e)

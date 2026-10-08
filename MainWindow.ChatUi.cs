@@ -220,7 +220,7 @@ public partial class MainWindow
     {
         var wrapper = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x12)),
+            Background = FindResource("CodeBlockBrush") as Brush,
             BorderBrush = FindResource("BorderBrush") as Brush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
@@ -275,7 +275,7 @@ public partial class MainWindow
         header.Children.Add(copyButton);
         stack.Children.Add(header);
 
-        var codeBox = CreateSelectableText(code, new SolidColorBrush(Color.FromRgb(0xE3, 0xE6, 0xF0)));
+        var codeBox = CreateSelectableText(code, FindResource("CodeTextBrush") as Brush ?? Brushes.Gray);
         codeBox.FontFamily = FindResource("CodeFont") as FontFamily;
         codeBox.FontSize = 12.5;
         codeBox.Padding = new Thickness(14, 10, 14, 12);

@@ -104,8 +104,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        WindowTheme.UseDarkTitleBar(this);
-        _settings = SettingsManager.Load();
+        WindowTheme.UseThemedTitleBar(this);
+        _settings = App.TakeStartupSettings() ?? SettingsManager.Load();
         _schedulerStore = SchedulerStore.Load();
         _history = new ConversationHistory();
         _history.MessageAdded += OnHistoryMessageAdded;
@@ -305,6 +305,7 @@ public partial class MainWindow : Window
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
         PhoneRemoteAudioToggle.IsChecked = _settings.PhoneRemote.PlayAudioOnPhone;
         ApplyTrayAndHotkeySettings();
+        ApplyThemeSetting();
         ApplyPhoneRemoteSecuritySettings();
         ApplySecretsAndLogsUi();
         ApplySshHostKeySettings();

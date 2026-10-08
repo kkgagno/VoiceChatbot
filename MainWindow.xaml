@@ -6,9 +6,9 @@
         Width="1280" Height="820"
         MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource DarkBgBrush}"
+        Background="{DynamicResource DarkBgBrush}"
         FontFamily="{StaticResource UiFont}"
-        Foreground="{StaticResource TextPrimaryBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True"
         Closing="Window_Closing"
@@ -20,7 +20,7 @@
         <Style x:Key="SliderValue" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontFamily" Value="{StaticResource CodeFont}"/>
-            <Setter Property="Foreground" Value="{StaticResource PrimaryLightBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryLightBrush}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="HorizontalAlignment" Value="Right"/>
         </Style>
@@ -30,12 +30,12 @@
         <Style x:Key="SubHeading" TargetType="TextBlock">
             <Setter Property="FontSize" Value="10"/>
             <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}"/>
             <Setter Property="Margin" Value="0,4,0,8"/>
         </Style>
         <Style x:Key="Divider" TargetType="Border">
             <Setter Property="Height" Value="1"/>
-            <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="Margin" Value="0,4,0,12"/>
         </Style>
     </Window.Resources>
@@ -50,7 +50,7 @@
         <!-- ===================================================================
              SIDEBAR - settings
              =================================================================== -->
-        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource PanelBgBrush}">
+        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{DynamicResource PanelBgBrush}">
             <DockPanel>
 
                 <!-- Brand header -->
@@ -60,13 +60,13 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource BrandGradientBrush}">
+                    <Border Width="38" Height="38" CornerRadius="11" Background="{DynamicResource BrandGradientBrush}">
                         <TextBlock Text="&#xE720;" Style="{StaticResource IconText}" FontSize="17" Foreground="White"
                                    HorizontalAlignment="Center"/>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                         <TextBlock Text="Voice Chatbot" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock Text="Local AI voice assistant" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                        <TextBlock Text="Local AI voice assistant" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"/>
                     </StackPanel>
                     <Button Grid.Column="2" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE76B;"
                             Click="SidebarToggle_Click" ToolTip="Hide settings (Ctrl+B)"/>
@@ -80,10 +80,10 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{StaticResource ErrorBrush}" VerticalAlignment="Center"/>
+                            <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{DynamicResource ErrorBrush}" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                <TextBlock Text="CHAT" FontSize="9" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
-                                <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="12" Foreground="{StaticResource ErrorBrush}"
+                                <TextBlock Text="CHAT" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource TextMutedBrush}"/>
+                                <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="12" Foreground="{DynamicResource ErrorBrush}"
                                            TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Grid>
@@ -92,11 +92,11 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Ellipse x:Name="TtsStatusDot" Width="8" Height="8" Fill="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                            <Ellipse x:Name="TtsStatusDot" Width="8" Height="8" Fill="{DynamicResource TextMutedBrush}" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                <TextBlock Text="SPEECH" FontSize="9" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock Text="SPEECH" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource TextMutedBrush}"/>
                                 <TextBlock x:Name="TtsStatusText" Text="Kokoro: not used yet" FontSize="12"
-                                           Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                           Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Grid>
                     </StackPanel>
@@ -223,9 +223,9 @@
                         <Expander Header="Model Server Control" local:Ui.Icon="&#xE945;"
                                   local:Ui.Subtitle="Hermes SSH, llama.cpp and ComfyUI">
                             <StackPanel>
-                                <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
                                     <TextBlock x:Name="ModelControlStatusText" Text="Checking services..." FontSize="11"
-                                               Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                               Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                                 </Border>
 
                                 <Grid Margin="0,0,0,8">
@@ -360,8 +360,8 @@
                                         </Grid.ColumnDefinitions>
                                         <ComboBox x:Name="VoiceCombo" MaxDropDownHeight="360"/>
                                         <Button x:Name="VoicePreviewBtn" Grid.Column="1" Style="{StaticResource IconButton}"
-                                                local:Ui.Icon="&#xE768;" Margin="6,0,0,0" Background="{StaticResource PrimarySoftBrush}"
-                                                Foreground="{StaticResource PrimaryLightBrush}"
+                                                local:Ui.Icon="&#xE768;" Margin="6,0,0,0" Background="{DynamicResource PrimarySoftBrush}"
+                                                Foreground="{DynamicResource PrimaryLightBrush}"
                                                 Click="VoicePreview_Click" ToolTip="Preview this voice"/>
                                     </Grid>
                                 </StackPanel>
@@ -592,7 +592,7 @@
                             <StackPanel>
                                 <Grid Margin="0,0,0,8">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="&#xE8F1;" Style="{StaticResource IconText}" Foreground="{StaticResource PrimaryLightBrush}"/>
+                                        <TextBlock Text="&#xE8F1;" Style="{StaticResource IconText}" Foreground="{DynamicResource PrimaryLightBrush}"/>
                                         <TextBlock Text="Saved memories" FontWeight="SemiBold" FontSize="13" Margin="8,0,0,0"/>
                                     </StackPanel>
                                     <Button Style="{StaticResource IconButton}" local:Ui.Icon="&#xE711;" Width="28" Height="28"
@@ -745,9 +745,9 @@
                         <!-- ================= Phone remote ================= -->
                         <Expander Header="Phone Remote" local:Ui.Icon="&#xE8EA;" local:Ui.Subtitle="Use the chatbot from your iPhone">
                             <StackPanel>
-                                <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
                                     <TextBlock x:Name="PhoneRemoteStatusText" Text="Stopped" FontSize="12" TextWrapping="Wrap"
-                                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 </Border>
                                 <ToggleButton x:Name="PhoneRemoteToggle" Content="Start with app" IsChecked="False"
                                               Style="{StaticResource SwitchToggle}" Click="PhoneRemoteToggle_Click"/>
@@ -804,19 +804,19 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <Ellipse x:Name="FacePresenceDot" Width="8" Height="8" Fill="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                                    <Ellipse x:Name="FacePresenceDot" Width="8" Height="8" Fill="{DynamicResource TextMutedBrush}" VerticalAlignment="Center"/>
                                     <TextBlock x:Name="FacePresenceText" Grid.Column="1" Text="Camera features off" FontSize="12"
-                                               Foreground="{StaticResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </Grid>
                                 <ToggleButton x:Name="FaceFeaturesToggle" Content="Camera features" IsChecked="False"
                                               Style="{StaticResource SwitchToggle}" Click="FaceFeaturesToggle_Click"/>
                                 <ToggleButton x:Name="FaceGatingToggle" Content="Use identity gating" IsChecked="False"
                                               Style="{StaticResource SwitchToggle}" Click="FaceGatingToggle_Click"/>
                                 <Border Background="#05060A" Height="150" CornerRadius="10" Margin="0,0,0,8" ClipToBounds="True"
-                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                                     <Grid>
                                         <TextBlock Text="&#xE722;" Style="{StaticResource IconText}" FontSize="26"
-                                                   Foreground="{StaticResource BorderStrongBrush}" HorizontalAlignment="Center"/>
+                                                   Foreground="{DynamicResource BorderStrongBrush}" HorizontalAlignment="Center"/>
                                         <Image x:Name="FacePreviewImage" Stretch="Uniform"/>
                                     </Grid>
                                 </Border>
@@ -843,8 +843,13 @@
                         </Expander>
 
                         <!-- ================= App ================= -->
-                        <Expander Header="App" local:Ui.Icon="&#xE713;" local:Ui.Subtitle="Tray, hotkey, secrets and logs">
+                        <Expander Header="App" local:Ui.Icon="&#xE713;" local:Ui.Subtitle="Theme, tray, hotkey, secrets and logs">
                             <StackPanel>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Theme" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="ThemeCombo" SelectionChanged="ThemeCombo_SelectionChanged"
+                                              ToolTip="Dark, light, or follow the Windows app mode (Settings, Personalization, Colors)"/>
+                                </StackPanel>
                                 <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -917,7 +922,7 @@
             </Grid.RowDefinitions>
 
             <!-- Top bar -->
-            <Border Grid.Row="0" Background="{StaticResource DarkBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Border Grid.Row="0" Background="{DynamicResource DarkBgBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -962,19 +967,19 @@
                                         </EventTrigger>
                                     </Ellipse.Triggers>
                                 </Ellipse>
-                                <Ellipse x:Name="StateIndicator" Width="9" Height="9" Fill="{StaticResource SuccessBrush}"/>
+                                <Ellipse x:Name="StateIndicator" Width="9" Height="9" Fill="{DynamicResource SuccessBrush}"/>
                             </Grid>
                             <StackPanel VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock x:Name="StateLabel" Text="Ready" FontSize="14" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="TimerLabel" Text="" FontSize="12" Margin="8,1,0,0"
-                                               FontFamily="{StaticResource CodeFont}" Foreground="{StaticResource AccentBrush}"/>
+                                               FontFamily="{StaticResource CodeFont}" Foreground="{DynamicResource AccentBrush}"/>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="ActiveModelText" Text="" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                                    <TextBlock x:Name="ActiveModelText" Text="" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
                                                TextTrimming="CharacterEllipsis" MaxWidth="260"/>
                                     <TextBlock x:Name="ActivityLabel" Text="" FontSize="11" Margin="8,0,0,0"
-                                               Foreground="{StaticResource PrimaryLightBrush}" TextTrimming="CharacterEllipsis"/>
+                                               Foreground="{DynamicResource PrimaryLightBrush}" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
@@ -1015,7 +1020,7 @@
                         <!-- Welcome -->
                         <Border x:Name="WelcomeCard" Margin="0,24,0,12" MaxWidth="760" HorizontalAlignment="Center">
                             <StackPanel>
-                                <Border Width="64" Height="64" CornerRadius="20" Background="{StaticResource BrandGradientBrush}"
+                                <Border Width="64" Height="64" CornerRadius="20" Background="{DynamicResource BrandGradientBrush}"
                                         HorizontalAlignment="Center" Margin="0,0,0,16">
                                     <Border.Effect>
                                         <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.55" Color="#7C6CFF"/>
@@ -1025,7 +1030,7 @@
                                 </Border>
                                 <TextBlock Text="How can I help today?" FontSize="26" FontWeight="SemiBold" HorizontalAlignment="Center"/>
                                 <TextBlock HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,24"
-                                           Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" MaxWidth="560"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" MaxWidth="560"
                                            Text="Talk or type. Press Listen for a single question, Auto for hands-free conversation, or just start typing below."/>
 
                                 <TextBlock Text="TRY ASKING" Style="{StaticResource SubHeading}" HorizontalAlignment="Center"/>
@@ -1059,8 +1064,8 @@
 
                 <!-- Jump to latest -->
                 <Button x:Name="ScrollToBottomBtn" Style="{StaticResource RoundButton}" local:Ui.Icon="&#xE74B;"
-                        Width="36" Height="36" local:Ui.CornerRadius="18" Background="{StaticResource CardBgBrush}"
-                        Foreground="{StaticResource TextPrimaryBrush}" BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1"
+                        Width="36" Height="36" local:Ui.CornerRadius="18" Background="{DynamicResource CardBgBrush}"
+                        Foreground="{DynamicResource TextPrimaryBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"
                         HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12"
                         Visibility="Collapsed" Click="ScrollToBottom_Click" ToolTip="Jump to latest">
                     <Button.Effect>
@@ -1070,9 +1075,9 @@
             </Grid>
 
             <!-- Composer -->
-            <Border Grid.Row="2" Background="{StaticResource DarkBgBrush}" Padding="20,4,20,14">
+            <Border Grid.Row="2" Background="{DynamicResource DarkBgBrush}" Padding="20,4,20,14">
                 <StackPanel MaxWidth="1100">
-                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1"
+                    <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"
                             CornerRadius="16" Padding="12,10,10,10">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.35" Color="Black"/>
@@ -1104,10 +1109,10 @@
                                 <Button x:Name="DocumentBtn" Content="Document" local:Ui.Icon="&#xE8A5;" Style="{StaticResource ChipButton}"
                                         Click="AttachDocument_Click" ToolTip="Attach a PDF, Word document, or text file to the next message."/>
                                 <CheckBox x:Name="KeepDocumentActiveToggle" Content="Keep doc" FontSize="12"
-                                          Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="2,0,12,6"
+                                          Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="2,0,12,6"
                                           Checked="KeepDocumentActiveToggle_Changed" Unchecked="KeepDocumentActiveToggle_Changed"
                                           ToolTip="When checked, the attached document stays in context for each question until unchecked."/>
-                                <Border Width="1" Height="18" Background="{StaticResource BorderBrush}" Margin="0,0,8,6"/>
+                                <Border Width="1" Height="18" Background="{DynamicResource BorderBrush}" Margin="0,0,8,6"/>
                                 <Button x:Name="CreateImageBtn" Content="Create" local:Ui.Icon="&#xE790;" Style="{StaticResource ChipButton}"
                                         Click="CreateImage_Click" ToolTip="Create an image from the typed prompt using Qwen Image."/>
                                 <Button x:Name="EditImageBtn" Content="Edit" local:Ui.Icon="&#xE70F;" Style="{StaticResource ChipButton}"
@@ -1119,7 +1124,7 @@
                             </WrapPanel>
                         </Grid>
                     </Border>
-                    <TextBlock HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                    <TextBlock HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
                                Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
                 </StackPanel>
             </Border>

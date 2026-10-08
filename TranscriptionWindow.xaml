@@ -5,9 +5,9 @@
         Width="760" Height="620"
         MinWidth="620" MinHeight="460"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource DarkBgBrush}"
+        Background="{DynamicResource DarkBgBrush}"
         FontFamily="{StaticResource UiFont}"
-        Foreground="{StaticResource TextPrimaryBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
         Closing="Window_Closing">
     <Grid Margin="14">
         <Grid.RowDefinitions>
@@ -25,8 +25,8 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Live Transcriber" Foreground="#CDD6F4" FontSize="22" FontWeight="SemiBold"/>
-                <TextBlock x:Name="StatusText" Text="Ready" Foreground="#A6ADC8" FontSize="12" Margin="0,3,0,0"/>
+                <TextBlock Text="Live Transcriber" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock x:Name="StatusText" Text="Ready" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,3,0,0"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="StartStopBtn" Content="Start Transcribing" Click="StartStop_Click"
@@ -38,22 +38,22 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,10">
+        <Border Grid.Row="1" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,10">
             <StackPanel>
-                <TextBlock Text="TRANSCRIBER SYSTEM MESSAGE" Foreground="#A6ADC8" FontSize="10" FontWeight="Bold" Margin="0,0,0,5"/>
+                <TextBlock Text="TRANSCRIBER SYSTEM MESSAGE" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,5"/>
                 <TextBox x:Name="SystemPromptBox" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="58" MaxHeight="92"
                          Text="You are a live transcriber and summarizer. Produce accurate, concise transcripts from spoken audio. When summarizing, preserve decisions, action items, names, dates, numbers, and important context. Do not invent details."/>
             </StackPanel>
         </Border>
 
-        <Border Grid.Row="2" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10">
+        <Border Grid.Row="2" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10">
             <Grid>
                 <TextBox x:Name="TranscriptBox" TextWrapping="Wrap" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto" BorderThickness="0"
-                         Background="Transparent" Foreground="#CDD6F4" FontSize="14"
+                         Background="Transparent" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="14"
                          IsReadOnly="True"/>
                 <TextBlock x:Name="EmptyTranscriptText" Text="Transcript will appear here while recording."
-                           Foreground="#6C7086" FontSize="14" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextMutedBrush}" FontSize="14" HorizontalAlignment="Center"
                            VerticalAlignment="Center"/>
             </Grid>
         </Border>
@@ -63,20 +63,20 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatsText" Text="0 words" Foreground="#A6ADC8" VerticalAlignment="Center"/>
+            <TextBlock x:Name="StatsText" Text="0 words" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
             <Button x:Name="SummarizeBtn" Grid.Column="1" Content="Summarize" Click="Summarize_Click"
                     Background="#A6E3A1" Foreground="#11111B" BorderThickness="0"
                     Padding="16,7" MinWidth="105"/>
         </Grid>
 
-        <Border Grid.Row="4" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10">
+        <Border Grid.Row="4" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10">
             <TextBox x:Name="SummaryBox" TextWrapping="Wrap" AcceptsReturn="True"
                      VerticalScrollBarVisibility="Auto" BorderThickness="0"
-                     Background="Transparent" Foreground="#CDD6F4" FontSize="13"
+                     Background="Transparent" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="13"
                      IsReadOnly="True"/>
         </Border>
 
         <TextBlock Grid.Row="5" Text="The main chat can use this transcript and summary as context."
-                   Foreground="#A6ADC8" FontSize="11"/>
+                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11"/>
     </Grid>
 </Window>
