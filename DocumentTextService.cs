@@ -17,7 +17,15 @@ public sealed class DocumentTextService
 {
     private const int MaxDocumentContextChars = 240000;
 
-    public async Task<DocumentTextResult> ExtractAsync(string path, CancellationToken ct = default)
+    /// <summary>
+    /// Reads a document's text. Runs on a worker thread (PdfPig, DOCX parsing and the OCR tool lookup
+    /// are synchronous), so a UI caller stays responsive. Cancelling throws OperationCanceledException
+    /// and kills any running pdftoppm/tesseract process.
+    /// </summary>
+    public Task<DocumentTextResult> ExtractAsync(string path, CancellationToken ct = default, IProgress<string>? progress = null) =>
+        Task.Run(() => ExtractCoreAsync(path, progress, ct), CancellationToken.None);
+
+    private static async Task<DocumentTextResult> ExtractCoreAsync(string path, IProgress<string>? progress, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             return new DocumentTextResult(path, "", "File not found.");
@@ -26,27 +34,53 @@ public sealed class DocumentTextService
         try
         {
             if (ext == ".pdf")
-                return await ExtractPdfDocumentAsync(path, ct);
+                return await ExtractPdfDocumentAsync(path, progress, ct);
 
-            var text = ext switch
+            if (ext == ".docx")
             {
-                ".docx" => ExtractDocx(path),
-                ".txt" or ".md" or ".csv" or ".json" or ".xml" or ".log" => await File.ReadAllTextAsync(path, ct),
-                ".doc" => "",
-                _ => ""
-            };
+                var docxText = ExtractDocx(path);
+                return string.IsNullOrWhiteSpace(docxText)
+                    ? new DocumentTextResult(path, "", "No readable text was found in this Word document.")
+                    : CreateResult(path, docxText, "");
+            }
 
-            if (ext == ".doc")
-                return new DocumentTextResult(path, "", "Old .doc files are not supported yet. Save it as .docx and attach that.");
-            if (string.IsNullOrWhiteSpace(text))
-                return new DocumentTextResult(path, "", "No readable text was found. If this is a scanned PDF, it will need OCR.");
+            var unsupported = DocumentFileTypes.GetUnsupportedTypeMessage(ext);
+            if (unsupported != null)
+                return new DocumentTextResult(path, "", unsupported);
 
-            return CreateResult(path, text, "");
+            // Unknown extensions are read as text when the bytes look like text (scripts, configs, code).
+            if (!DocumentFileTypes.IsTextExtension(ext) && !await LooksLikeTextFileAsync(path, ct))
+                return new DocumentTextResult(path, "", DocumentFileTypes.DescribeUnsupportedType(ext));
+
+            var text = await File.ReadAllTextAsync(path, ct);
+            return string.IsNullOrWhiteSpace(text)
+                ? new DocumentTextResult(path, "", "The file is empty: there is no text in it.")
+                : CreateResult(path, text, "");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             return new DocumentTextResult(path, "", ex.Message);
         }
+    }
+
+    private static async Task<bool> LooksLikeTextFileAsync(string path, CancellationToken ct)
+    {
+        await using var stream = File.OpenRead(path);
+        var buffer = new byte[DocumentFileTypes.TextSniffBytes];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var n = await stream.ReadAsync(buffer.AsMemory(read), ct);
+            if (n == 0)
+                break;
+            read += n;
+        }
+
+        return DocumentFileTypes.LooksLikeText(buffer.AsSpan(0, read));
     }
 
     public static string BuildContext(IEnumerable<DocumentTextResult> documents, string question = "")
@@ -93,15 +127,22 @@ public sealed class DocumentTextService
         return NormalizeText(output.ToString());
     }
 
-    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, CancellationToken ct)
+    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, IProgress<string>? progress, CancellationToken ct)
     {
-        var text = ExtractPdfText(path, ct);
+        progress?.Report("reading PDF text...");
+        var (text, pageCount) = ExtractPdfText(path, ct);
         if (!string.IsNullOrWhiteSpace(text) && LooksLikeReadableText(text))
             return CreateResult(path, text, "");
 
-        var ocr = await ExtractPdfWithOcrAsync(path, ct);
+        var ocr = await ExtractPdfWithOcrAsync(path, pageCount, progress, ct);
         if (!string.IsNullOrWhiteSpace(ocr.Text) && LooksLikeReadableText(ocr.Text))
-            return CreateResult(path, ocr.Text, "");
+        {
+            // Put the page coverage in the text too, so the model (and the phone, which only keeps
+            // Text) knows later pages were not read.
+            var notice = DocumentFileTypes.BuildOcrPageNotice(ocr.PagesRead, pageCount);
+            var body = string.IsNullOrWhiteSpace(notice) ? ocr.Text : $"[{notice}]\n\n{ocr.Text}";
+            return CreateResult(path, body, "") with { Notice = notice };
+        }
 
         var error = string.IsNullOrWhiteSpace(ocr.Error)
             ? "No readable text was found. If this is a scanned PDF, OCR did not produce usable text."
@@ -109,7 +150,7 @@ public sealed class DocumentTextService
         return new DocumentTextResult(path, "", error);
     }
 
-    private static string ExtractPdfText(string path, CancellationToken ct)
+    private static (string Text, int PageCount) ExtractPdfText(string path, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -122,46 +163,67 @@ public sealed class DocumentTextService
             output.AppendLine();
         }
 
-        return NormalizeText(output.ToString());
+        return (NormalizeText(output.ToString()), document.NumberOfPages);
     }
 
-    private static async Task<(string Text, string Error)> ExtractPdfWithOcrAsync(string path, CancellationToken ct)
+    private static async Task<(string Text, string Error, int PagesRead)> ExtractPdfWithOcrAsync(
+        string path,
+        int pageCount,
+        IProgress<string>? progress,
+        CancellationToken ct)
     {
         var pdftoppm = GetPdftoppmPath();
         var tesseract = GetTesseractPath();
         if (string.IsNullOrWhiteSpace(pdftoppm) || !File.Exists(pdftoppm))
-            return ("", "OCR unavailable: could not find pdftoppm.exe from Poppler.");
+            return ("", "OCR unavailable: could not find pdftoppm.exe from Poppler.", 0);
         if (string.IsNullOrWhiteSpace(tesseract) || !File.Exists(tesseract))
-            return ("", "OCR unavailable: could not find tesseract.exe.");
+            return ("", "OCR unavailable: could not find tesseract.exe.", 0);
+
+        var toolDirectories = new[] { pdftoppm, tesseract }
+            .Select(Path.GetDirectoryName)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "document-ocr", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
 
         try
         {
+            var pagesToRender = pageCount > 0
+                ? Math.Min(pageCount, DocumentFileTypes.MaxOcrPages)
+                : DocumentFileTypes.MaxOcrPages;
+            progress?.Report(pageCount > DocumentFileTypes.MaxOcrPages
+                ? $"rendering the first {pagesToRender} of {pageCount} scanned pages for OCR..."
+                : "rendering scanned pages for OCR...");
+
             var outputPrefix = Path.Combine(tempDir, "page");
             var render = await RunProcessAsync(
                 pdftoppm,
-                ["-f", "1", "-l", "8", "-r", "200", "-png", path, outputPrefix],
+                ["-f", "1", "-l", DocumentFileTypes.MaxOcrPages.ToString(), "-r", "200", "-png", path, outputPrefix],
                 tempDir,
+                toolDirectories,
                 ct);
             if (render.ExitCode != 0)
-                return ("", "OCR render failed: " + render.Error);
+                return ("", "OCR render failed: " + render.Error, 0);
 
             var images = Directory.GetFiles(tempDir, "page-*.png")
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (images.Count == 0)
-                return ("", "OCR render failed: Poppler did not produce page images.");
+                return ("", "OCR render failed: Poppler did not produce page images.", 0);
 
             var output = new StringBuilder();
-            foreach (var image in images)
+            for (var i = 0; i < images.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
+                progress?.Report($"OCR page {i + 1} of {images.Count}...");
                 var ocr = await RunProcessAsync(
                     tesseract,
-                    [image, "stdout", "-l", "eng", "--psm", "6"],
+                    [images[i], "stdout", "-l", "eng", "--psm", "6"],
                     tempDir,
+                    toolDirectories,
                     ct);
 
                 if (!string.IsNullOrWhiteSpace(ocr.Output))
@@ -171,7 +233,7 @@ public sealed class DocumentTextService
                 }
             }
 
-            return (NormalizeText(output.ToString()), "");
+            return (NormalizeText(output.ToString()), "", images.Count);
         }
         finally
         {
@@ -184,6 +246,7 @@ public sealed class DocumentTextService
         string fileName,
         IEnumerable<string> arguments,
         string workingDirectory,
+        IReadOnlyCollection<string> toolDirectories,
         CancellationToken ct)
     {
         var start = new ProcessStartInfo
@@ -196,30 +259,50 @@ public sealed class DocumentTextService
             CreateNoWindow = true
         };
 
-        AddKnownOcrToolDirectoriesToPath(start);
+        AddToolDirectoriesToPath(start, toolDirectories);
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
 
         using var process = new Process { StartInfo = start };
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        return (process.ExitCode, await stdoutTask, await stderrTask);
+        try
+        {
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            return (process.ExitCode, await stdoutTask, await stderrTask);
+        }
+        catch
+        {
+            // Cancelled (or failed): WaitForExitAsync only stops waiting, so end pdftoppm/tesseract
+            // and anything they started instead of leaving them running in the background.
+            TryKill(process);
+            throw;
+        }
     }
 
-    private static void AddKnownOcrToolDirectoriesToPath(ProcessStartInfo start)
+    private static void TryKill(Process process)
     {
-        var paths = new[] { GetPdftoppmPath(), GetTesseractPath() }
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(Path.GetDirectoryName)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
+    }
+
+    private static void AddToolDirectoriesToPath(ProcessStartInfo start, IReadOnlyCollection<string> toolDirectories)
+    {
+        if (toolDirectories.Count == 0)
+            return;
 
         var currentPath = start.Environment.TryGetValue("PATH", out var path)
             ? path
             : Environment.GetEnvironmentVariable("PATH") ?? "";
-        start.Environment["PATH"] = string.Join(Path.PathSeparator, paths) + Path.PathSeparator + currentPath;
+        start.Environment["PATH"] = string.Join(Path.PathSeparator, toolDirectories) + Path.PathSeparator + currentPath;
     }
 
     private static string GetPdftoppmPath()
@@ -503,4 +586,7 @@ public sealed class DocumentTextService
 public sealed record DocumentTextResult(string Path, string Text, string Error)
 {
     public string FullText { get; init; } = Text;
+
+    /// <summary>Something the user should know about a successful read, such as OCR page coverage.</summary>
+    public string Notice { get; init; } = "";
 }

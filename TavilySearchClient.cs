@@ -17,6 +17,12 @@ public class TavilySearchClient : IDisposable
 
     public string ApiKey { get; set; } = "";
 
+    /// <summary>Why the last search failed (HTTP status and Tavily's message), or "" after a success.</summary>
+    public string LastError { get; private set; } = "";
+
+    /// <summary>Raised with a readable message when Tavily rejects or fails a search (bad key, quota, timeout).</summary>
+    public event Action<string>? SearchFailed;
+
     public TavilySearchClient(string apiKey = "")
     {
         ApiKey = apiKey;
@@ -33,9 +39,12 @@ public class TavilySearchClient : IDisposable
     {
         if (string.IsNullOrWhiteSpace(ApiKey))
         {
+            LastError = "No Tavily API key is set.";
             onFailed();
             return;
         }
+
+        LastError = "";
 
         onStarted();
 
@@ -44,23 +53,29 @@ public class TavilySearchClient : IDisposable
             var body = new Dictionary<string, object>
             {
                 ["api_key"] = ApiKey,
-                ["query"] = BuildSearchQuery(query),
+                ["query"] = query.Trim(),
                 ["search_depth"] = ShouldUseAdvancedSearch(query) ? "advanced" : "basic",
                 ["include_answer"] = true,
                 ["max_results"] = maxResults,
                 ["include_images"] = false
             };
 
-            var preferredDomains = GetPreferredDomains(query);
-            if (preferredDomains.Count > 0)
-                body["include_domains"] = preferredDomains;
+            // Only limit the search to sites the user named ("site:openai.com", "on reddit.com").
+            var namedDomains = WebSearchRules.GetExplicitDomains(query);
+            if (namedDomains.Count > 0)
+                body["include_domains"] = namedDomains;
 
             var json = JsonSerializer.Serialize(body);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var resp = await _http.PostAsync(ApiUrl, content, ct);
-            resp.EnsureSuccessStatusCode();
-
+            using var resp = await _http.PostAsync(ApiUrl, content, ct);
             var respJson = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                ReportFailure(WebSearchRules.DescribeHttpError((int)resp.StatusCode, respJson));
+                onFailed();
+                return;
+            }
+
             using var doc = JsonDocument.Parse(respJson);
             var root = doc.RootElement;
 
@@ -88,10 +103,32 @@ public class TavilySearchClient : IDisposable
             _lastSearchResults = results;
             onSuccess();
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // The user stopped the request; nothing to report.
             onFailed();
         }
+        catch (OperationCanceledException)
+        {
+            ReportFailure($"Web search failed: Tavily did not answer within {_http.Timeout.TotalSeconds:0} seconds.");
+            onFailed();
+        }
+        catch (HttpRequestException ex)
+        {
+            ReportFailure($"Web search failed: could not reach Tavily ({ex.Message}).");
+            onFailed();
+        }
+        catch (Exception ex)
+        {
+            ReportFailure($"Web search failed: {ex.Message}");
+            onFailed();
+        }
+    }
+
+    private void ReportFailure(string message)
+    {
+        LastError = message;
+        SearchFailed?.Invoke(message);
     }
 
     private string _lastSearchAnswer = "";
@@ -147,14 +184,6 @@ public class TavilySearchClient : IDisposable
         return searchSucceeded ? BuildSearchContext(query) : "";
     }
 
-    private static string BuildSearchQuery(string query)
-    {
-        var q = query.Trim();
-        if (LooksLikeOpenAiQuery(q) && !q.Contains("openai.com", StringComparison.OrdinalIgnoreCase))
-            return $"{q} site:openai.com OR site:help.openai.com";
-        return q;
-    }
-
     private static bool ShouldUseAdvancedSearch(string query)
     {
         return query.Contains("latest", StringComparison.OrdinalIgnoreCase) ||
@@ -163,20 +192,6 @@ public class TavilySearchClient : IDisposable
                query.Contains("version", StringComparison.OrdinalIgnoreCase) ||
                query.Contains("today", StringComparison.OrdinalIgnoreCase) ||
                query.Contains("release", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static List<string> GetPreferredDomains(string query)
-    {
-        return LooksLikeOpenAiQuery(query)
-            ? new List<string> { "openai.com", "help.openai.com" }
-            : new List<string>();
-    }
-
-    private static bool LooksLikeOpenAiQuery(string query)
-    {
-        return query.Contains("chatgpt", StringComparison.OrdinalIgnoreCase) ||
-               query.Contains("openai", StringComparison.OrdinalIgnoreCase) ||
-               query.Contains("gpt", StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose() => _http.Dispose();

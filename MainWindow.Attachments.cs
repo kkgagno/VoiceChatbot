@@ -83,15 +83,24 @@ public partial class MainWindow
 
     private void MessageInput_Pasting(object sender, DataObjectPastingEventArgs e)
     {
-        if (!ClipboardHasImage())
+        // Decide from the data being pasted (or dropped): text, including spreadsheet cells that also
+        // carry a picture of the selection, goes into the box as usual.
+        if (GetPasteKind(e.DataObject) != ClipboardPasteKind.Image)
             return;
 
         if (TryAttachClipboardImage())
             e.CancelCommand();
     }
 
+    /// <summary>
+    /// Ctrl+V: attaches the clipboard picture when there is one and no text. Returns false to let the
+    /// message box paste normally (always the case when the clipboard has text, such as Excel cells).
+    /// </summary>
     private bool TryAttachClipboardImage()
     {
+        if (ReadClipboardPasteKind() != ClipboardPasteKind.Image)
+            return false;
+
         try
         {
             var image = GetClipboardImage();
@@ -102,23 +111,39 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            AddSystemMessage($"Clipboard image attach failed: {ex.Message}");
+            AddSystemMessage($"Clipboard image attach failed: {FriendlyErrors.Describe(ex)}");
             return true;
         }
     }
 
-    private static bool ClipboardHasImage()
+    private static ClipboardPasteKind ReadClipboardPasteKind()
     {
         try
         {
-            return Clipboard.ContainsImage()
-                || Clipboard.ContainsData(DataFormats.Bitmap)
-                || Clipboard.ContainsData("PNG")
-                || Clipboard.ContainsData("DeviceIndependentBitmap");
+            return GetPasteKind(Clipboard.GetDataObject());
         }
         catch
         {
-            return false;
+            // The clipboard can be locked by another app (CLIPBRD_E_CANT_OPEN): fall back to a normal paste.
+            return ClipboardPasteKind.Nothing;
+        }
+    }
+
+    private static ClipboardPasteKind GetPasteKind(IDataObject? data)
+    {
+        if (data is null)
+            return ClipboardPasteKind.Nothing;
+
+        try
+        {
+            var text = data.GetDataPresent(DataFormats.UnicodeText, autoConvert: true)
+                ? data.GetData(DataFormats.UnicodeText, autoConvert: true) as string
+                : null;
+            return ClipboardPastePolicy.Decide(data.GetFormats(autoConvert: true), text);
+        }
+        catch
+        {
+            return ClipboardPasteKind.Nothing;
         }
     }
 
@@ -168,7 +193,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            AddSystemMessage($"Clipboard image attach failed: {ex.Message}");
+            AddSystemMessage($"Clipboard image attach failed: {FriendlyErrors.Describe(ex)}");
             return true;
         }
     }
@@ -246,31 +271,48 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
+        // Reading runs on a worker thread (DocumentTextService), so the window keeps painting and
+        // Stop/Esc can cancel a long OCR run. The input and attach buttons stay disabled until it ends.
+        var files = dialog.FileNames;
+        using var cts = new CancellationTokenSource();
+        _chatCts = cts;
+        var reading = true;
         SetUIState("processing", "Reading document...");
+        ActivityLabel.Text = "... Reading document...";
+
+        var added = 0;
         try
         {
-            var added = 0;
-            foreach (var fileName in dialog.FileNames)
+            for (var i = 0; i < files.Length; i++)
             {
-                var result = await _documentText.ExtractAsync(fileName);
+                var fileName = files[i];
+                var name = System.IO.Path.GetFileName(fileName);
+                var step = files.Length > 1 ? $"Reading {name} ({i + 1} of {files.Length})" : $"Reading {name}";
+                StateLabel.Text = step + "...";
+                var progress = new Progress<string>(detail =>
+                {
+                    // Progress reports are posted; ignore any that arrive after reading finished.
+                    if (reading)
+                        StateLabel.Text = $"{step}: {detail}";
+                });
+
+                var result = await _documentText.ExtractAsync(fileName, cts.Token, progress);
                 if (!string.IsNullOrWhiteSpace(result.Text))
                 {
                     _pendingDocuments.Add(new PendingDocumentAttachment(fileName, result));
                     added++;
+                    if (!string.IsNullOrWhiteSpace(result.Notice))
+                        AddSystemMessage($"{name}: {result.Notice}");
                 }
                 else
                 {
-                    AddSystemMessage($"Could not read {System.IO.Path.GetFileName(fileName)}: {result.Error}");
+                    AddSystemMessage($"Could not read {name}: {result.Error}");
                 }
             }
-
-            if (added > 0)
-            {
-                AddSystemMessage($"{added} document(s) ready for your next message.");
-                UpdateDocumentButtonLabel();
-                MessageInput.Focus();
-                MessageInput.CaretIndex = MessageInput.Text.Length;
-            }
+        }
+        catch (OperationCanceledException)
+        {
+            AddSystemMessage("Document reading cancelled.");
         }
         catch (Exception ex)
         {
@@ -278,7 +320,18 @@ public partial class MainWindow
         }
         finally
         {
+            reading = false;
+            if (ReferenceEquals(_chatCts, cts))
+                _chatCts = null;
             SetUIState("idle", "Ready");
+        }
+
+        if (added > 0)
+        {
+            AddSystemMessage($"{added} document(s) ready for your next message.");
+            UpdateDocumentButtonLabel();
+            MessageInput.Focus();
+            MessageInput.CaretIndex = MessageInput.Text.Length;
         }
     }
 }

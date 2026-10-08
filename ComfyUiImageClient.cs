@@ -15,8 +15,6 @@ namespace VoiceChatbot;
 
 public sealed class ComfyUiImageClient : IDisposable
 {
-    private const int DefaultVideoWidth = 768;
-    private const int DefaultVideoHeight = 1344;
     private const string QwenEditTwoImageWorkflowName = "image_qwen_image_edit_2511_2";
 
     private readonly HttpClient _http = new()
@@ -24,7 +22,34 @@ public sealed class ComfyUiImageClient : IDisposable
         Timeout = TimeSpan.FromMinutes(20)
     };
 
+    // Prompt ids this client queued and is still waiting for, so Stop can cancel them on ComfyUI.
+    private readonly object _promptLock = new();
+    private readonly HashSet<string> _activePromptIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _interruptedPromptIds = new(StringComparer.Ordinal);
+
     public string BaseUrl { get; set; } = "http://localhost:8000";
+
+    /// <summary>
+    /// Stops the ComfyUI jobs this client is waiting for: deletes them from the queue if they have
+    /// not started and interrupts the one that is running. Jobs queued by other clients are left
+    /// alone. The waiting call then ends with an <see cref="OperationCanceledException"/>.
+    /// Returns false when nothing was waiting.
+    /// </summary>
+    public async Task<bool> InterruptAsync(CancellationToken ct = default)
+    {
+        string[] promptIds;
+        lock (_promptLock)
+        {
+            promptIds = _activePromptIds.ToArray();
+            foreach (var promptId in promptIds)
+                _interruptedPromptIds.Add(promptId);
+        }
+
+        foreach (var promptId in promptIds)
+            await CancelPromptAsync(promptId, ct);
+
+        return promptIds.Length > 0;
+    }
 
     public async Task<GeneratedImageResult> CreateQwenImageAsync(
         string prompt,
@@ -119,7 +144,10 @@ public sealed class ComfyUiImageClient : IDisposable
             : "video_ltx2_3_ia2v";
 
         var workflow = await LoadWorkflowAsync(workflowName, ct);
-        PatchVideoWorkflow(workflow, uploadedImageName, uploadedAudioName, prompt, seconds, fps);
+        var (sourceWidth, sourceHeight) = await Task.Run(() => TryReadImageSize(inputImagePath), ct);
+        var size = LtxVideoSizing.FitToSourceAspect(sourceWidth, sourceHeight);
+        var length = LtxVideoSizing.ClampLength(seconds, fps);
+        PatchVideoWorkflow(workflow, uploadedImageName, uploadedAudioName, prompt, size, length);
 
         var media = await QueueAndWaitForMediaAsync(workflow, ct);
         var localPath = await DownloadMediaAsync(media, "ltx-video", "generated-videos", ct);
@@ -128,11 +156,30 @@ public sealed class ComfyUiImageClient : IDisposable
             localPath,
             prompt,
             workflowName,
-            seconds,
-            fps,
+            length.Seconds,
+            length.Fps,
             media.FileName,
             media.Subfolder,
-            media.Type);
+            media.Type,
+            length.Frames,
+            size.Width,
+            size.Height,
+            seconds);
+    }
+
+    // Upright pixel size of the source image (ComfyUI's LoadImage applies the EXIF orientation,
+    // and so does OpenCV). (0, 0) when it cannot be read; the default size is used then.
+    private static (int Width, int Height) TryReadImageSize(string imagePath)
+    {
+        try
+        {
+            using var image = OpenCvSharp.Cv2.ImDecode(File.ReadAllBytes(imagePath), OpenCvSharp.ImreadModes.Grayscale);
+            return image.Empty() ? (0, 0) : (image.Width, image.Height);
+        }
+        catch
+        {
+            return (0, 0);
+        }
     }
 
     private async Task<string> UploadImageAsync(string imagePath, CancellationToken ct) =>
@@ -195,86 +242,205 @@ public sealed class ComfyUiImageClient : IDisposable
 
     private async Task<ComfyImageRef> QueueAndWaitForImageAsync(Dictionary<string, object> workflow, string? saveNodeId, CancellationToken ct)
     {
-        var request = new
+        var promptId = await QueuePromptAsync(workflow, "voicechatbot-qwen-image", "queueing image workflow", ct);
+        return await WaitForPromptOutputAsync(promptId, 360, "image", outputs =>
         {
-            prompt = workflow,
-            client_id = "voicechatbot-qwen-image"
-        };
-
-        using var response = await _http.PostAsJsonAsync($"{NormalizeBaseUrl()}/prompt", request, ct);
-        await EnsureComfySuccessAsync(response, "queueing image workflow", ct);
-        var queued = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct)
-            ?? throw new InvalidOperationException("ComfyUI queue returned no response.");
-        var promptId = queued["prompt_id"]?.GetValue<string>()
-            ?? throw new InvalidOperationException("ComfyUI queue did not return a prompt id.");
-
-        for (var i = 0; i < 360; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            await Task.Delay(TimeSpan.FromSeconds(2), ct);
-
-            var history = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/history/{promptId}", ct);
-            if (history is null || !history.TryGetPropertyValue(promptId, out var promptNode) || promptNode is not JsonObject promptObj)
-                continue;
-
-            var outputs = promptObj["outputs"] as JsonObject;
             var firstImage = !string.IsNullOrWhiteSpace(saveNodeId)
                 ? (outputs?[saveNodeId] as JsonObject)?["images"] as JsonArray
                 : null;
             var imageObject = firstImage?.OfType<JsonObject>().FirstOrDefault() ?? FindFirstImage(outputs);
-            if (imageObject is not null)
-            {
-                return new ComfyImageRef(
+            return imageObject is null
+                ? null
+                : new ComfyImageRef(
                     imageObject["filename"]?.GetValue<string>() ?? "",
                     imageObject["subfolder"]?.GetValue<string>() ?? "",
                     imageObject["type"]?.GetValue<string>() ?? "output");
-            }
-
-            var status = promptObj["status"] as JsonObject;
-            var completed = status?["completed"]?.GetValue<bool>() == true;
-            if (completed)
-                throw new InvalidOperationException("ComfyUI completed but did not return an image.");
-        }
-
-        throw new TimeoutException("Timed out waiting for ComfyUI image output.");
+        }, ct);
     }
 
     private async Task<ComfyMediaRef> QueueAndWaitForMediaAsync(Dictionary<string, object> workflow, CancellationToken ct)
     {
+        var promptId = await QueuePromptAsync(workflow, "voicechatbot-comfy-video", "queueing video workflow", ct);
+        return await WaitForPromptOutputAsync(promptId, 900, "video", FindFirstMedia, ct);
+    }
+
+    private async Task<string> QueuePromptAsync(Dictionary<string, object> workflow, string clientId, string action, CancellationToken ct)
+    {
         var request = new
         {
             prompt = workflow,
-            client_id = "voicechatbot-comfy-video"
+            client_id = clientId
         };
 
         using var response = await _http.PostAsJsonAsync($"{NormalizeBaseUrl()}/prompt", request, ct);
-        await EnsureComfySuccessAsync(response, "queueing video workflow", ct);
+        await EnsureComfySuccessAsync(response, action, ct);
         var queued = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct)
             ?? throw new InvalidOperationException("ComfyUI queue returned no response.");
         var promptId = queued["prompt_id"]?.GetValue<string>()
             ?? throw new InvalidOperationException("ComfyUI queue did not return a prompt id.");
 
-        for (var i = 0; i < 900; i++)
+        lock (_promptLock)
+            _activePromptIds.Add(promptId);
+        return promptId;
+    }
+
+    // Polls /history every 2 seconds. Fails fast with ComfyUI's own error when the job fails or
+    // disappears, and cancels the job on ComfyUI when the caller cancels or the wait times out.
+    private async Task<T> WaitForPromptOutputAsync<T>(
+        string promptId,
+        int maxPolls,
+        string label,
+        Func<JsonObject?, T?> findOutput,
+        CancellationToken ct) where T : class
+    {
+        var jobEnded = false;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            var failedPolls = 0;
+            for (var i = 0; i < maxPolls; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                if (WasInterrupted(promptId))
+                {
+                    jobEnded = true;
+                    throw new OperationCanceledException($"The ComfyUI {label} job was stopped.");
+                }
 
-            var history = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/history/{promptId}", ct);
-            if (history is null || !history.TryGetPropertyValue(promptId, out var promptNode) || promptNode is not JsonObject promptObj)
-                continue;
+                JsonObject? entry;
+                try
+                {
+                    entry = await GetHistoryEntryAsync(promptId, ct);
+                    failedPolls = 0;
+                }
+                catch (Exception ex) when (IsTransientPollError(ex, ct))
+                {
+                    if (++failedPolls < 5)
+                        continue;
+                    throw new InvalidOperationException($"Lost contact with ComfyUI while waiting for the {label}: {ex.Message}", ex);
+                }
 
-            var outputs = promptObj["outputs"] as JsonObject;
-            var media = FindFirstMedia(outputs);
-            if (media is not null)
-                return media;
+                if (entry is null)
+                {
+                    // Every 30 s make sure the job still exists. After a ComfyUI restart or a cleared
+                    // queue it never reaches the history, and the wait would run to the timeout.
+                    if (i % 15 == 14 && await IsPromptGoneAsync(promptId, ct))
+                    {
+                        jobEnded = true;
+                        throw new InvalidOperationException(
+                            $"ComfyUI no longer has the {label} job in its queue or history. It may have been restarted or its queue cleared.");
+                    }
 
-            var status = promptObj["status"] as JsonObject;
-            var completed = status?["completed"]?.GetValue<bool>() == true;
-            if (completed)
-                throw new InvalidOperationException("ComfyUI completed but did not return a video.");
+                    continue;
+                }
+
+                // ComfyUI writes the history entry once execution has ended, successfully or not.
+                jobEnded = true;
+                var status = entry["status"];
+                var failure = ComfyJobStatus.DescribeFailure(status);
+                if (failure is not null)
+                    throw new InvalidOperationException($"ComfyUI {label} job failed: {failure}");
+
+                var output = findOutput(entry["outputs"] as JsonObject);
+                if (output is not null)
+                    return output;
+
+                if (ComfyJobStatus.IsCompleted(status))
+                    throw new InvalidOperationException($"ComfyUI completed but did not return {(label == "image" ? "an" : "a")} {label}.");
+            }
+
+            throw new TimeoutException($"Timed out waiting for ComfyUI {label} output.");
         }
+        finally
+        {
+            bool interrupted;
+            lock (_promptLock)
+            {
+                _activePromptIds.Remove(promptId);
+                interrupted = _interruptedPromptIds.Remove(promptId);
+            }
 
-        throw new TimeoutException("Timed out waiting for ComfyUI video output.");
+            // Cancelled (Stop), timed out or lost: do not leave the job holding the GPU.
+            if (!jobEnded && !interrupted)
+                _ = CancelPromptAsync(promptId, CancellationToken.None);
+        }
+    }
+
+    private bool WasInterrupted(string promptId)
+    {
+        lock (_promptLock)
+            return _interruptedPromptIds.Contains(promptId);
+    }
+
+    private static bool IsTransientPollError(Exception ex, CancellationToken ct) =>
+        ex is HttpRequestException or JsonException or NotSupportedException
+        || (ex is OperationCanceledException && !ct.IsCancellationRequested);
+
+    private async Task<JsonObject?> GetHistoryEntryAsync(string promptId, CancellationToken ct)
+    {
+        var history = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/history/{Uri.EscapeDataString(promptId)}", ct);
+        return history is not null && history.TryGetPropertyValue(promptId, out var promptNode)
+            ? promptNode as JsonObject
+            : null;
+    }
+
+    // Neither queued, running nor in the history. The history is read again after the queue so a
+    // job that finished in between is not reported as lost.
+    private async Task<bool> IsPromptGoneAsync(string promptId, CancellationToken ct)
+    {
+        if (await GetQueueStateAsync(promptId, ct) != ComfyQueueState.Absent)
+            return false;
+
+        try
+        {
+            return await GetHistoryEntryAsync(promptId, ct) is null;
+        }
+        catch (Exception ex) when (IsTransientPollError(ex, ct))
+        {
+            return false;
+        }
+    }
+
+    private async Task<ComfyQueueState> GetQueueStateAsync(string promptId, CancellationToken ct)
+    {
+        try
+        {
+            var queue = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/queue", ct);
+            return ComfyJobStatus.GetQueueState(queue, promptId);
+        }
+        catch
+        {
+            return ComfyQueueState.Unknown;
+        }
+    }
+
+    // Best effort, never throws: removes the prompt from the pending queue, or interrupts it if
+    // it is running. prompt_id limits the interrupt to this job on ComfyUI builds that support it.
+    private async Task CancelPromptAsync(string promptId, CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var baseUrl = NormalizeBaseUrl();
+
+            var state = await GetQueueStateAsync(promptId, cts.Token);
+            if (state is ComfyQueueState.Pending or ComfyQueueState.Unknown)
+            {
+                using var deleted = await _http.PostAsJsonAsync($"{baseUrl}/queue", new { delete = new[] { promptId } }, cts.Token);
+                if (state == ComfyQueueState.Pending)
+                    state = await GetQueueStateAsync(promptId, cts.Token);
+            }
+
+            if (state is ComfyQueueState.Running or ComfyQueueState.Unknown)
+            {
+                using var interrupted = await _http.PostAsJsonAsync($"{baseUrl}/interrupt", new { prompt_id = promptId }, cts.Token);
+            }
+        }
+        catch
+        {
+            // ComfyUI may be unreachable or already done with the job.
+        }
     }
 
     private async Task<string> DownloadImageAsync(ComfyImageRef image, string prefix, CancellationToken ct)
@@ -559,7 +725,8 @@ public sealed class ComfyUiImageClient : IDisposable
 
         var objectInfo = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/object_info", ct)
             ?? new JsonObject();
-        var linksById = BuildWorkflowLinkMap(workflow["links"] as JsonArray, nodes);
+        var linksById = ComfyWorkflowLinks.BuildLinkMap(workflow["links"] as JsonArray, nodes);
+        var frontendOnlyNodeIds = ComfyWorkflowLinks.GetFrontendOnlyNodeIds(nodes, IsNonExecutableWorkflowNode);
         var subgraphsById = GetSubgraphsById(workflow);
         var prompt = new Dictionary<string, object>();
 
@@ -601,8 +768,12 @@ public sealed class ComfyUiImageClient : IDisposable
                     if (string.IsNullOrWhiteSpace(inputName))
                         continue;
 
+                    // A link from a frontend-only node (a legacy PrimitiveNode, an unconnected reroute)
+                    // is skipped so the widget value below is used, as the ComfyUI frontend does.
                     var linkId = TryGetInt(inputSlot["link"]);
-                    if (linkId.HasValue && linksById.TryGetValue(linkId.Value, out var link))
+                    if (linkId.HasValue
+                        && linksById.TryGetValue(linkId.Value, out var link)
+                        && !frontendOnlyNodeIds.Contains(link.OriginNodeId))
                         inputs[inputName] = Link(link.OriginNodeId, link.OriginSlot);
                 }
             }
@@ -626,6 +797,8 @@ public sealed class ComfyUiImageClient : IDisposable
         if (prompt.Count == 0)
             throw new InvalidOperationException("Could not convert ComfyUI UI workflow to an API prompt.");
 
+        // Inputs fed by muted nodes (or by a bypass or reroute with nothing connected) are dropped.
+        ComfyWorkflowLinks.RemoveDanglingLinks(prompt);
         return prompt;
     }
 
@@ -691,13 +864,13 @@ public sealed class ComfyUiImageClient : IDisposable
     private static void RedirectSubgraphOutputLinks(
         JsonObject nodeToken,
         JsonObject subgraph,
-        Dictionary<int, WorkflowLink> outerLinksById)
+        Dictionary<int, ComfyWorkflowLink> outerLinksById)
     {
         var nodeId = GetNodeId(nodeToken);
         if (string.IsNullOrWhiteSpace(nodeId))
             return;
 
-        var internalLinksById = BuildWorkflowLinkMap(subgraph["links"] as JsonArray, subgraph["nodes"] as JsonArray);
+        var internalLinksById = ComfyWorkflowLinks.BuildLinkMap(subgraph["links"] as JsonArray, subgraph["nodes"] as JsonArray);
         var outputs = subgraph["outputs"] as JsonArray;
         if (outputs is null)
             return;
@@ -716,7 +889,7 @@ public sealed class ComfyUiImageClient : IDisposable
                 .Select(kvp => kvp.Key)
                 .ToList())
             {
-                outerLinksById[outerLinkId] = new WorkflowLink(nodeId + "_" + internalOrigin.OriginNodeId, internalOrigin.OriginSlot);
+                outerLinksById[outerLinkId] = internalOrigin with { OriginNodeId = nodeId + "_" + internalOrigin.OriginNodeId };
             }
         }
     }
@@ -724,7 +897,7 @@ public sealed class ComfyUiImageClient : IDisposable
     private static void ExpandSubgraphNode(
         JsonObject nodeToken,
         JsonObject subgraph,
-        Dictionary<int, WorkflowLink> outerLinksById,
+        Dictionary<int, ComfyWorkflowLink> outerLinksById,
         JsonObject objectInfo,
         Dictionary<string, object> prompt)
     {
@@ -734,7 +907,7 @@ public sealed class ComfyUiImageClient : IDisposable
 
         var prefix = nodeId + "_";
         var externalInputs = GetSubgraphExternalInputs(nodeToken, outerLinksById);
-        var internalLinksById = BuildWorkflowLinkMap(subgraph["links"] as JsonArray, subgraphNodes);
+        var internalLinksById = ComfyWorkflowLinks.BuildLinkMap(subgraph["links"] as JsonArray, subgraphNodes);
 
         foreach (var subNodeToken in subgraphNodes.OfType<JsonObject>())
         {
@@ -798,11 +971,11 @@ public sealed class ComfyUiImageClient : IDisposable
         return nodeToken["properties"]?["Node name for S&R"]?.GetValue<string>() ?? classType;
     }
 
-    private static Dictionary<int, WorkflowLink> GetSubgraphExternalInputs(
+    private static Dictionary<int, ComfyWorkflowLink> GetSubgraphExternalInputs(
         JsonObject nodeToken,
-        Dictionary<int, WorkflowLink> outerLinksById)
+        Dictionary<int, ComfyWorkflowLink> outerLinksById)
     {
-        var result = new Dictionary<int, WorkflowLink>();
+        var result = new Dictionary<int, ComfyWorkflowLink>();
         if (nodeToken["inputs"] is not JsonArray inputs)
             return result;
 
@@ -819,81 +992,9 @@ public sealed class ComfyUiImageClient : IDisposable
         return result;
     }
 
-    private static bool IsDisabledWorkflowNode(JsonObject node)
-    {
-        return TryGetInt(node["mode"]) == 4;
-    }
-
-    private static Dictionary<int, WorkflowLink> BuildWorkflowLinkMap(JsonArray? links, JsonArray? nodes = null)
-    {
-        var map = new Dictionary<int, WorkflowLink>();
-        if (links is null)
-            return map;
-
-        foreach (var link in links)
-        {
-            if (link is JsonArray arr && arr.Count >= 4)
-            {
-                var linkId = TryGetInt(arr[0]);
-                var originNodeId = TryGetInt(arr[1]);
-                var originSlot = TryGetInt(arr[2]) ?? 0;
-                if (linkId.HasValue && originNodeId.HasValue)
-                    map[linkId.Value] = new WorkflowLink(originNodeId.Value.ToString(), originSlot);
-                continue;
-            }
-
-            if (link is JsonObject obj)
-            {
-                var linkId = TryGetInt(obj["id"]);
-                var originNodeId = TryGetInt(obj["origin_id"]);
-                var originSlot = TryGetInt(obj["origin_slot"]) ?? 0;
-                if (linkId.HasValue && originNodeId.HasValue)
-                    map[linkId.Value] = new WorkflowLink(originNodeId.Value.ToString(), originSlot);
-            }
-        }
-
-        ResolveRerouteLinks(map, nodes);
-        return map;
-    }
-
-    private static void ResolveRerouteLinks(Dictionary<int, WorkflowLink> linksById, JsonArray? nodes)
-    {
-        if (nodes is null)
-            return;
-
-        var rerouteInputLinks = new Dictionary<string, int>();
-        foreach (var node in nodes.OfType<JsonObject>())
-        {
-            var nodeId = GetNodeId(node);
-            var classType = node["type"]?.GetValue<string>() ?? "";
-            if (string.IsNullOrWhiteSpace(nodeId) || !classType.Equals("Reroute", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var inputLink = (node["inputs"] as JsonArray)?
-                .OfType<JsonObject>()
-                .Select(input => TryGetInt(input["link"]))
-                .FirstOrDefault(id => id.HasValue);
-            if (inputLink.HasValue)
-                rerouteInputLinks[nodeId] = inputLink.Value;
-        }
-
-        foreach (var linkId in linksById.Keys.ToList())
-            linksById[linkId] = ResolveRerouteOrigin(linksById[linkId], linksById, rerouteInputLinks, new HashSet<string>());
-    }
-
-    private static WorkflowLink ResolveRerouteOrigin(
-        WorkflowLink link,
-        Dictionary<int, WorkflowLink> linksById,
-        Dictionary<string, int> rerouteInputLinks,
-        HashSet<string> seen)
-    {
-        if (!rerouteInputLinks.TryGetValue(link.OriginNodeId, out var inputLinkId) || !seen.Add(link.OriginNodeId))
-            return link;
-
-        return linksById.TryGetValue(inputLinkId, out var previous)
-            ? ResolveRerouteOrigin(previous, linksById, rerouteInputLinks, seen)
-            : link;
-    }
+    // Muted (mode 2) and bypassed (mode 4) nodes are not executed; links through bypassed nodes
+    // are rewired in ComfyWorkflowLinks.BuildLinkMap.
+    private static bool IsDisabledWorkflowNode(JsonObject node) => ComfyWorkflowLinks.IsExcluded(node);
 
     private static IEnumerable<string> GetWidgetInputNames(JsonObject nodeToken, JsonObject objectInfo, string classType)
     {
@@ -951,31 +1052,9 @@ public sealed class ComfyUiImageClient : IDisposable
             || normalized.EndsWith("_NAME", StringComparison.Ordinal);
     }
 
-    private static string GetNodeId(JsonObject node)
-    {
-        if (node["id"] is JsonValue idValue)
-        {
-            if (idValue.TryGetValue<int>(out var id))
-                return id.ToString();
-            if (idValue.TryGetValue<string>(out var text))
-                return text;
-        }
+    private static string GetNodeId(JsonObject node) => ComfyWorkflowLinks.GetNodeId(node);
 
-        return "";
-    }
-
-    private static int? TryGetInt(JsonNode? node)
-    {
-        if (node is not JsonValue value)
-            return null;
-        if (value.TryGetValue<int>(out var intValue))
-            return intValue;
-        if (value.TryGetValue<long>(out var longValue))
-            return (int)longValue;
-        if (value.TryGetValue<string>(out var text) && int.TryParse(text, out var parsed))
-            return parsed;
-        return null;
-    }
+    private static int? TryGetInt(JsonNode? node) => ComfyWorkflowLinks.TryGetInt(node);
 
     private static object JsonNodeToObject(JsonNode node)
     {
@@ -1112,11 +1191,11 @@ public sealed class ComfyUiImageClient : IDisposable
         return null;
     }
 
-    private static void PatchVideoWorkflow(Dictionary<string, object> workflow, string imageName, string audioName, string prompt, int seconds, int fps)
+    private static void PatchVideoWorkflow(Dictionary<string, object> workflow, string imageName, string audioName, string prompt, VideoSize size, VideoLength length)
     {
-        seconds = Math.Clamp(seconds, 1, 30);
-        fps = Math.Clamp(fps, 1, 60);
-        var frames = Math.Clamp(seconds * fps, 1, 720);
+        var seconds = length.Seconds;
+        var fps = length.Fps;
+        var frames = length.Frames;
 
         foreach (var node in workflow.Values.OfType<Dictionary<string, object>>())
         {
@@ -1153,10 +1232,10 @@ public sealed class ComfyUiImageClient : IDisposable
                     inputs[key] = seconds;
 
                 if (IsVideoWidthInput(lowerTitle, lowerKey))
-                    inputs[key] = DefaultVideoWidth;
+                    inputs[key] = size.Width;
 
                 if (IsVideoHeightInput(lowerTitle, lowerKey))
-                    inputs[key] = DefaultVideoHeight;
+                    inputs[key] = size.Height;
 
                 if (lowerKey is "fps" or "frame_rate" or "framerate")
                     inputs[key] = fps;
@@ -1346,7 +1425,6 @@ public sealed class ComfyUiImageClient : IDisposable
 
     private sealed record ComfyImageRef(string FileName, string Subfolder, string Type);
     private sealed record ComfyMediaRef(string FileName, string Subfolder, string Type);
-    private sealed record WorkflowLink(string OriginNodeId, int OriginSlot);
 }
 
 public sealed record GeneratedImageResult(
@@ -1357,6 +1435,9 @@ public sealed record GeneratedImageResult(
     string RemoteSubfolder,
     string RemoteType);
 
+/// <param name="Seconds">Real length of the video, which can be shorter than requested (frame cap).</param>
+/// <param name="Frames">Frames generated, after the frame cap.</param>
+/// <param name="RequestedSeconds">Length that was asked for.</param>
 public sealed record GeneratedVideoResult(
     string LocalPath,
     string Prompt,
@@ -1365,4 +1446,8 @@ public sealed record GeneratedVideoResult(
     int Fps,
     string RemoteFileName,
     string RemoteSubfolder,
-    string RemoteType);
+    string RemoteType,
+    int Frames,
+    int Width,
+    int Height,
+    int RequestedSeconds);

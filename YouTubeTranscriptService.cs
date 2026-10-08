@@ -16,23 +16,10 @@ public sealed class YouTubeTranscriptService
 {
     private const int MaxTranscriptChars = 12000;
 
-    public static bool TryExtractYouTubeUrl(string text, out string url)
-    {
-        url = "";
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
-
-        var match = Regex.Match(
-            text,
-            @"https?://(?:www\.)?(?:youtube\.com/watch\?[^\s]+|youtu\.be/[^\s]+|youtube\.com/shorts/[^\s]+)",
-            RegexOptions.IgnoreCase);
-
-        if (!match.Success)
-            return false;
-
-        url = match.Value.TrimEnd('.', ',', ')', ']', '"', '\'');
-        return true;
-    }
+    // Accepts m./music./www. hosts, youtu.be, /shorts/, /live/ and /embed/ links; returns the
+    // canonical single-video watch URL (see YouTubeUrl).
+    public static bool TryExtractYouTubeUrl(string text, out string url) =>
+        YouTubeUrl.TryExtract(text, out url);
 
     public async Task<YouTubeTranscriptResult> FetchTranscriptAsync(string url, CancellationToken ct)
     {
@@ -157,6 +144,7 @@ public sealed class YouTubeTranscriptService
             start.ArgumentList.Add("--js-runtimes");
             start.ArgumentList.Add($"deno:{denoPath}");
         }
+        start.ArgumentList.Add("--no-playlist");
         start.ArgumentList.Add("--skip-download");
         start.ArgumentList.Add("--write-subs");
         start.ArgumentList.Add("--write-auto-subs");
@@ -189,7 +177,7 @@ public sealed class YouTubeTranscriptService
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        await process.WaitForExitAsync(ct);
+        await WaitForExitOrKillAsync(process, ct);
 
         var vttFile = Directory.GetFiles(tempDir, "*.vtt", SearchOption.TopDirectoryOnly)
             .OrderByDescending(File.GetLastWriteTimeUtc)
@@ -267,7 +255,7 @@ public sealed class YouTubeTranscriptService
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        await process.WaitForExitAsync(ct);
+        await WaitForExitOrKillAsync(process, ct);
 
         var wavFile = Directory.GetFiles(tempDir, "*.wav", SearchOption.AllDirectories)
             .OrderByDescending(File.GetLastWriteTimeUtc)
@@ -290,6 +278,39 @@ public sealed class YouTubeTranscriptService
             string.IsNullOrWhiteSpace(error)
                 ? noWavMessage
                 : error);
+    }
+
+    // On cancel, kill yt-dlp together with the ffmpeg (and cmd.exe) processes it started;
+    // WaitForExitAsync alone stops waiting but leaves them downloading.
+    private static async Task WaitForExitOrKillAsync(Process process, CancellationToken ct)
+    {
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            KillProcessTree(process);
+
+            // Give the killed processes a moment to release the temp folder before it is deleted.
+            using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try { await process.WaitForExitAsync(grace.Token); }
+            catch { }
+            throw;
+        }
+    }
+
+    private static void KillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Best effort: the process may have exited on its own.
+        }
     }
 
     private static string ParseVtt(string vtt)

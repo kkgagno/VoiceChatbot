@@ -3,15 +3,6 @@ using System.Collections.Generic;
 
 namespace VoiceChatbot;
 
-public enum ScheduledTaskRecurrence
-{
-    Once,
-    Hourly,
-    Daily,
-    Weekly,
-    Monthly
-}
-
 public sealed class ScheduledPromptTask
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -21,6 +12,12 @@ public sealed class ScheduledPromptTask
     public DateTime NextRunAt { get; set; } = DateTime.Now.AddHours(1);
     public DateTime? LastRunAt { get; set; }
     public ScheduledTaskRecurrence Recurrence { get; set; } = ScheduledTaskRecurrence.Once;
+    // First slot of the series (the date and time the user picked). Recurring slots are computed
+    // from it, so monthly tasks keep their day of month. Null for tasks saved by older versions.
+    public DateTime? ScheduleAnchorAt { get; set; }
+    // A failed scheduled run keeps its slot and is retried with back-off instead of being skipped.
+    public int ConsecutiveFailures { get; set; }
+    public DateTime? RetryAt { get; set; }
     public int KeepRuns { get; set; } = 5;
     public bool ShowInMainChat { get; set; } = false;
     public string LastStatus { get; set; } = "Pending";
@@ -29,7 +26,9 @@ public sealed class ScheduledPromptTask
     public override string ToString()
     {
         var enabled = IsEnabled ? "On" : "Off";
-        return $"{Name} - {enabled} - next {NextRunAt:g}";
+        return RetryAt is DateTime retry && retry > NextRunAt
+            ? $"{Name} - {enabled} - retry {retry:g}"
+            : $"{Name} - {enabled} - next {NextRunAt:g}";
     }
 }
 

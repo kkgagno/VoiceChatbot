@@ -26,11 +26,29 @@ public partial class MainWindow
 {
     private void ClearChat_Click(object sender, RoutedEventArgs e)
     {
+        // Chats are saved in Conversations, so only interrupting a reply needs a confirmation.
+        if (!SendBtn.IsEnabled)
+        {
+            var answer = MessageBox.Show(this,
+                "A reply is still in progress. Stop it and start a new chat? The current chat stays in Conversations.",
+                "Clear Chat", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+                return;
+        }
+
+        // A true fresh start: cancels the turn still running and drops hidden context (live
+        // transcript, web results, a staged Hermes command) that later system prompts would still carry.
         StartFreshConversation();
         _history.Clear();
         _recentWebSearchContexts.Clear();
+        _hermesApprovals.Clear();
+        _pendingHermesRequestDraft = "";
+        _latestLiveTranscript = "";
+        _latestLiveTranscriptSummary = "";
         ChatPanel.Children.Clear();
-        AddSystemMessage("Chat cleared.");
+        AddSystemMessage(_transcriptionWindow != null
+            ? "Chat cleared. The Transcribe window is still open, so its next update adds transcript context again."
+            : "Chat cleared.");
         _conversationStartTime = DateTime.Now;
     }
 
@@ -44,7 +62,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            AddSystemMessage($"Export failed: {ex.Message}");
+            AddSystemMessage($"Export failed: {FriendlyErrors.Describe(ex)}");
         }
     }
 
@@ -197,6 +215,20 @@ public partial class MainWindow
 
     private void ClearMemory_Click(object sender, RoutedEventArgs e)
     {
+        var count = MemoryManager.LoadAll().Count;
+        if (count == 0)
+        {
+            AddSystemMessage("There are no saved memories to clear.");
+            return;
+        }
+
+        var question = count == 1
+            ? "Delete the 1 saved memory? This cannot be undone."
+            : $"Delete all {count} saved memories? This cannot be undone.";
+        var answer = MessageBox.Show(this, question, "Clear All Memories", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
         MemoryManager.ClearAll();
         _loadedMemories.Clear();
         RefreshMemoryPanel();

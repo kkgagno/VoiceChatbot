@@ -12,42 +12,6 @@ namespace VoiceChatbot;
 
 public sealed class PiAgentService
 {
-    private static readonly string[] ReadOnlyPhrases =
-    {
-        "look at ",
-        "list ",
-        "show ",
-        "display ",
-        "folders",
-        "folder",
-        "directories",
-        "directory",
-        "what is in ",
-        "what's in ",
-        "whats in ",
-        "summarize ",
-        "inspect ",
-        "check "
-    };
-
-    private static readonly string[] MutatingOrExecutionPhrases =
-    {
-        " run ",
-        " execute ",
-        " launch ",
-        " start ",
-        " write ",
-        " create ",
-        " edit ",
-        " modify ",
-        " change ",
-        " delete ",
-        " remove ",
-        " install ",
-        " update ",
-        " script "
-    };
-
     private readonly string _workingDirectory;
     private readonly TimeSpan _timeout;
 
@@ -57,33 +21,9 @@ public sealed class PiAgentService
         _timeout = timeout ?? TimeSpan.FromMinutes(3);
     }
 
-    public static bool TryCreateReadOnlyPrompt(string userText, out string prompt, out string blockedReason)
-    {
-        prompt = "";
-        blockedReason = "";
-
-        var request = ExtractPiRequest(userText);
-        if (string.IsNullOrWhiteSpace(request))
-            return false;
-
-        var normalized = $" {request.Trim().ToLowerInvariant()} ";
-        if (MutatingOrExecutionPhrases.Any(normalized.Contains))
-        {
-            blockedReason = "Pi is connected for read-only inspection in this first version. I blocked this because it sounds like it could write files, edit files, install software, or run code.";
-            return true;
-        }
-
-        var looksReadOnly = ReadOnlyPhrases.Any(phrase => normalized.Contains(phrase));
-        if (!looksReadOnly)
-        {
-            blockedReason = "Pi is connected for read-only file and directory inspection. Start the request with something like \"ask pi look at\" or \"pi summarize\".";
-            return true;
-        }
-
-        prompt = "Read-only task. Do not write files, edit files, install packages, or run destructive commands. " +
-                 "You may inspect the current project and answer concisely. User request: " + request.Trim();
-        return true;
-    }
+    // Only an explicit address ("ask pi ...", "pi agent, ...") routes to Pi; see PiRequestParser.
+    public static bool TryCreateReadOnlyPrompt(string userText, out string prompt, out string blockedReason) =>
+        PiRequestParser.TryCreateReadOnlyPrompt(userText, out prompt, out blockedReason);
 
     public async Task<string> AskAsync(string prompt, CancellationToken ct)
     {
@@ -180,41 +120,6 @@ public sealed class PiAgentService
         return process.ExitCode == 0
             ? "Pi finished without returning text."
             : $"Pi exited with code {process.ExitCode}.";
-    }
-
-    private static string ExtractPiRequest(string userText)
-    {
-        var text = userText.Trim();
-        var prefixes = new[]
-        {
-            "use pi to ",
-            "use pi ",
-            "ask pi to ",
-            "ask pi ",
-            "pi please ",
-            "pi ",
-            "use pie to ",
-            "use pie ",
-            "ask pie to ",
-            "ask pie ",
-            "pie please ",
-            "pie ",
-            "ask agent to ",
-            "ask agent ",
-            "agent please ",
-            "agent "
-        };
-        foreach (var prefix in prefixes)
-        {
-            if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                return text[prefix.Length..].Trim();
-        }
-
-        var lower = text.ToLowerInvariant();
-        if (lower.Contains("look at the files") || lower.Contains("what's in that directory") || lower.Contains("whats in that directory"))
-            return text;
-
-        return "";
     }
 
     private static IEnumerable<PiCommand> GetPiCommandCandidates()

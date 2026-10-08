@@ -74,6 +74,8 @@ public partial class MainWindow
         var sourcePaths = GetImageEditSourcePaths();
         if (sourcePaths.Count == 0)
         {
+            // Keep the request on screen: the input box was already cleared when it was sent.
+            AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Edit.");
             return;
         }
@@ -134,6 +136,8 @@ public partial class MainWindow
         var sourcePath = GetVideoSourceImagePath();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
         {
+            // Keep the request on screen: the input box was already cleared when it was sent.
+            AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Video.");
             return;
         }
@@ -251,7 +255,7 @@ public partial class MainWindow
             ? ""
             : $"\nGoogle Drive copy: {syncedVideoPath}";
 
-        return $"{result.WorkflowName} finished.\nPrompt: {result.Prompt}\nLength: {result.Seconds} seconds at {result.Fps} FPS\nSaved: {result.LocalPath}{syncedLine}";
+        return $"{result.WorkflowName} finished.\nPrompt: {result.Prompt}\nLength: {DescribeVideoLength(result)}\nSaved: {result.LocalPath}{syncedLine}";
     }
 
     private static string BuildGeneratedVideoHistoryText(GeneratedVideoResult result, string syncedVideoPath = "")
@@ -260,39 +264,64 @@ public partial class MainWindow
             ? ""
             : $"\nGoogle Drive copy: {syncedVideoPath}";
 
-        return $"{result.WorkflowName} generated a video.\nPrompt: {result.Prompt}\nLength: {result.Seconds} seconds at {result.Fps} FPS\nLocal file: {result.LocalPath}{syncedLine}\nRemote file: {result.RemoteFileName}";
+        return $"{result.WorkflowName} generated a video.\nPrompt: {result.Prompt}\nLength: {DescribeVideoLength(result)}\nLocal file: {result.LocalPath}{syncedLine}\nRemote file: {result.RemoteFileName}";
     }
 
-    private static Task<string> CopyVideoToSyncedDirectoryAsync(string videoPath, CancellationToken ct)
+    // The real length: frames are capped, so a long request at a high frame rate comes out shorter.
+    private static string DescribeVideoLength(GeneratedVideoResult result)
+    {
+        var length = $"{result.Seconds} seconds at {result.Fps} FPS ({result.Frames} frames, {result.Width}x{result.Height})";
+        return result.RequestedSeconds > result.Seconds
+            ? $"{length}. {result.RequestedSeconds} seconds were requested; videos are limited to {LtxVideoSizing.MaxSeconds} seconds and {LtxVideoSizing.MaxFrames} frames"
+            : length;
+    }
+
+    // Returns "" when the copy fails: the video itself was created, so a full or locked sync folder
+    // is reported as a system message instead of turning the result into "Video creation failed".
+    private Task<string> CopyVideoToSyncedDirectoryAsync(string videoPath, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(videoPath) || !File.Exists(videoPath))
             return Task.FromResult("");
 
         return Task.Run(() =>
         {
-            Directory.CreateDirectory(SyncedVideoDirectory);
-
-            var extension = Path.GetExtension(videoPath);
-            if (string.IsNullOrWhiteSpace(extension))
-                extension = ".mp4";
-
-            var originalName = Path.GetFileNameWithoutExtension(videoPath);
-            var safeName = Regex.Replace(originalName, @"[^\w\-. ]+", "_").Trim(' ', '.', '_');
-            if (string.IsNullOrWhiteSpace(safeName))
-                safeName = "voicechatbot-video";
-
-            var prefix = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}{extension}");
-            var suffix = 1;
-            while (File.Exists(targetPath))
+            try
             {
-                targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}_{suffix}{extension}");
-                suffix++;
+                return CopyVideoToSyncedDirectory(videoPath);
             }
-
-            File.Copy(videoPath, targetPath, overwrite: false);
-            return targetPath;
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(() =>
+                    AddSystemMessage($"The video was saved, but copying it to {SyncedVideoDirectory} failed: {FriendlyErrors.Describe(ex)}"));
+                return "";
+            }
         }, ct);
+    }
+
+    private static string CopyVideoToSyncedDirectory(string videoPath)
+    {
+        Directory.CreateDirectory(SyncedVideoDirectory);
+
+        var extension = Path.GetExtension(videoPath);
+        if (string.IsNullOrWhiteSpace(extension))
+            extension = ".mp4";
+
+        var originalName = Path.GetFileNameWithoutExtension(videoPath);
+        var safeName = Regex.Replace(originalName, @"[^\w\-. ]+", "_").Trim(' ', '.', '_');
+        if (string.IsNullOrWhiteSpace(safeName))
+            safeName = "voicechatbot-video";
+
+        var prefix = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}{extension}");
+        var suffix = 1;
+        while (File.Exists(targetPath))
+        {
+            targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}_{suffix}{extension}");
+            suffix++;
+        }
+
+        File.Copy(videoPath, targetPath, overwrite: false);
+        return targetPath;
     }
 
     private void AddGeneratedImageToAssistantMessage(AssistantMessageUi assistantMessage, string imagePath)
@@ -353,8 +382,15 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
-        File.Copy(imagePath, dialog.FileName, overwrite: true);
-        AddSystemMessage($"Image saved to {dialog.FileName}");
+        try
+        {
+            File.Copy(imagePath, dialog.FileName, overwrite: true);
+            AddSystemMessage($"Image saved to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not save the image: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     private void AddGeneratedVideoToAssistantMessage(AssistantMessageUi assistantMessage, string videoPath)
@@ -424,7 +460,14 @@ public partial class MainWindow
             return;
         }
 
-        Process.Start(new ProcessStartInfo(videoPath) { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo(videoPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not open the video: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     private void SaveGeneratedVideo_Click(object sender, RoutedEventArgs e)
@@ -447,107 +490,29 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
-        File.Copy(videoPath, dialog.FileName, overwrite: true);
-        AddSystemMessage($"Video saved to {dialog.FileName}");
-    }
-
-    private static bool TryGetImageCreatePrompt(string text, out string prompt)
-    {
-        prompt = "";
-        var trimmed = text.Trim();
-        var patterns = new[]
+        try
         {
-            @"^(?:please\s+)?(?:create|generate|make|draw)\s+(?:an?\s+)?image\s+(?:of|showing|with)?\s*(.+)$",
-            @"^(?:please\s+)?(?:create|generate|make|draw)\s+(?:a\s+)?picture\s+(?:of|showing|with)?\s*(.+)$"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value))
-            {
-                prompt = match.Groups[1].Value.Trim();
-                return true;
-            }
+            File.Copy(videoPath, dialog.FileName, overwrite: true);
+            AddSystemMessage($"Video saved to {dialog.FileName}");
         }
-
-        return false;
-    }
-
-    private static bool TryGetVideoPrompt(string text, out string prompt, out int? seconds)
-    {
-        prompt = "";
-        seconds = null;
-        var trimmed = text.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed) || !Regex.IsMatch(trimmed, @"\b(video|movie|clip)\b", RegexOptions.IgnoreCase))
-            return false;
-
-        var patterns = new[]
+        catch (Exception ex)
         {
-            @"^(?:please\s+)?(?:create|generate|make)\s+(?:an?\s+)?(?:\d+\s*(?:second|seconds|sec|s)\s+)?(?:video|movie|clip)\s*(?:of|showing|with)?\s*(.+)$",
-            @"^(?:please\s+)?(?:turn|make)\s+(?:this\s+)?(?:image|picture|photo)\s+into\s+(?:an?\s+)?(?:\d+\s*(?:second|seconds|sec|s)\s+)?(?:video|movie|clip)\s*(?:where|that|of|showing|with)?\s*(.*)$"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (!match.Success)
-                continue;
-
-            seconds = TryParseVideoSeconds(trimmed);
-            prompt = match.Groups.Count > 1 ? match.Groups[1].Value.Trim() : "";
-            if (string.IsNullOrWhiteSpace(prompt))
-                prompt = RemoveVideoCommandWords(trimmed);
-            return true;
+            AddSystemMessage($"Could not save the video: {FriendlyErrors.Describe(ex)}");
         }
-
-        if (Regex.IsMatch(trimmed, @"\b(?:\d+\s*)?(?:second|seconds|sec|s)\s+video\b", RegexOptions.IgnoreCase))
-        {
-            seconds = TryParseVideoSeconds(trimmed);
-            prompt = RemoveVideoCommandWords(trimmed);
-            return true;
-        }
-
-        return false;
     }
 
-    private static int? TryParseVideoSeconds(string text)
-    {
-        var match = Regex.Match(text, @"\b(?<n>\d{1,2})\s*(?:second|seconds|sec|s)\b", RegexOptions.IgnoreCase);
-        if (match.Success && int.TryParse(match.Groups["n"].Value, out var seconds))
-            return Math.Clamp(seconds, 1, 30);
+    // The media parsers live in Core/MediaIntentParser.cs: they need explicit image/picture/photo or
+    // video generation phrasing, so "Edit the code above", "Create a movie review of ..." or a YouTube
+    // link that says "video" stay with the chat model.
+    private static bool TryGetImageCreatePrompt(string text, out string prompt) =>
+        MediaIntentParser.TryGetImageCreatePrompt(text, out prompt);
 
-        return null;
-    }
+    private static bool TryGetVideoPrompt(string text, out string prompt, out int? seconds) =>
+        MediaIntentParser.TryGetVideoPrompt(text, out prompt, out seconds);
 
-    private static string RemoveVideoCommandWords(string text)
-    {
-        var cleaned = Regex.Replace(text, @"^(?:please\s+)?(?:create|generate|make|turn)\s+", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, @"\b(?:an?\s+)?\d*\s*(?:second|seconds|sec|s)?\s*(?:video|movie|clip)\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ");
-        return string.IsNullOrWhiteSpace(cleaned) ? text.Trim() : cleaned;
-    }
+    private static int? TryParseVideoSeconds(string text) =>
+        MediaIntentParser.TryParseVideoSeconds(text);
 
-    private static bool TryGetImageEditPrompt(string text, out string prompt)
-    {
-        prompt = "";
-        var trimmed = text.Trim();
-        var patterns = new[]
-        {
-            @"^(?:please\s+)?edit\s+(?:this\s+)?(?:image|picture|photo)?\s*(?:and|to)?\s*(.+)$",
-            @"^(?:please\s+)?(?:change|modify)\s+(?:this\s+)?(?:image|picture|photo)\s+(?:to|and)?\s*(.+)$"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value))
-            {
-                prompt = match.Groups[1].Value.Trim();
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool TryGetImageEditPrompt(string text, out string prompt) =>
+        MediaIntentParser.TryGetImageEditPrompt(text, out prompt);
 }

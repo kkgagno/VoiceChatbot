@@ -304,6 +304,16 @@ public partial class MainWindow
         await await operation;
     }
 
+    // Tavily errors (bad key, used-up credits, rate limit) are shown as they happen, before the
+    // "answering from model knowledge" note, from desktop, phone and scheduled searches alike.
+    private void ShowWebSearchFailure(string message)
+    {
+        if (Dispatcher.CheckAccess())
+            AddSystemMessage(message);
+        else
+            Dispatcher.InvokeAsync(() => AddSystemMessage(message));
+    }
+
     private PhoneRemoteModelState GetPhoneRemoteModelState()
     {
         PhoneRemoteModelState ReadState()

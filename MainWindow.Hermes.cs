@@ -51,87 +51,54 @@ public partial class MainWindow
 
     private sealed record LlamaModelControlPlan(string Description, string Command, int? EndpointPort, bool RefreshLlamaModels = true);
 
+    // Core/HermesCommands.cs decides what counts as a model-control command: it must start with a
+    // control verb and name only models, so a question that mentions ComfyUI or a model goes to the
+    // Hermes agent and "run <shell command>" is staged for approval instead of starting a model.
     private static bool TryBuildLlamaModelControlPlan(string prompt, out LlamaModelControlPlan plan)
     {
         plan = new LlamaModelControlPlan("", "", null);
-        if (string.IsNullOrWhiteSpace(prompt))
+        if (!HermesCommandParser.TryMatchModelControl(prompt, out var target))
             return false;
 
-        var normalized = Regex.Replace(prompt.ToLowerInvariant(), @"[^a-z0-9.]+", " ").Trim();
-        if (normalized.Contains("comfyui", StringComparison.Ordinal) || normalized.Contains("comfy", StringComparison.Ordinal))
+        switch (target.Action)
         {
-            var wantsComfyStop = Regex.IsMatch(normalized, @"\b(stop|kill|shutdown|shut down|terminate|unload)\b");
-            var comfyBatch = wantsComfyStop
-                ? "/mnt/c/llama.cpp/Stop-ComfyUI-LAN.bat"
-                : "/mnt/c/llama.cpp/Start-ComfyUI-LAN.bat";
-            var action = wantsComfyStop ? "Stopping" : "Starting";
-            var comfyLabel = Path.GetFileNameWithoutExtension(comfyBatch).Replace("-", "_", StringComparison.OrdinalIgnoreCase);
-            plan = new LlamaModelControlPlan(
-                $"{action} ComfyUI using {Path.GetFileName(comfyBatch)}",
-                wantsComfyStop
-                    ? BuildRunWindowsBatchCommand(comfyBatch, comfyLabel, detach: false)
-                    : BuildRunWindowsBatchCommand(comfyBatch, comfyLabel, detach: true),
-                null,
-                RefreshLlamaModels: false);
-            return true;
+            case HermesModelControlAction.StartComfyUi:
+            case HermesModelControlAction.StopComfyUi:
+            {
+                var wantsComfyStop = target.Action == HermesModelControlAction.StopComfyUi;
+                var comfyBatch = wantsComfyStop
+                    ? "/mnt/c/llama.cpp/Stop-ComfyUI-LAN.bat"
+                    : "/mnt/c/llama.cpp/Start-ComfyUI-LAN.bat";
+                var action = wantsComfyStop ? "Stopping" : "Starting";
+                var comfyLabel = Path.GetFileNameWithoutExtension(comfyBatch).Replace("-", "_", StringComparison.OrdinalIgnoreCase);
+                plan = new LlamaModelControlPlan(
+                    $"{action} ComfyUI using {Path.GetFileName(comfyBatch)}",
+                    wantsComfyStop
+                        ? BuildRunWindowsBatchCommand(comfyBatch, comfyLabel, detach: false)
+                        : BuildRunWindowsBatchCommand(comfyBatch, comfyLabel, detach: true),
+                    null,
+                    RefreshLlamaModels: false);
+                return true;
+            }
+
+            case HermesModelControlAction.StopLlama:
+                plan = new LlamaModelControlPlan(
+                    "Stopping current llama.cpp model processes",
+                    BuildStopLlamaCommand(),
+                    null);
+                return true;
+
+            default:
+            {
+                var batch = target.BatchPath;
+                var label = Path.GetFileNameWithoutExtension(batch).Replace("start-", "", StringComparison.OrdinalIgnoreCase);
+                plan = new LlamaModelControlPlan(
+                    $"Starting llama.cpp model using {Path.GetFileName(batch)}",
+                    BuildStartLlamaBatchCommand(batch, label),
+                    target.Port);
+                return true;
+            }
         }
-
-        var wantsStop = Regex.IsMatch(normalized, @"\b(stop|kill|shutdown|shut down|terminate|unload)\b")
-                        && Regex.IsMatch(normalized, @"\b(current|running|llama|llama.cpp|model|server)\b");
-        if (wantsStop)
-        {
-            plan = new LlamaModelControlPlan(
-                "Stopping current llama.cpp model processes",
-                BuildStopLlamaCommand(),
-                null);
-            return true;
-        }
-
-        var wantsStart = Regex.IsMatch(normalized, @"\b(start|switch|load|launch|run|change)\b");
-        if (!wantsStart)
-            return false;
-
-        var target = ResolveLlamaBatchFile(normalized);
-        if (target is null)
-            return false;
-
-        var (batch, port) = target.Value;
-        var label = Path.GetFileNameWithoutExtension(batch).Replace("start-", "", StringComparison.OrdinalIgnoreCase);
-        plan = new LlamaModelControlPlan(
-            $"Starting llama.cpp model using {Path.GetFileName(batch)}",
-            BuildStartLlamaBatchCommand(batch, label),
-            port);
-        return true;
-    }
-
-    private static (string BatchPath, int Port)? ResolveLlamaBatchFile(string normalizedPrompt)
-    {
-        if (Regex.IsMatch(normalizedPrompt, @"\bgpt\s*oss\b") || normalizedPrompt.Contains("gpt oss") || normalizedPrompt.Contains("gpt-oss") || normalizedPrompt.Contains("120b"))
-            return ("/mnt/c/llama.cpp/start-gpt-oss-120b.bat", 8084);
-        if (normalizedPrompt.Contains("mistral"))
-            return normalizedPrompt.Contains("text")
-                ? ("/mnt/c/llama.cpp/start-mistral-medium-3.5-textonly.bat", 8082)
-                : ("/mnt/c/llama.cpp/start-mistral-medium-3.5.bat", 8082);
-        if (normalizedPrompt.Contains("qwen"))
-            return ("/mnt/c/llama.cpp/start-qwen3.6-27b-q8.bat", 8081);
-        if (normalizedPrompt.Contains("lfm"))
-            return ("/mnt/c/llama.cpp/start-lfm2.5-8b.bat", 8083);
-        if (normalizedPrompt.Contains("gemma") && normalizedPrompt.Contains("12b"))
-            return ("/mnt/c/llama.cpp/start-gemma4-12b.bat", 8083);
-        if (normalizedPrompt.Contains("gemma") && (normalizedPrompt.Contains("4b") || normalizedPrompt.Contains("e4b")))
-            return ("/mnt/c/llama.cpp/start-gemma4-4b.bat", 8081);
-        if (normalizedPrompt.Contains("gemma") && (normalizedPrompt.Contains("spec") || normalizedPrompt.Contains("draft")))
-            return ("/mnt/c/llama.cpp/start-gemma4-speculative.bat", 8080);
-        if (normalizedPrompt.Contains("gemma") && (normalizedPrompt.Contains("gpu") || normalizedPrompt.Contains("31b gpu")))
-            return ("/mnt/c/llama.cpp/start-gemma4-gpu.bat", 8080);
-        if (normalizedPrompt.Contains("gemma") && (normalizedPrompt.Contains("26b") || normalizedPrompt.Contains("a4b")))
-            return normalizedPrompt.Contains("spec")
-                ? ("/mnt/c/llama.cpp/start-gemma4-26b-a4b-speculative.bat", 8080)
-                : ("/mnt/c/llama.cpp/start-gemma4-26b-a4b.bat", 8080);
-        if (normalizedPrompt.Contains("gemma"))
-            return ("/mnt/c/llama.cpp/start-gemma4.bat", 8080);
-
-        return null;
     }
 
     private static string BuildStopLlamaCommand()
@@ -288,19 +255,8 @@ public partial class MainWindow
         return (false, $"Endpoint set to {endpoint}, but it is not responding yet. Last check: {lastError}");
     }
 
-    private static bool TryGetDirectHermesSshCommand(string prompt, out string command)
-    {
-        command = "";
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
-
-        var match = Regex.Match(prompt.Trim(), @"^(?:run|execute|shell|terminal|cli)\s+(.+)$", RegexOptions.IgnoreCase);
-        if (!match.Success || string.IsNullOrWhiteSpace(match.Groups[1].Value))
-            return false;
-
-        command = match.Groups[1].Value.Trim();
-        return true;
-    }
+    private static bool TryGetDirectHermesSshCommand(string prompt, out string command) =>
+        HermesCommandParser.TryGetDirectSshCommand(prompt, out command);
 
     private static string BuildHermesCliPrompt(string prompt)
     {
@@ -331,25 +287,53 @@ public partial class MainWindow
         return "Hermes timed out before returning final text. I stopped waiting in the app.";
     }
 
-    private static bool IsHermesApproval(string prompt)
-    {
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
+    // Set for the whole async flow of a phone chat request (it survives awaits, even when a
+    // continuation resumes on the UI thread), so Hermes approvals know which device they came from.
+    private static readonly AsyncLocal<bool> ServingPhoneRequest = new();
 
-        var normalized = Regex.Replace(prompt.Trim().ToLowerInvariant(), @"[^\p{L}\p{N}\s]", " ");
-        normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
-        return normalized is "approve" or "approved" or "yes" or "yep" or "ok" or "okay" or "do it" or "go ahead" or "run it" or "execute" or "confirmed" or "confirm";
+    private static HermesCommandSource CurrentHermesSource =>
+        ServingPhoneRequest.Value ? HermesCommandSource.Phone : HermesCommandSource.Desktop;
+
+    // The phone remote's chat callback (see the constructor): marks the request as coming from the phone.
+    private async Task<PhoneRemoteAssistantResult> HandlePhoneRemoteChatFromPhoneAsync(PhoneRemoteUserInput input, CancellationToken ct)
+    {
+        ServingPhoneRequest.Value = true;
+        return await HandlePhoneRemoteChatAsync(input, ct);
     }
 
-    private static bool IsHermesCancel(string prompt)
+    // MainWindow.PhoneRemote.cs reads and writes these two names directly. They are views of
+    // _hermesApprovals, so the phone path gets the same two-minute expiry and per-device rules.
+    private string _pendingHermesControlCommand
     {
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
-
-        var normalized = Regex.Replace(prompt.Trim().ToLowerInvariant(), @"[^\p{L}\p{N}\s]", " ");
-        normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
-        return normalized is "cancel" or "no" or "stop" or "never mind" or "nevermind" or "abort";
+        get => _hermesApprovals.StagedRequest;
+        set
+        {
+            _pendingHermesRequestDraft = value ?? "";
+            if (string.IsNullOrWhiteSpace(value))
+                _hermesApprovals.Clear();
+        }
     }
+
+    private string _pendingHermesSshCommand
+    {
+        get => _hermesApprovals.GetLiveCommand(DateTime.UtcNow);
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                _hermesApprovals.Clear();
+            else
+                _hermesApprovals.Stage(_pendingHermesRequestDraft, value, CurrentHermesSource, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>
+    /// True when this prompt may run the staged SSH command now: it has not expired, and a casual
+    /// "ok/yes" only counts from the device that staged it ("approve" works from either).
+    /// </summary>
+    private bool IsHermesApproval(string prompt) =>
+        _hermesApprovals.Evaluate(prompt, CurrentHermesSource, DateTime.UtcNow) == HermesApprovalDecision.Approved;
+
+    private static bool IsHermesCancel(string prompt) => HermesApprovalGate.IsCancelWord(prompt);
 
     private async Task<string> BuildHermesSshApprovalPromptAsync(string request, string command, CancellationToken ct)
     {
@@ -370,7 +354,7 @@ public partial class MainWindow
         sb.AppendLine("Current llama.cpp endpoint check:");
         sb.AppendLine(status);
         sb.AppendLine();
-        sb.AppendLine("Say 'Hermes approve' to let Hermes execute this once, or 'Hermes cancel' to clear it.");
+        sb.AppendLine($"Say 'Hermes approve' within {HermesApprovalGate.Lifetime.TotalMinutes:0} minutes to let Hermes execute this once, or 'Hermes cancel' to clear it.");
         return sb.ToString().Trim();
     }
 
@@ -436,22 +420,30 @@ public partial class MainWindow
 
         try
         {
-            if (IsHermesCancel(hermesPrompt) && !string.IsNullOrWhiteSpace(_pendingHermesControlCommand))
+            if (IsHermesCancel(hermesPrompt) && _hermesApprovals.TryCancel(out var cancelledRequest))
             {
-                var cancelled = $"Cancelled pending Hermes action: {_pendingHermesControlCommand}";
-                _pendingHermesControlCommand = "";
-                _pendingHermesSshCommand = "";
+                var cancelled = $"Cancelled pending Hermes action: {cancelledRequest}";
                 assistantMessage.Body.Text = cancelled;
                 _history.Add("assistant", cancelled);
                 SpeakLastResponse(cancelled, assistantMessage);
                 return;
             }
 
-            if (IsHermesApproval(hermesPrompt) && !string.IsNullOrWhiteSpace(_pendingHermesSshCommand))
+            var stagedCommand = _hermesApprovals.StagedCommand;
+            var approval = _hermesApprovals.TryApprove(hermesPrompt, HermesCommandSource.Desktop, DateTime.UtcNow, out var command);
+            if (approval is HermesApprovalDecision.Expired or HermesApprovalDecision.NeedsExplicitApproval)
             {
-                var command = _pendingHermesSshCommand;
-                _pendingHermesControlCommand = "";
-                _pendingHermesSshCommand = "";
+                var notice = approval == HermesApprovalDecision.Expired
+                    ? $"The staged Hermes SSH command expired after {HermesApprovalGate.Lifetime.TotalMinutes:0} minutes, so nothing was run. Stage it again with 'Hermes run ...'.\n\nCommand: {stagedCommand}"
+                    : $"That Hermes SSH command was staged from the iPhone, so it needs an explicit approval here. Say 'Hermes approve' to run it, or 'Hermes cancel' to clear it.\n\nCommand: {stagedCommand}";
+                assistantMessage.Body.Text = notice;
+                _history.Add("assistant", notice);
+                SpeakLastResponse(notice, assistantMessage);
+                return;
+            }
+
+            if (approval == HermesApprovalDecision.Approved)
+            {
                 AddSystemMessage("Hermes approval received. Running pending SSH command.");
                 using var sshTimeout = CancellationTokenSource.CreateLinkedTokenSource(_chatCts.Token);
                 sshTimeout.CancelAfter(TimeSpan.FromSeconds(120));
@@ -486,8 +478,7 @@ public partial class MainWindow
             }
             else if (TryGetDirectHermesSshCommand(hermesPrompt, out var directCommand))
             {
-                _pendingHermesControlCommand = hermesPrompt;
-                _pendingHermesSshCommand = directCommand;
+                _hermesApprovals.Stage(hermesPrompt, directCommand, HermesCommandSource.Desktop, DateTime.UtcNow);
                 var staged = await BuildHermesSshApprovalPromptAsync(hermesPrompt, directCommand, _chatCts.Token);
                 assistantMessage.Body.Text = staged;
                 _history.Add("assistant", staged);
@@ -515,7 +506,7 @@ public partial class MainWindow
                 assistantMessage.Body.Text = cleaned;
             _history.Add("assistant", $"Hermes result:\n{cleaned}");
             SpeakLastResponse(cleaned, assistantMessage);
-            if (isModelControl || IsHermesApproval(hermesPrompt))
+            if (isModelControl || HermesApprovalGate.IsApprovalWord(hermesPrompt))
                 await RefreshLlamaCppModelAfterHermesAsync();
         }
         catch (OperationCanceledException)

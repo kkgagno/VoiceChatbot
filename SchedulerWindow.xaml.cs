@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
@@ -18,6 +19,10 @@ public partial class SchedulerWindow : Window
     private readonly Action<string> _playAudio;
     private readonly ObservableCollection<ScheduledPromptTask> _tasks;
     private bool _loading;
+    private bool _refreshing;
+    // Form fields the user changed since the selected task was loaded. A refresh triggered by a
+    // scheduled run updates everything else but leaves these alone, so unsaved edits survive.
+    private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
 
     public SchedulerWindow(
         SchedulerStore store,
@@ -35,24 +40,55 @@ public partial class SchedulerWindow : Window
         _playAudio = playAudio;
         _tasks = new ObservableCollection<ScheduledPromptTask>(_store.Tasks);
 
+        NameBox.TextChanged += (_, _) => MarkEdited("name");
+        PromptBox.TextChanged += (_, _) => MarkEdited("prompt");
+        EnabledBox.Click += (_, _) => MarkEdited("enabled");
+        ShowInMainChatBox.Click += (_, _) => MarkEdited("showInMainChat");
+        RunDatePicker.SelectedDateChanged += (_, _) => MarkEdited("when");
+        RunTimeBox.TextChanged += (_, _) => MarkEdited("when");
+        RecurrenceBox.SelectionChanged += (_, _) => MarkEdited("recurrence");
+        KeepRunsBox.TextChanged += (_, _) => MarkEdited("keepRuns");
+
         RecurrenceBox.ItemsSource = Enum.GetValues<ScheduledTaskRecurrence>();
         TaskList.ItemsSource = _tasks;
         if (_tasks.Count > 0)
             TaskList.SelectedIndex = 0;
         else
             CreateTask(select: true);
+
+        if (!string.IsNullOrWhiteSpace(_store.LoadError))
+            StatusText.Text = _store.LoadError;
     }
 
     public void RefreshTasks()
     {
         var selectedId = (TaskList.SelectedItem as ScheduledPromptTask)?.Id;
-        _tasks.Clear();
-        foreach (var task in _store.Tasks)
-            _tasks.Add(task);
+        _refreshing = true;
+        try
+        {
+            _tasks.Clear();
+            foreach (var task in _store.Tasks)
+                _tasks.Add(task);
 
-        TaskList.SelectedItem = _tasks.FirstOrDefault(t => t.Id == selectedId) ?? _tasks.FirstOrDefault();
+            TaskList.SelectedItem = _tasks.FirstOrDefault(t => t.Id == selectedId) ?? _tasks.FirstOrDefault();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+
+        if ((TaskList.SelectedItem as ScheduledPromptTask)?.Id != selectedId)
+            _editedFields.Clear();
         LoadSelectedTask();
     }
+
+    private void MarkEdited(string field)
+    {
+        if (!_loading)
+            _editedFields.Add(field);
+    }
+
+    private bool IsEdited(string field) => _editedFields.Contains(field);
 
     private void NewTask_Click(object sender, RoutedEventArgs e) => CreateTask(select: true);
 
@@ -68,7 +104,14 @@ public partial class SchedulerWindow : Window
         LoadSelectedTask();
     }
 
-    private void TaskList_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadSelectedTask();
+    private void TaskList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_refreshing)
+            return;
+
+        _editedFields.Clear();
+        LoadSelectedTask();
+    }
 
     private void RunList_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadSelectedRun();
 
@@ -82,7 +125,9 @@ public partial class SchedulerWindow : Window
 
         _save();
         TaskList.Items.Refresh();
-        StatusText.Text = $"Saved. Next run: {task.NextRunAt:g}";
+        StatusText.Text = _store.SaveBlocked
+            ? _store.LoadError
+            : $"Saved. Next run: {task.NextRunAt:g}";
     }
 
     private async void RunNow_Click(object sender, RoutedEventArgs e)
@@ -177,18 +222,29 @@ public partial class SchedulerWindow : Window
         }
 
         _loading = true;
-        NameBox.Text = task.Name;
-        PromptBox.Text = task.Prompt;
-        EnabledBox.IsChecked = task.IsEnabled;
-        ShowInMainChatBox.IsChecked = task.ShowInMainChat;
-        RunDatePicker.SelectedDate = task.NextRunAt.Date;
-        RunTimeBox.Text = task.NextRunAt.ToString("h:mm tt", CultureInfo.CurrentCulture);
-        RecurrenceBox.SelectedItem = task.Recurrence;
-        KeepRunsBox.Text = task.KeepRuns.ToString(CultureInfo.InvariantCulture);
+        if (!IsEdited("name"))
+            NameBox.Text = task.Name;
+        if (!IsEdited("prompt"))
+            PromptBox.Text = task.Prompt;
+        if (!IsEdited("enabled"))
+            EnabledBox.IsChecked = task.IsEnabled;
+        if (!IsEdited("showInMainChat"))
+            ShowInMainChatBox.IsChecked = task.ShowInMainChat;
+        if (!IsEdited("when"))
+        {
+            RunDatePicker.SelectedDate = task.NextRunAt.Date;
+            RunTimeBox.Text = task.NextRunAt.ToString("h:mm tt", CultureInfo.CurrentCulture);
+        }
+        if (!IsEdited("recurrence"))
+            RecurrenceBox.SelectedItem = task.Recurrence;
+        if (!IsEdited("keepRuns"))
+            KeepRunsBox.Text = task.KeepRuns.ToString(CultureInfo.InvariantCulture);
         RunList.ItemsSource = task.Runs;
         RunList.Items.Refresh();
         RunList.SelectedIndex = task.Runs.Count > 0 ? 0 : -1;
-        StatusText.Text = task.LastStatus;
+        StatusText.Text = _editedFields.Count > 0
+            ? $"{task.LastStatus} (Your unsaved changes were kept.)"
+            : task.LastStatus;
         _loading = false;
         LoadSelectedRun();
     }
@@ -239,18 +295,39 @@ public partial class SchedulerWindow : Window
         if (!int.TryParse(KeepRunsBox.Text.Trim(), out var keepRuns))
             keepRuns = 5;
 
+        var recurrence = RecurrenceBox.SelectedItem is ScheduledTaskRecurrence selectedRecurrence
+            ? selectedRecurrence
+            : ScheduledTaskRecurrence.Once;
+        var enabled = EnabledBox.IsChecked == true;
+        var scheduleChanged = task.ScheduleAnchorAt is null
+            || recurrence != task.Recurrence
+            || TrimToMinute(nextRun) != TrimToMinute(task.NextRunAt);
+        var reenabled = enabled && !task.IsEnabled;
+
+        // Recurring slots are computed from the anchor, so a monthly task keeps its day of month.
+        task.ScheduleAnchorAt = scheduleChanged
+            ? ScheduleMath.UpdateAnchor(task.ScheduleAnchorAt, task.NextRunAt, task.Recurrence, nextRun, recurrence)
+            : task.ScheduleAnchorAt;
+        if (scheduleChanged || reenabled)
+        {
+            task.ConsecutiveFailures = 0;
+            task.RetryAt = null;
+        }
+
         task.Name = string.IsNullOrWhiteSpace(name) ? "Scheduled prompt" : name;
         task.Prompt = prompt;
-        task.IsEnabled = EnabledBox.IsChecked == true;
+        task.IsEnabled = enabled;
         task.ShowInMainChat = ShowInMainChatBox.IsChecked == true;
         task.NextRunAt = nextRun;
-        task.Recurrence = RecurrenceBox.SelectedItem is ScheduledTaskRecurrence recurrence
-            ? recurrence
-            : ScheduledTaskRecurrence.Once;
+        task.Recurrence = recurrence;
         task.KeepRuns = Math.Clamp(keepRuns, 1, 100);
         SchedulerStore.PruneRuns(task);
+        _editedFields.Clear();
         return true;
     }
+
+    private static DateTime TrimToMinute(DateTime value) =>
+        new(value.Year, value.Month, value.Day, value.Hour, value.Minute, 0, value.Kind);
 
     private void SetBusy(bool busy, string status = "")
     {
