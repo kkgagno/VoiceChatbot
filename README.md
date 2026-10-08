@@ -148,6 +148,50 @@ The line under the switch shows `Starting...`, `Listening for "hey jarvis"`, `No
 - The microphone stays open while the detector is on, so Bluetooth headsets may stay in their call-quality audio mode.
 - It uses the same Python as Kokoro; set `VOICECHATBOT_PYTHON` to choose one. Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
 
+## Conversations, memory and knowledge
+
+### Saved conversations
+
+Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\VoiceChatbot\conversations`. Messages from the phone remote and scheduled prompts that appear in the main chat are saved too, along with attached image paths and the spoken-reply audio.
+
+- Click the history button in the top bar (or press **Ctrl+H**) to open **Conversations**. Chats are grouped by Today, Yesterday, Previous 7 days and Older, and the search box matches titles and message text.
+- Click a conversation to reopen it. Its messages are redrawn, Replay Audio comes back if the audio file still exists, and the last *Max context messages* are loaded back into the model's context.
+- Hover a conversation to rename or delete it. Delete asks for confirmation.
+- **New chat** (the + button or **Ctrl+N**) and **Clear Chat** start a fresh conversation. The previous one stays in history.
+- Conversations are titled from the first message. Turn off **Save conversations** under **Chat History** in the sidebar to stop saving new messages. **Open Folder** shows the files.
+
+### Memories
+
+**Save Memory** in the **Conversation** expander summarizes the current chat into a memory, and **View Memory** lets you add, edit or delete them. Memories are stored in `%APPDATA%\VoiceChatbot\memory`.
+
+**Memories in prompt** decides which memories go into the system prompt:
+
+- `Relevant` (default) sends only the saved memories that best match your message, up to **Matching memories** (default 4), plus the newest memory. Matching is keyword based, so a message about "my dog Rex" brings back memories that mention Rex or dogs. A message with no real topic, or a question like "what do you remember?", gets the most recent memories instead.
+- `All` sends every saved memory with every message, which uses more of the model's context.
+
+The hint under the setting shows how many memories the last message used. The settings are saved as `MemoryMode` and `MemoryMaxItems` in `settings.json`.
+
+### Knowledge folder
+
+The assistant can answer from your own documents. Open **Knowledge Folder** in the sidebar, click **Browse** (or type a path and press Enter) and turn on **Use my documents**.
+
+- PDF, Word (`.docx`), `.txt`, `.md`, `.csv`, `.json`, `.xml` and `.log` files are read, including subfolders. Files over 25 MB, hidden files and Office lock files are skipped. Scanned PDFs need the same OCR tools as attached documents (Poppler and Tesseract).
+- Indexing runs in the background. The status line shows progress, then the number of files and chunks and when the folder was last indexed. Hover it to see files that could not be read. While indexing, the button reads **Stop**.
+- While it is on, the folder is checked again a few seconds after the app starts and whenever you change it, and only new or changed files are read again. **Reindex** does the same now and also retries files that could not be read before (for example after installing OCR).
+- For each message, desktop or phone remote, the best-matching passages (up to **Excerpts per message**, default 4, about 900 characters each) are added to that request only, and the chat shows a note such as *Using 3 excerpts from: lease.pdf, car.md*. Matching is keyword based, like memories: a message has to share its main words with a passage, so small talk and general questions are not affected. File and subfolder names count as words too.
+- The index is stored in `%APPDATA%\VoiceChatbot\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
+
+### Personas
+
+A persona is a named preset for the system prompt, the voice, the speech rate and, optionally, the model. Pick one from the **Persona** box in the top bar, left of the voice buttons: the system prompt, voice and speech rate switch to it, and so does the model if the persona has one.
+
+- On first run a **Default** persona is made from your current prompt, voice and rate.
+- Under **Personas** in the **Chat Backend** expander, type a name and click **Save as new persona** (or press Enter) to save the current prompt, voice and rate as a new persona. **Update persona** saves them into the active persona. Turn on **Include the current model** before saving or updating to make the persona also switch models; leave it off to keep whatever model is selected.
+- **Delete persona** deletes the active persona after a second click to confirm, then switches to the first remaining one. The last persona cannot be deleted.
+- Changes you make to the prompt, voice or speed are kept, but are not saved into the persona until you click **Update persona**.
+- Saved conversations remember their persona. Reopening a conversation switches back to that persona if it still exists.
+- Personas are saved as `Personas` and `ActivePersona` in `settings.json`.
+
 ## Optional integrations
 
 ### Web search
@@ -193,6 +237,8 @@ These tools can be installed with WinGet where packages are available.
 | Esc | Stop generating, speaking and listening |
 | Ctrl+B | Show or hide the settings sidebar |
 | Ctrl+K | Focus the message box |
+| Ctrl+H | Show or hide saved conversations |
+| Ctrl+N | Start a new chat |
 | Ctrl+V | Paste text or an image |
 | Ctrl+Alt+Space (any app) | Listen for one question; press again to stop listening |
 
@@ -239,7 +285,7 @@ git push origin v1.0.0
 
 ## Data and security
 
-- Settings, API keys, downloaded Whisper models, generated media, memories, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
+- Settings, API keys, downloaded Whisper models, generated media, memories, saved conversations, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
 - Do not commit `settings.json`, certificates, passwords, API keys, model files, or private batch files.
 - The SSH password, OpenAI API key, Tavily API key and phone remote PIN are encrypted in `settings.json` with Windows DPAPI for your Windows account (they appear as `"dpapi:..."`). Plain-text values from older versions are encrypted the next time the app starts. A settings file copied to another PC or Windows user cannot be decrypted there: those fields are left empty, the app warns once, and you enter them again. Still use a dedicated LAN account for SSH and restrict network access appropriately.
 - SSH host keys are pinned on first use. The first connection to each SSH `host:port` trusts the server's key, saves its fingerprint in `settings.json` as `SHA256:...` (the same text `ssh-keygen -lf` prints for the server's host key) and posts a "Trusted SSH host key" note in the chat. After that, a server that presents a different key is refused with an error saying the host key changed. **Model Server Control > Host key** shows the pinned fingerprint. After you reinstall or reconfigure the SSH server, click **Forget host key** there and the next connection trusts the new key.

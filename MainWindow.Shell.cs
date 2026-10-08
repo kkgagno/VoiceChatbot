@@ -335,6 +335,25 @@ public partial class MainWindow
             MessageInput.Focus();
             e.Handled = true;
         }
+        else if (ctrl && e.Key == Key.H)
+        {
+            ToggleHistoryPanel();
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.N)
+        {
+            StartNewChat();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && IsHistoryPanelOpen)
+        {
+            // Esc closes the Conversations panel; inside a rename box it only cancels the rename.
+            if (!IsHistoryRenameBox(e.OriginalSource))
+            {
+                CloseHistoryPanel();
+                e.Handled = true;
+            }
+        }
         else if (e.Key == Key.Escape && !IsInsideOpenDropDown(e.OriginalSource as DependencyObject))
         {
             var busy = _chatCts != null || _speech.CurrentState != VoiceState.Idle || _autoListening;

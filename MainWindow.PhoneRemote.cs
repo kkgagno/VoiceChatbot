@@ -716,7 +716,7 @@ public partial class MainWindow
             await Dispatcher.InvokeAsync(() =>
             {
                 model = ModelCombo.Text;
-                systemPrompt = GetEffectiveSystemPrompt();
+                systemPrompt = GetEffectiveSystemPrompt(memoryQueryText: userText);
                 temperature = TempSlider.Value;
                 maxTokens = GetMaxTokensForRequest(modelUserText, model);
                 makePhoneAudio = _settings.PhoneRemote.PlayAudioOnPhone && TtsToggle.IsChecked == true;
@@ -860,6 +860,7 @@ public partial class MainWindow
                 }
             }
 
+            await AddKnowledgeContextAsync(messagesForModel, userText, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, phoneDocumentContext);
 
             var phoneContextTokens = await GetContextTokensForRequestAsync(model, ct);

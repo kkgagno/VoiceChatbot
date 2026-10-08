@@ -29,11 +29,35 @@ public class ChatMessage
     }
 }
 
+public sealed class ChatMessageAddedEventArgs : EventArgs
+{
+    public ChatMessageAddedEventArgs(string role, string content, ChatMessage? message = null)
+    {
+        Role = role;
+        Content = content;
+        Message = message;
+    }
+
+    public string Role { get; }
+
+    /// <summary>The full text, before the history's own truncation of very large messages.</summary>
+    public string Content { get; }
+
+    /// <summary>The entry that was added to the history (so a handler can remove it again).</summary>
+    public ChatMessage? Message { get; }
+}
+
 public class ConversationHistory
 {
     private readonly List<ChatMessage> _messages = new();
     private const int MaxStoredContentChars = 12000;
     private int _maxMessages = 20;
+
+    /// <summary>
+    /// Raised after a user or assistant message is added. System/context messages,
+    /// InsertBeforeLast and Seed do not raise it.
+    /// </summary>
+    public event EventHandler<ChatMessageAddedEventArgs>? MessageAdded;
 
     public int MaxMessages
     {
@@ -61,12 +85,35 @@ public class ConversationHistory
 
     public void Add(string role, string content, IEnumerable<string>? imagesBase64)
     {
-        _messages.Add(new ChatMessage
+        var message = new ChatMessage
         {
             Role = role,
             Content = NormalizeStoredContent(content),
             ImagesBase64 = imagesBase64?.Where(i => !string.IsNullOrWhiteSpace(i)).ToList() ?? new List<string>()
-        });
+        };
+        _messages.Add(message);
+        Trim();
+
+        if (role.Equals("user", StringComparison.OrdinalIgnoreCase) ||
+            role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageAdded?.Invoke(this, new ChatMessageAddedEventArgs(role, content ?? "", message));
+        }
+    }
+
+    /// <summary>Replaces the context with earlier messages (e.g. a reopened conversation) without raising MessageAdded.</summary>
+    public void Seed(IEnumerable<ChatMessage> messages)
+    {
+        _messages.Clear();
+        foreach (var message in messages)
+        {
+            _messages.Add(new ChatMessage
+            {
+                Role = message.Role,
+                Content = NormalizeStoredContent(message.Content),
+                Timestamp = message.Timestamp
+            });
+        }
         Trim();
     }
 

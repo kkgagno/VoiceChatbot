@@ -312,6 +312,7 @@ public partial class MainWindow
         };
         stack.Children.Add(image);
         AddImageButtons(assistantMessage, imagePath);
+        RecordAssistantImage(assistantMessage, imagePath);
         ScrollChat();
     }
 

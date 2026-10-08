@@ -78,6 +78,21 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    // Personas: named presets for the system prompt, voice, speech rate and (optionally) model.
+    // "Default" is created from the current prompt/voice/rate on first run.
+    public List<Persona> Personas { get; set; } = new();
+    public string ActivePersona { get; set; } = "";
+    // Knowledge folder: the documents in KnowledgeFolder are indexed into %APPDATA%\VoiceChatbot\knowledge-index.json;
+    // while KnowledgeEnabled is on, up to KnowledgeMaxChunks matching excerpts go with each message.
+    public bool KnowledgeEnabled { get; set; } = false;
+    public string KnowledgeFolder { get; set; } = "";
+    public int KnowledgeMaxChunks { get; set; } = KnowledgeIndex.DefaultMaxChunks;
+    // Saved memories in the system prompt: "Relevant" = best matches for the message (up to
+    // MemoryMaxItems) plus the newest memory, "All" = every saved memory.
+    public string MemoryMode { get; set; } = MemorySelector.ModeRelevant;
+    public int MemoryMaxItems { get; set; } = MemorySelector.DefaultMaxItems;
+    // Saved chat history: one JSON file per conversation in %APPDATA%\VoiceChatbot\conversations.
+    public bool SaveConversationHistory { get; set; } = true;
 
     // Web Search
     public string TavilyApiKey { get; set; } = DefaultTavilyApiKey;

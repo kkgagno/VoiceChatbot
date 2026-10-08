@@ -172,6 +172,30 @@
                                               Style="{StaticResource SwitchToggle}" Click="RenderMarkdownToggle_Click" Margin="0,12,0,2"/>
                                 <TextBlock Style="{StaticResource FieldHint}"
                                            Text="Shows headings, lists, tables, links and code blocks in finished replies. Formatting is never read aloud. Turn off for plain text."/>
+                                <!-- Personas: see MainWindow.Personas.cs -->
+                                <Border Style="{StaticResource Divider}" Margin="0,14,0,12"/>
+                                <TextBlock Text="PERSONAS" Style="{StaticResource SubHeading}"/>
+                                <TextBlock x:Name="PersonaActiveText" Text="Active persona: Default" FontSize="12"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                <ToggleButton x:Name="PersonaModelToggle" Content="Include the current model" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}"
+                                              ToolTip="On: Save and Update also store the model selected above, and picking the persona switches to it. Off: picking the persona keeps whatever model is selected."/>
+                                <TextBox x:Name="PersonaNameBox" local:Ui.Placeholder="New persona name" MaxLength="40" Margin="0,0,0,6"
+                                         KeyDown="PersonaNameBox_KeyDown"
+                                         ToolTip="Name for a new persona made from the current prompt, voice and speech rate. Press Enter to save."/>
+                                <Button x:Name="SavePersonaBtn" Content="Save as new persona" local:Ui.Icon="&#xE710;"
+                                        Style="{StaticResource ActionButton}" Click="SavePersona_Click" Margin="0,0,0,6"
+                                        ToolTip="Save the system prompt, voice and speech rate as a new persona"/>
+                                <UniformGrid Columns="2" Margin="0,0,0,6">
+                                    <Button x:Name="UpdatePersonaBtn" Content="Update persona" local:Ui.Icon="&#xE74E;"
+                                            Style="{StaticResource SecondaryButton}" Click="UpdatePersona_Click" Margin="0,0,3,0"
+                                            ToolTip="Save the current system prompt, voice and speech rate into the active persona"/>
+                                    <Button x:Name="DeletePersonaBtn" Content="Delete persona" local:Ui.Icon="&#xE74D;"
+                                            Style="{StaticResource DangerButton}" Click="DeletePersona_Click" Margin="3,0,0,0"
+                                            ToolTip="Delete the active persona. The last persona cannot be deleted."/>
+                                </UniformGrid>
+                                <TextBlock x:Name="PersonaStatusText" Style="{StaticResource FieldHint}"
+                                           Text="Pick a persona from the top bar. Edits to the prompt, voice or speed are kept until you pick another persona; Update persona saves them."/>
                             </StackPanel>
                         </Expander>
 
@@ -499,6 +523,33 @@
                                 <ToggleButton x:Name="StreamToggle" Content="Stream responses" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="StreamToggle_Click"/>
 
+                                <Border Style="{StaticResource Divider}" Margin="0,8,0,12"/>
+
+                                <StackPanel Style="{StaticResource FieldBlock}" Margin="0,0,0,8">
+                                    <TextBlock Text="Memories in prompt" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="MemoryModeCombo" SelectionChanged="MemoryModeCombo_SelectionChanged"
+                                              ToolTip="Relevant sends only the saved memories that match your message, plus the newest one. All sends every saved memory with every message.">
+                                        <ComboBoxItem Content="Relevant"/>
+                                        <ComboBoxItem Content="All"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel x:Name="MemoryMaxItemsPanel">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Matching memories" Style="{StaticResource SectionLabel}"/>
+                                        <TextBlock x:Name="MemoryMaxItemsValue" Grid.Column="1" Text="4" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="MemoryMaxItemsSlider" Minimum="1" Maximum="20" Value="4" SmallChange="1" LargeChange="2"
+                                            IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,4"
+                                            ValueChanged="MemoryMaxItemsSlider_ValueChanged"
+                                            ToolTip="How many of the best-matching saved memories to include with each message"/>
+                                </StackPanel>
+                                <TextBlock x:Name="MemoryPromptHint" Style="{StaticResource FieldHint}" Margin="0,0,0,10"
+                                           Text="Each message gets up to 4 saved memories that match it, plus the newest one."/>
+
                                 <UniformGrid Columns="2" Margin="0,4,0,0">
                                     <Button x:Name="SummarizeBtn" Content="Save Memory" local:Ui.Icon="&#xE74E;"
                                             Style="{StaticResource ActionButton}" Click="SummarizeConversation_Click" Margin="0,0,3,6"/>
@@ -538,6 +589,69 @@
                                 </UniformGrid>
                             </StackPanel>
                         </Border>
+
+                        <!-- ================= Chat history ================= -->
+                        <Expander Header="Chat History" local:Ui.Icon="&#xE823;" local:Ui.Subtitle="Saved conversations">
+                            <StackPanel>
+                                <ToggleButton x:Name="SaveHistoryToggle" Content="Save conversations" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="SaveHistoryToggle_Click"
+                                              ToolTip="Record every chat on this PC so it can be reopened from the Conversations panel"/>
+                                <TextBlock x:Name="HistorySettingsHint" Style="{StaticResource FieldHint}" Margin="0,0,0,10"
+                                           Text="Every chat is saved on this PC so you can reopen it later (Ctrl+H)."/>
+                                <UniformGrid Columns="2">
+                                    <Button Content="Browse" local:Ui.Icon="&#xE81C;" Style="{StaticResource SecondaryButton}"
+                                            Click="HistoryToggle_Click" Margin="0,0,3,0" ToolTip="Open the Conversations panel (Ctrl+H)"/>
+                                    <Button Content="Open Folder" local:Ui.Icon="&#xE838;" Style="{StaticResource SecondaryButton}"
+                                            Click="OpenHistoryFolder_Click" Margin="3,0,0,0"
+                                            ToolTip="Show the saved conversation files in Explorer"/>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ================= Knowledge folder ================= -->
+                        <Expander Header="Knowledge Folder" local:Ui.Icon="&#xE8B7;" local:Ui.Subtitle="Answer from your own documents">
+                            <StackPanel>
+                                <ToggleButton x:Name="KnowledgeToggle" Content="Use my documents" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="KnowledgeToggle_Click"
+                                              ToolTip="Search the folder for passages that match each message and send the best ones to the model"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Folder" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="KnowledgeFolderBox" local:Ui.Placeholder="C:\Users\you\Documents\Notes"
+                                                 LostFocus="KnowledgeFolderBox_LostFocus" KeyDown="KnowledgeFolderBox_KeyDown"
+                                                 ToolTip="Folder with your documents. Subfolders are included. Press Enter or click Browse to use it."/>
+                                        <Button x:Name="KnowledgeBrowseBtn" Grid.Column="1" Content="Browse" local:Ui.Icon="&#xE838;"
+                                                Style="{StaticResource SecondaryButton}" Margin="6,0,0,0"
+                                                Click="KnowledgeBrowse_Click" ToolTip="Pick the folder"/>
+                                    </Grid>
+                                </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Excerpts per message" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="KnowledgeMaxChunksValue" Grid.Column="1" Text="4" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="KnowledgeMaxChunksSlider" Minimum="1" Maximum="10" Value="4" SmallChange="1" LargeChange="2"
+                                        IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,10"
+                                        ValueChanged="KnowledgeMaxChunksSlider_ValueChanged"
+                                        ToolTip="Most excerpts (about 900 characters each) added to one message"/>
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                    <TextBlock x:Name="KnowledgeStatusText" Text="Off. Turn on to let answers use your documents."
+                                               FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                </Border>
+                                <Button x:Name="KnowledgeReindexBtn" Content="Reindex" local:Ui.Icon="&#xE72C;"
+                                        Style="{StaticResource SecondaryButton}" Click="KnowledgeReindex_Click" Margin="0,0,0,8"
+                                        ToolTip="Read new and changed files now, and retry files that could not be read"/>
+                                <TextBlock Style="{StaticResource FieldHint}"
+                                           Text="Reads PDF, Word (.docx), text, Markdown, CSV, JSON, XML and log files, including subfolders. Files over 25 MB are skipped. Only the few passages that match your message are sent with it, and the chat shows which files were used."/>
+                            </StackPanel>
+                        </Expander>
 
                         <!-- ================= Web search ================= -->
                         <Expander Header="Web Search" local:Ui.Icon="&#xE774;" local:Ui.Subtitle="Tavily live search">
@@ -796,8 +910,14 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
-                        <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE700;"
-                                Click="SidebarToggle_Click" ToolTip="Show / hide settings (Ctrl+B)" Margin="0,0,10,0"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE700;"
+                                    Click="SidebarToggle_Click" ToolTip="Show / hide settings (Ctrl+B)"/>
+                            <Button x:Name="HistoryBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE81C;"
+                                    Click="HistoryToggle_Click" ToolTip="Conversations (Ctrl+H)" Margin="2,0,0,0"/>
+                            <Button x:Name="NewChatBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE710;"
+                                    Click="NewChat_Click" ToolTip="New chat (Ctrl+N)" Margin="2,0,0,0"/>
+                        </StackPanel>
 
                         <!-- State -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -841,6 +961,9 @@
 
                         <!-- Voice controls -->
                         <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                            <ComboBox x:Name="PersonaCombo" Width="140" Margin="0,0,8,0" VerticalAlignment="Center"
+                                      MaxDropDownHeight="360" ToolTip="Persona"
+                                      SelectionChanged="PersonaCombo_SelectionChanged"/>
                             <Button x:Name="ListenBtn" Content="Listen" local:Ui.Icon="&#xE720;" Style="{StaticResource ActionButton}"
                                     Click="ListenToggle_Click" Margin="0,0,6,0" ToolTip="Listen for one question (Ctrl+L)"/>
                             <ToggleButton x:Name="AlwaysListenToggle" Content="Auto" local:Ui.Icon="&#xE8EE;"
@@ -980,6 +1103,47 @@
                                Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
                 </StackPanel>
             </Border>
+
+            <!-- Conversations flyout (Ctrl+H): saved chats over the chat area -->
+            <Grid x:Name="HistoryOverlay" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed">
+                <Border Background="#99000000" MouseLeftButtonDown="HistoryScrim_MouseLeftButtonDown"/>
+                <Border Width="360" HorizontalAlignment="Left" Background="{DynamicResource PanelBgBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="HistoryFlyoutShift"/>
+                    </Border.RenderTransform>
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.55" Color="Black"/>
+                    </Border.Effect>
+                    <DockPanel Margin="14,12,8,12">
+                        <Grid DockPanel.Dock="Top" Margin="2,0,6,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE81C;" Style="{StaticResource IconText}" Foreground="{DynamicResource PrimaryLightBrush}"/>
+                                <TextBlock Text="Conversations" FontSize="14" FontWeight="SemiBold" Margin="8,0,0,0"
+                                           Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE710;"
+                                    Click="NewChat_Click" ToolTip="New chat (Ctrl+N)"/>
+                            <Button Grid.Column="2" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE711;"
+                                    Click="CloseHistory_Click" ToolTip="Close (Esc)"/>
+                        </Grid>
+                        <TextBox x:Name="HistorySearchBox" DockPanel.Dock="Top" Margin="0,0,6,10"
+                                 local:Ui.Placeholder="Search titles and messages"
+                                 TextChanged="HistorySearchBox_TextChanged" PreviewKeyDown="HistorySearchBox_PreviewKeyDown"
+                                 ToolTip="Every word must appear in the conversation. Enter opens the top result."/>
+                        <TextBlock x:Name="HistoryFooterText" DockPanel.Dock="Bottom" Style="{StaticResource FieldHint}"
+                                   Margin="4,10,6,0" TextTrimming="CharacterEllipsis"/>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="HistoryListPanel" Margin="0,0,6,0"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>
