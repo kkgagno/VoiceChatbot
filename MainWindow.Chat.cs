@@ -458,6 +458,9 @@ public partial class MainWindow
         return next;
     }
 
+    /// <summary>How much of the live transcript (its end) goes into the system prompt.</summary>
+    private const int LiveTranscriptContextChars = 8000;
+
     private string GetLiveTranscriptionSystemContext()
     {
         var hasTranscript = !string.IsNullOrWhiteSpace(_latestLiveTranscript);
@@ -478,8 +481,8 @@ public partial class MainWindow
         if (hasTranscript)
         {
             var transcript = _latestLiveTranscript.Trim();
-            if (transcript.Length > 8000)
-                transcript = transcript[^8000..];
+            if (transcript.Length > LiveTranscriptContextChars)
+                transcript = transcript[^LiveTranscriptContextChars..];
 
             sb.AppendLine();
             sb.AppendLine("Latest live transcript:");

@@ -146,6 +146,19 @@ Turn on **Only respond after the wake word** under **Voice Input** to have the a
 - Change the phrase in the **Wake word** box (default `hey onyx`). It is matched in the Whisper transcript, ignoring case and punctuation, with the usual spellings of "hey" (hay, hi, hei, a) and small spelling differences in the name ("Hey, Onix.", "Hey Annex", "Hey on X"), but not other names such as "Hey Annie".
 - Saved as `AutoDetectVoice` (false when the switch is on) and `WakeWord` in `settings.json`. The old default "hey assistant" becomes "hey onyx"; a phrase you typed is kept. The openWakeWord detector ("Hey Jarvis") from 1.0.16 has been removed.
 
+### Live Transcriber
+
+**Transcribe** (next to **Listen** and **Mic**) opens the Live Transcriber, a separate window for meetings, calls and videos. It remembers its size, position, pane heights and text size (saved as `Transcriber` in `settings.json`).
+
+- **Source**: **Microphone** (the microphone selected under **Voice Input**) or **PC audio** (everything the PC plays, recorded from the default speakers or headphones). Switching while recording carries on with the new source.
+- Audio is cut into chunks at natural pauses (half a second of silence once a chunk is 2 seconds long, at most 20 seconds) and stretches of silence are skipped. Chunks are transcribed one at a time by the same Whisper backend as voice input, and each becomes a line such as `[03:12] ...` (time since the session started). **Stop** finishes the chunks still being transcribed before it says "Stopped".
+- While the assistant is speaking a reply, the transcriber pauses so the assistant's voice is not transcribed.
+- Drag the bar between the transcript and the summary to resize them, and the grip under the **System message** (collapsed by default) to resize it. **Ctrl+mouse wheel**, **Ctrl+plus/minus** or the **A** buttons change the text size. The transcript scrolls with new text only when you are already at the end.
+- When stopped, the transcript can be edited (fix names before summarizing). **Summarize** writes a **Summary**, **Action items**, **Meeting notes** or **Key points** with the chat model, also while recording; press it again to cancel.
+- **Copy** the transcript or summary, **Save...** it as Markdown or text, or **Send to chat**: the transcript and summary become the main chat's context and the message box starts with "Using the transcript, ". The chat also gets the transcript as context while it grows (its last 8,000 characters plus the summary).
+- Each session is saved automatically when you stop, clear or close the window, to `%APPDATA%\VoiceChatbot\transcripts\transcript_yyyyMMdd_HHmmss.md`. **Open folder** shows them.
+- Shortcuts in the window: **Ctrl+R** start/stop, **Ctrl+S** save, **Ctrl+0** default text size. **Esc** does nothing there, so it cannot stop a recording by accident.
+
 ## Conversations, memory and knowledge
 
 ### Saved conversations

@@ -73,13 +73,15 @@ public partial class MainWindow
             return;
         }
 
+        // Not owned by the main window: an owned window always stays on top of it, and the transcriber
+        // is large and often left running beside the chat. The app closes it on exit (Window_Closing).
         _transcriptionWindow = new TranscriptionWindow(
             _speech,
+            _settings.Transcriber,
+            () => SettingsManager.Save(_settings, userChange: false),
             SummarizeLiveTranscriptAsync,
-            OnLiveTranscriptionContextUpdated)
-        {
-            Owner = this
-        };
+            OnLiveTranscriptionContextUpdated,
+            SendLiveTranscriptToChat);
         _transcriptionWindow.Closed += (_, _) =>
         {
             _transcriptionWindow = null;
@@ -90,17 +92,21 @@ public partial class MainWindow
         AddSystemMessage("Live transcription window opened. Main chat will use its transcript and summary as context.");
     }
 
-    private async Task<string> SummarizeLiveTranscriptAsync(string transcript, string systemPrompt, CancellationToken ct)
+    /// <param name="instruction">What to write (summary, action items, meeting notes, key points); see TranscriptSummaryStyles.</param>
+    private async Task<string> SummarizeLiveTranscriptAsync(string transcript, string systemPrompt, string instruction, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ModelCombo.Text))
             throw new InvalidOperationException("Select a model first.");
+
+        if (string.IsNullOrWhiteSpace(instruction))
+            instruction = TranscriptSummaryStyles.GetInstruction(TranscriptSummaryStyles.Summary);
 
         var messages = new List<ChatMessage>
         {
             new()
             {
                 Role = "user",
-                Content = "Summarize this live transcript. Include important facts, decisions, action items, questions, names, dates, and numbers. Keep it concise but useful for the main assistant to reference later.\n\nTRANSCRIPT:\n" + transcript
+                Content = instruction.Trim() + "\n\nTRANSCRIPT:\n" + transcript
             }
         };
 
@@ -125,6 +131,34 @@ public partial class MainWindow
     {
         _latestLiveTranscript = transcript.Trim();
         _latestLiveTranscriptSummary = summary.Trim();
+    }
+
+    /// <summary>
+    /// "Send to chat" in the transcriber: makes the transcript (and summary) the chat's transcription
+    /// context, brings this window forward and starts a question about it in the message box.
+    /// </summary>
+    private void SendLiveTranscriptToChat(string transcript, string summary)
+    {
+        OnLiveTranscriptionContextUpdated(transcript, summary);
+        ShowFromTray();
+
+        var words = LiveTranscriptText.CountWords(transcript);
+        var parts = new List<string>();
+        if (words > 0)
+            parts.Add(words == 1 ? "1 word of transcript" : $"{words:N0} words of transcript");
+        if (!string.IsNullOrWhiteSpace(summary))
+            parts.Add("the summary");
+        var note = transcript.Trim().Length > LiveTranscriptContextChars
+            ? $" The chat sees the last {LiveTranscriptContextChars:N0} characters of the transcript" +
+              (string.IsNullOrWhiteSpace(summary) ? "; summarize it first to cover all of it." : " plus the summary.")
+            : "";
+        AddSystemMessage($"Live transcript added to the chat context ({string.Join(" and ", parts)}).{note} Ask about it below.");
+
+        // Keep a draft the user already typed.
+        if (string.IsNullOrWhiteSpace(MessageInput.Text))
+            MessageInput.Text = "Using the transcript, ";
+        MessageInput.Focus();
+        MessageInput.CaretIndex = MessageInput.Text.Length;
     }
 
     private async void SummarizeConversation_Click(object sender, RoutedEventArgs e)

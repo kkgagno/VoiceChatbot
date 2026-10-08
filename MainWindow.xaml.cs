@@ -374,7 +374,7 @@ public partial class MainWindow : Window
     /// True when a saved position (not the -1/-1 "never saved" default) puts the title bar on the
     /// connected monitors, including monitors at negative coordinates.
     /// </summary>
-    private static bool IsSavedWindowPositionVisible(double left, double top, double width)
+    internal static bool IsSavedWindowPositionVisible(double left, double top, double width)
     {
         if (double.IsNaN(left) || double.IsNaN(top) || double.IsInfinity(left) || double.IsInfinity(top))
             return false;
@@ -922,6 +922,20 @@ public partial class MainWindow : Window
 
         try
         {
+            // First, so its window size is in the settings saved below and its last words are transcribed
+            // (and the session saved) while the speech engine still runs.
+            if (_transcriptionWindow != null)
+            {
+                try
+                {
+                    await _transcriptionWindow.CloseForAppExitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Could not close the Live Transcriber cleanly.", ex);
+                }
+            }
+
             SaveSettings(userChange: false);
             _schedulerTimer?.Stop();
             _schedulerStore.Save();

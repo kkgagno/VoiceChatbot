@@ -136,6 +136,31 @@ public class AppSettings
 
     // Local iPhone/browser remote. Disabled by default and only exposed on the LAN when started.
     public PhoneRemoteSettings PhoneRemote { get; set; } = new();
+
+    // Live Transcriber window: size, pane heights, text size, audio source and summary style.
+    public TranscriberSettings Transcriber { get; set; } = new();
+}
+
+public class TranscriberSettings
+{
+    public const string DefaultSystemPrompt = "You are a live transcriber and summarizer. Produce accurate, concise transcripts from spoken audio. When summarizing, preserve decisions, action items, names, dates, numbers, and important context. Do not invent details.";
+    public const string SourceMicrophone = "Microphone";
+    public const string SourcePcAudio = "PC audio";
+
+    // -1/-1 = not placed yet (centered on screen).
+    public double Left { get; set; } = -1;
+    public double Top { get; set; } = -1;
+    public double Width { get; set; } = 1000;
+    public double Height { get; set; } = 760;
+    public bool Maximized { get; set; } = false;
+    // Star heights of the transcript and summary panes (only their ratio matters).
+    public double TranscriptPaneHeight { get; set; } = 2;
+    public double SummaryPaneHeight { get; set; } = 1;
+    public double SystemPromptHeight { get; set; } = 90;
+    public double FontSize { get; set; } = 15;
+    public string Source { get; set; } = SourceMicrophone;
+    public string SummaryStyle { get; set; } = TranscriptSummaryStyles.Summary;
+    public string SystemPrompt { get; set; } = DefaultSystemPrompt;
 }
 
 public class PhoneRemoteSettings
@@ -205,6 +230,8 @@ public static class SettingsManager
 
                 var secrets = SettingsSecrets.UnprotectFields(root, SecretFields.Select(f => f.Path), Protector);
                 var settings = root.Deserialize<AppSettings>(JsonOpts) ?? new AppSettings();
+                // "Transcriber": null in the file would otherwise leave no transcriber settings at all.
+                settings.Transcriber ??= new TranscriberSettings();
                 if (!AppSettings.IsUsableTranscriberCommand(settings.ExternalNpuTranscriberCommand))
                     settings.ExternalNpuTranscriberCommand = AppSettings.DefaultRyzenAiWhisperCommand;
 
