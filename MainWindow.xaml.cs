@@ -266,6 +266,7 @@ public partial class MainWindow : Window
         RateSlider.Value = _settings.SpeechRate;
         VolumeSlider.Value = _settings.Volume;
         TtsToggle.IsChecked = _settings.TtsEnabled;
+        ApplyStreamingSpeechSettings();
         KokoroHostBox.Text = _settings.KokoroRemoteUrl;
         SelectKokoroModeCombo(_settings.KokoroMode);
         UpdateKokoroHint();
@@ -380,6 +381,7 @@ public partial class MainWindow : Window
         _settings.SpeechRate = (int)RateSlider.Value;
         _settings.Volume = (int)VolumeSlider.Value;
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
+        SaveStreamingSpeechSettings();
         _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;

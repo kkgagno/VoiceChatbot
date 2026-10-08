@@ -106,6 +106,12 @@ Click **Test** to check the connection. If the server lists its voices, the voic
 
 Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
 
+### Speaking before the reply finishes
+
+Replies are spoken sentence by sentence: Kokoro renders the next sentence while the current one plays, so speech starts after the first sentence instead of after the whole reply.
+
+With **Stream responses** on, the assistant starts talking while the model is still writing. Turn this off with **Start speaking before the reply finishes** under **Voice Output** (saved as `StreamingSpeechEnabled`). Replies to code or script requests still wait until they are complete, and code blocks are never read aloud. **Stop** (or **Esc**) and the microphone button stop speech straight away. The **Replay Audio** and **Download Audio** buttons appear once the whole reply has been spoken.
+
 ## Optional integrations
 
 ### Web search

@@ -227,6 +227,13 @@
                             <StackPanel>
                                 <ToggleButton x:Name="TtsToggle" Content="Speak responses" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="TtsToggle_Click"/>
+                                <ToggleButton x:Name="StreamingSpeechToggle" IsChecked="True" Margin="0,2,0,2"
+                                              Style="{StaticResource SwitchToggle}" Click="StreamingSpeechToggle_Click"
+                                              ToolTip="Speak each sentence as soon as the model writes it instead of waiting for the whole reply.">
+                                    <TextBlock Text="Start speaking before the reply finishes" TextWrapping="Wrap"/>
+                                </ToggleButton>
+                                <TextBlock Text="Needs Stream responses. Code and script requests still wait for the full reply."
+                                           Style="{StaticResource FieldHint}" Margin="0,0,0,8"/>
 
                                 <TextBlock Text="KOKORO SERVER" Style="{StaticResource SubHeading}"/>
                                 <StackPanel Style="{StaticResource FieldBlock}">

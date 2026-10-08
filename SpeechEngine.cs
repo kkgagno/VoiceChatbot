@@ -31,7 +31,7 @@ public class AudioDeviceInfo
     public override string ToString() => $"[{Index}] {Name}";
 }
 
-public class SpeechEngine : IDisposable
+public partial class SpeechEngine : IDisposable
 {
     // Components
     private bool _disposed;
@@ -1505,10 +1505,11 @@ public class SpeechEngine : IDisposable
     {
         var thread = new Thread(() =>
         {
+            ManualResetEvent? done = null;
             try
             {
                 using var reader = new NAudio.Wave.WaveFileReader(filePath);
-                var done = new ManualResetEvent(false);
+                done = new ManualResetEvent(false);
                 _playbackStopSignal = done;
                 _waveOut = new NAudio.Wave.WaveOutEvent();
                 _waveOut.Volume = Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
@@ -1532,8 +1533,12 @@ public class SpeechEngine : IDisposable
                 try { _waveOut?.Dispose(); } catch { }
                 _waveOut = null;
                 _playbackStopSignal = null;
-                SetState(VoiceState.Idle);
-                SpeechFinished?.Invoke();
+                // A speech session that took over playback raises SpeechFinished itself.
+                if (done == null || !ReferenceEquals(done, _supersededPlaybackSignal))
+                {
+                    SetState(VoiceState.Idle);
+                    SpeechFinished?.Invoke();
+                }
             }
         });
         thread.IsBackground = true;
@@ -1571,6 +1576,8 @@ public class SpeechEngine : IDisposable
 
     public void StopSpeaking()
     {
+        // Cancel a sentence-by-sentence speech session: drops its queue and stops its clip.
+        CancelSpeechSession();
         // Stop audio playback
         try { _waveOut?.Stop(); } catch { }
         try { _playbackStopSignal?.Set(); } catch { }

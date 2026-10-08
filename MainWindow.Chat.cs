@@ -597,6 +597,7 @@ public partial class MainWindow
         _chatCts = new CancellationTokenSource();
         var model = ModelCombo.Text;
         AssistantMessageUi? assistantMessage = null;
+        StreamingSpeech? streamingSpeech = null;
 
         SetUIState("thinking", "Thinking...");
 
@@ -790,6 +791,7 @@ public partial class MainWindow
                 // Stream
                 SetUIState("thinking", "Thinking...");
                 var fullText = new StringBuilder();
+                streamingSpeech = BeginStreamingSpeech(modelUserText, assistantMessage);
                 await _ollama.ChatStreamAsync(
                     model,
                     messagesForModel,
@@ -806,6 +808,7 @@ public partial class MainWindow
                             var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
                             assistantMessage.Body.Text = CleanDisplayText(streamingText, preserveCodeBlocks: shouldPreserveCode);
                             ScrollChat();
+                            FeedStreamingSpeech(streamingSpeech, token);
                         }, DispatcherPriority.Background);
                     },
                     onComplete: async full =>
@@ -833,10 +836,13 @@ public partial class MainWindow
                                 {
                                     SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
                                     _history.Add("assistant", cleaned);
-                                    SpeakLastResponse(cleaned, assistantMessage);
+                                    // With live speech the reply is already being spoken; otherwise speak it now.
+                                    if (!FinishStreamingSpeech(streamingSpeech, full, completed))
+                                        SpeakLastResponse(cleaned, assistantMessage);
                                 }
                                 else
                                 {
+                                    CancelStreamingSpeech(streamingSpeech);
                                     SetUIState("idle", "Ready");
                                 }
                             });
@@ -845,6 +851,7 @@ public partial class MainWindow
                         {
                             Dispatcher.Invoke(() =>
                             {
+                                CancelStreamingSpeech(streamingSpeech);
                                 assistantMessage.Body.Text = $"Error: {ex.Message}";
                                 AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
                                 SetUIState("idle", "Ready");
@@ -855,6 +862,7 @@ public partial class MainWindow
                     {
                         Dispatcher.Invoke(() =>
                         {
+                            CancelStreamingSpeech(streamingSpeech);
                             assistantMessage.Body.Text = $"Error: {ex.Message}";
                             AddSystemMessage($"API Error: {ex.Message}");
                             SetUIState("idle", "Ready");
@@ -898,12 +906,14 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
+            CancelStreamingSpeech(streamingSpeech);
             if (assistantMessage is not null)
                 assistantMessage.Body.Text += " [cancelled]";
             SetUIState("idle", "Ready");
         }
         catch (Exception ex)
         {
+            CancelStreamingSpeech(streamingSpeech);
             if (assistantMessage is not null)
                 assistantMessage.Body.Text = $"Error: {ex.Message}";
             AddSystemMessage($"Chat error: {ex.Message}");

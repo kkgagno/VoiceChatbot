@@ -49,6 +49,8 @@ public class AppSettings
     public int SpeechRate { get; set; } = 1;
     public int Volume { get; set; } = 80;
     public bool TtsEnabled { get; set; } = true;
+    // Speak each sentence of a streamed reply as soon as it is written.
+    public bool StreamingSpeechEnabled { get; set; } = true;
 
     // Kokoro text-to-speech. Leave the remote URL blank to use only the bundled local server.
     // Accepts "192.168.1.50", "192.168.1.50:8880" or "http://host:8880/v1".

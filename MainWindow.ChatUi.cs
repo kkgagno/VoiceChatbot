@@ -459,7 +459,7 @@ public partial class MainWindow
     }
 
     // Speak the last assistant response
-    private async void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
+    private void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
     {
         if (!string.IsNullOrWhiteSpace(text) && TtsToggle.IsChecked == true)
         {
@@ -473,18 +473,13 @@ public partial class MainWindow
                     return;
                 }
 
-                var audioPath = await _speech.CreateSpeechAudioFileAsync(speechText, GetAssistantAudioDirectory());
-                if (!string.IsNullOrWhiteSpace(audioPath))
-                {
-                    if (assistantMessage != null)
-                        AddAudioButtons(assistantMessage, audioPath);
-
-                    _speech.PlayAudioFile(audioPath);
-                    // SpeechFinished will restart auto-listen
-                    return;
-                }
-
-                _speech.Speak(speechText);
+                // Speak sentence by sentence so playback starts after the first sentence is rendered.
+                // The Replay/Download buttons appear once the whole reply has been spoken and saved.
+                var session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
+                AddAudioButtonsWhenSpoken(session, assistantMessage);
+                foreach (var sentence in SentenceChunker.Split(speechText))
+                    session.Enqueue(sentence);
+                session.Complete();
                 // SpeechFinished will restart auto-listen
                 return;
             }
