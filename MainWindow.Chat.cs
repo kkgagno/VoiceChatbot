@@ -323,7 +323,10 @@ public partial class MainWindow
                 Role = m.Role,
                 Content = m.Content,
                 ImagesBase64 = m.ImagesBase64.ToList(),
-                Timestamp = m.Timestamp
+                Timestamp = m.Timestamp,
+                ToolCalls = m.ToolCalls,
+                ToolCallId = m.ToolCallId,
+                ToolName = m.ToolName
             }).ToList();
 
             continuationMessages.Add(new ChatMessage
@@ -732,7 +735,12 @@ public partial class MainWindow
                 }
             }
 
-            var shouldSearchWeb = WebSearchToggle.IsChecked == true && ShouldTriggerWebSearch(modelUserText);
+            // With tool calling the model decides when to search; only explicit commands force a search here.
+            var toolsActive = IsToolCallingActive(model);
+            var shouldSearchWeb = WebSearchToggle.IsChecked == true && (toolsActive
+                ? WebSearchPhrases.IsExplicitCommand(modelUserText)
+                : ShouldTriggerWebSearch(modelUserText));
+            var searchedWebThisTurn = false;
             if (shouldSearchWeb)
             {
                 if (string.IsNullOrWhiteSpace(_tavily.ApiKey))
@@ -747,6 +755,7 @@ public partial class MainWindow
                     if (!string.IsNullOrWhiteSpace(searchContext))
                     {
                         RememberWebSearchContext(webSearchQuery, searchContext);
+                        searchedWebThisTurn = true;
                         AddSystemMessage("Web search results added to this response.");
                         messagesForModel = BuildMessagesForModel(modelUserText, imagesBase64);
                         InsertTransientContexts(messagesForModel, transientContexts);
@@ -784,6 +793,13 @@ public partial class MainWindow
             var contextTokens = await GetContextTokensForRequestAsync(model, _chatCts.Token);
             var droppedContextMessages = TrimMessagesToContextBudget(messagesForModel, systemPrompt, contextTokens, maxTokens);
             AddTokenEstimateDiagnostic(userText, messagesForModel, systemPrompt, contextTokens, maxTokens, droppedContextMessages);
+
+            if (toolsActive &&
+                await TryAnswerWithToolsAsync(model, modelUserText, messagesForModel, systemPrompt, maxTokens, contextTokens,
+                    assistantMessage, skipWebSearchTool: searchedWebThisTurn, _chatCts.Token))
+            {
+                return;
+            }
 
             if (StreamToggle.IsChecked == true)
             {
@@ -940,33 +956,12 @@ public partial class MainWindow
         }
     }
 
-    private static bool ShouldTriggerWebSearch(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
+    // Used when tools are off, and by the scheduler and phone remote: the original phrases plus explicit commands.
+    private static bool ShouldTriggerWebSearch(string text) =>
+        WebSearchPhrases.IsLegacyTrigger(text) || WebSearchPhrases.IsExplicitCommand(text);
 
-        var normalized = Regex.Replace(text.ToLowerInvariant(), @"\s+", " ").Trim();
-        return normalized.Contains("search online") ||
-               normalized.Contains("check the internet") ||
-               normalized.Contains("search the internet") ||
-               normalized.Contains("check online") ||
-               normalized.Contains("look online") ||
-               normalized.Contains("web search");
-    }
-
-    private static string RemoveWebSearchTriggerPhrases(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return text;
-
-        var cleaned = Regex.Replace(
-            text,
-            @"\b(search online|check the internet|search the internet|check online|look online|web search)\b[:,;\s-]*",
-            "",
-            RegexOptions.IgnoreCase);
-        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ").Trim();
-        return string.IsNullOrWhiteSpace(cleaned) ? text : cleaned;
-    }
+    private static string RemoveWebSearchTriggerPhrases(string text) =>
+        WebSearchPhrases.StripCommandPhrases(text);
 
     private void WebSearchToggle_Click(object sender, RoutedEventArgs e)
     {

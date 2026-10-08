@@ -173,6 +173,187 @@ public class OllamaClient : IDisposable
         catch (Exception ex) { onError(ex); }
     }
 
+    // ---- Chat with tools (streaming) ----
+    /// <summary>
+    /// Streams one turn with tool definitions. Content tokens go to onToken as they arrive; tool calls
+    /// are collected and returned. Throws ToolsNotSupportedException when the backend rejects tools,
+    /// HttpRequestException for other backend errors and OperationCanceledException on cancel.
+    /// </summary>
+    public async Task<ChatTurnResult> ChatStreamWithToolsAsync(string model, List<ChatMessage> messages, string systemPrompt,
+        double temperature, int maxTokens, int contextTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken,
+        CancellationToken ct = default)
+    {
+        ResetLastResponseMetadata();
+        var toolsToSend = tools is { Count: > 0 } ? tools : null;
+
+        return IsOpenAiCompatible
+            ? await StreamOpenAiTurnAsync(model, messages, systemPrompt, temperature, maxTokens, toolsToSend, onToken, ct).ConfigureAwait(false)
+            : await StreamOllamaTurnAsync(model, messages, systemPrompt, temperature, maxTokens, contextTokens, toolsToSend, onToken, ct).ConfigureAwait(false);
+    }
+
+    private async Task<ChatTurnResult> StreamOllamaTurnAsync(string model, List<ChatMessage> messages, string systemPrompt,
+        double temperature, int maxTokens, int contextTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken,
+        CancellationToken ct)
+    {
+        var body = BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, tools);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
+
+        var content = new StringBuilder();
+        var toolCalls = new List<ToolCall>();
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct).ConfigureAwait(false)) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            JsonDocument chunk;
+            try { chunk = JsonDocument.Parse(line); }
+            catch (JsonException) { continue; }
+
+            using (chunk)
+            {
+                var root = chunk.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) continue;
+                ThrowIfStreamError(root, tools is not null);
+
+                if (root.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object)
+                {
+                    if (msg.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String)
+                    {
+                        var token = c.GetString() ?? "";
+                        if (token.Length > 0)
+                        {
+                            content.Append(token);
+                            onToken?.Invoke(token);
+                        }
+                    }
+                    toolCalls.AddRange(ChatToolWire.ParseOllamaToolCalls(msg));
+                }
+
+                if (root.TryGetProperty("done", out var done) && done.ValueKind == JsonValueKind.True)
+                {
+                    try { CaptureOllamaResponseMetadata(root); }
+                    catch (InvalidOperationException) { /* Unexpected metadata shape; the answer is still fine. */ }
+                    break;
+                }
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return new ChatTurnResult(content.ToString(), toolCalls, LastFinishReason);
+    }
+
+    private async Task<ChatTurnResult> StreamOpenAiTurnAsync(string model, List<ChatMessage> messages, string systemPrompt,
+        double temperature, int maxTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken, CancellationToken ct)
+    {
+        var body = BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, tools);
+        using var request = CreateOpenAiRequest(HttpMethod.Post, $"{_openAiBaseUrl}/chat/completions");
+        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
+
+        var content = new StringBuilder();
+        var toolCalls = new OpenAiToolCallAccumulator();
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct).ConfigureAwait(false)) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var data = line[5..].Trim();
+            if (data == "[DONE]") break;
+
+            JsonDocument chunk;
+            try { chunk = JsonDocument.Parse(data); }
+            catch (JsonException) { continue; }
+
+            using (chunk)
+            {
+                var root = chunk.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) continue;
+                ThrowIfStreamError(root, tools is not null);
+                CaptureOpenAiUsage(root);
+
+                if (!root.TryGetProperty("choices", out var choices) ||
+                    choices.ValueKind != JsonValueKind.Array ||
+                    choices.GetArrayLength() == 0)
+                {
+                    continue;
+                }
+
+                string token;
+                try
+                {
+                    var choice = choices[0];
+                    CaptureOpenAiChoiceMetadata(choice);
+                    token = ExtractOpenAiChoiceText(choice);
+
+                    if (choice.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object &&
+                        delta.TryGetProperty("tool_calls", out var deltaCalls))
+                    {
+                        toolCalls.Add(deltaCalls);
+                    }
+                    else if (choice.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object &&
+                             message.TryGetProperty("tool_calls", out var messageCalls))
+                    {
+                        toolCalls.Add(messageCalls);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    continue; // Skip chunks with an unexpected shape.
+                }
+
+                if (!string.IsNullOrEmpty(token))
+                {
+                    content.Append(token);
+                    onToken?.Invoke(token);
+                }
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return new ChatTurnResult(content.ToString(), toolCalls.Build(), LastFinishReason);
+    }
+
+    // Some servers report errors inside the stream ({"error": ...}) after a 200 response.
+    private static void ThrowIfStreamError(JsonElement root, bool toolsSent)
+    {
+        if (!root.TryGetProperty("error", out var error) || error.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return;
+
+        var message = error.ValueKind == JsonValueKind.String
+            ? error.GetString() ?? ""
+            : error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var m)
+                ? m.ToString()
+                : error.GetRawText();
+        if (toolsSent && ChatToolWire.LooksLikeToolsUnsupported(400, message))
+            throw new ToolsNotSupportedException($"The model or server does not support tool calling: {message}");
+
+        throw new HttpRequestException($"Backend error: {message}");
+    }
+
+    private void CaptureOpenAiUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
+            return;
+
+        if (usage.TryGetProperty("prompt_tokens", out var promptTokens) && promptTokens.TryGetInt32(out var p))
+            LastPromptTokens = p;
+        if (usage.TryGetProperty("completion_tokens", out var completionTokens) && completionTokens.TryGetInt32(out var c))
+            LastCompletionTokens = c;
+    }
+
     // ---- Ping ----
     public async Task<bool> PingAsync()
     {
@@ -449,7 +630,7 @@ public class OllamaClient : IDisposable
         return request;
     }
 
-    private static async Task EnsureSuccessWithBodyAsync(HttpResponseMessage response, CancellationToken ct)
+    private static async Task EnsureSuccessWithBodyAsync(HttpResponseMessage response, CancellationToken ct, bool toolsSent = false)
     {
         if (response.IsSuccessStatusCode)
             return;
@@ -461,19 +642,24 @@ public class OllamaClient : IDisposable
         if (detail.Length > 1000)
             detail = detail[..1000] + "...";
 
+        if (toolsSent && ChatToolWire.LooksLikeToolsUnsupported((int)response.StatusCode, body))
+            throw new ToolsNotSupportedException($"The model or server does not support tool calling: {detail}");
+
         throw new HttpRequestException(
             $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase}). {detail}");
     }
 
     private static object BuildChatBody(string model, List<ChatMessage> messages, string systemPrompt,
-        double temperature, int maxTokens, int contextTokens, bool stream)
+        double temperature, int maxTokens, int contextTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null)
     {
         var msgList = new List<object>();
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             msgList.Add(new { role = "system", content = systemPrompt });
         foreach (var m in messages)
         {
-            if (m.ImagesBase64.Count > 0)
+            if (m.HasToolData())
+                msgList.Add(ChatToolWire.OllamaMessage(m.Role, m.Content, m.ImagesBase64, m.ToolCalls, m.ToolName));
+            else if (m.ImagesBase64.Count > 0)
                 msgList.Add(new { role = m.Role, content = m.Content, images = m.ImagesBase64 });
             else
                 msgList.Add(new { role = m.Role, content = m.Content });
@@ -490,6 +676,18 @@ public class OllamaClient : IDisposable
         if (contextTokens != 0)
             optionsDict["num_ctx"] = contextTokens;
 
+        if (tools is { Count: > 0 })
+        {
+            return new
+            {
+                model,
+                messages = msgList,
+                stream,
+                options = optionsDict,
+                tools = ChatToolWire.ToolsPayload(tools)
+            };
+        }
+
         return new
         {
             model,
@@ -500,7 +698,7 @@ public class OllamaClient : IDisposable
     }
 
     private static object BuildOpenAiChatBody(string model, List<ChatMessage> messages, string systemPrompt,
-        double temperature, int maxTokens, bool stream)
+        double temperature, int maxTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null)
     {
         var msgList = new List<object>();
         var isGemma412B = IsGemma412BModel(model);
@@ -509,7 +707,11 @@ public class OllamaClient : IDisposable
 
         foreach (var m in messages)
         {
-            if (m.ImagesBase64.Count > 0)
+            if (m.HasToolData())
+            {
+                msgList.Add(ChatToolWire.OpenAiMessage(m.Role, m.Content, m.ToolCalls, m.ToolCallId));
+            }
+            else if (m.ImagesBase64.Count > 0)
             {
                 var parts = new List<object>();
                 foreach (var image in m.ImagesBase64)
@@ -538,6 +740,8 @@ public class OllamaClient : IDisposable
             body["top_p"] = 0.9;
             body["repeat_penalty"] = 1.05;
         }
+        if (tools is { Count: > 0 })
+            body["tools"] = ChatToolWire.ToolsPayload(tools);
 
         return body;
     }

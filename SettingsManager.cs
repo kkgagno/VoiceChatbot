@@ -32,6 +32,8 @@ public class AppSettings
     public string Model { get; set; } = "llama3";
     public string SystemPrompt { get; set; } = "You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Use plain natural language for normal conversation. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block.";
     public double Temperature { get; set; } = 0.7;
+    // Native tool calling (web search, date/time, stock quotes, memories, web pages). Falls back per model when unsupported.
+    public bool UseTools { get; set; } = true;
 
     // Voice Input
     public string InputLanguage { get; set; } = "en-US";

@@ -254,6 +254,7 @@ public partial class MainWindow : Window
         SelectProviderCombo(_settings.ChatProvider);
         SystemPromptBox.Text = _settings.SystemPrompt;
         TempSlider.Value = _settings.Temperature;
+        ApplyToolSettings();
         if (_settings.SilenceTimeout < 2.0)
             _settings.SilenceTimeout = 2.4;
         SilenceSlider.Value = _settings.SilenceTimeout;
@@ -365,6 +366,7 @@ public partial class MainWindow : Window
         _settings.Model = ModelCombo.Text;
         _settings.SystemPrompt = SystemPromptBox.Text;
         _settings.Temperature = TempSlider.Value;
+        SaveToolSettings();
         _settings.InputLanguage = InputLangCombo.Text;
         _settings.SilenceTimeout = SilenceSlider.Value;
         _settings.NoiseSuppression = (int)NoiseSlider.Value;
@@ -780,6 +782,7 @@ public partial class MainWindow : Window
         try { _camera.Dispose(); } catch { }
         try { _ollama.Dispose(); } catch { }
         try { _tavily.Dispose(); } catch { }
+        try { DisposeToolServices(); } catch { }
         try { _comfyImages.Dispose(); } catch { }
 
         _shutdownComplete = true;

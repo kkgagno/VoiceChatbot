@@ -46,6 +46,12 @@ You need at least one chat backend.
 
 The server controls and Hermes commands expect model batch files in `C:\llama.cpp` on the SSH host. The desktop model dropdown discovers files named `start-*.bat`.
 
+### Tools and formatting
+
+With **Let the model use tools** on (Chat Backend, on by default), the model decides by itself when to search the web (needs Web Search on and a Tavily key), check the current date and time, get a stock quote, read a web page, or save a memory. A short note appears in the chat for each tool it uses. The Hermes, Pi, image and video commands work as before, and "search the web for ..." or "look it up online" still forces a search.
+
+Tools need a model and server with function calling: in Ollama, a model tagged *tools* (for example `qwen3` or `llama3.1`); in llama.cpp, start `llama-server` with `--jinja`. If the model cannot use tools, the app shows one note, turns tools off for that model until restart and answers normally. The phone remote and scheduled prompts do not use tools yet.
+
 ## Voice requirements
 
 ### Speech input
