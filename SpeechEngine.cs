@@ -85,7 +85,19 @@ public class SpeechEngine : IDisposable
     public int MicDeviceIndex { get; set; } = -1;
     public string WhisperModelPath { get; set; } = "";
     public string TranscriptionBackend { get; set; } = "Whisper.net";
-    public string ExternalNpuTranscriberCommand { get; set; } = "";
+    private string _externalNpuTranscriberCommand = "";
+    private bool _ryzenFailureReported;
+    public string ExternalNpuTranscriberCommand
+    {
+        get => _externalNpuTranscriberCommand;
+        set
+        {
+            if (value == _externalNpuTranscriberCommand)
+                return;
+            _externalNpuTranscriberCommand = value;
+            _ryzenFailureReported = false;
+        }
+    }
     public string KokoroMode { get; set; } = KokoroEndpoint.ModeAuto;
     public string KokoroRemoteUrl { get; set; } = "";
 
@@ -706,10 +718,19 @@ public class SpeechEngine : IDisposable
                     if (IsRyzenAiRequired())
                         return "";
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Log?.Invoke($"AMD Ryzen AI Whisper transcription failed: {ex.Message}");
-                    if (IsRyzenAiRequired())
+                    // Fall back to Whisper.net whenever it is available, so a broken Ryzen command
+                    // never leaves the user unable to talk. Only report the failure once per command.
+                    var canFallBack = _whisperProcessor != null;
+                    if (!_ryzenFailureReported)
+                    {
+                        _ryzenFailureReported = true;
+                        Log?.Invoke($"AMD Ryzen AI Whisper transcription failed: {ex.Message}" +
+                                    (canFallBack ? " Using Whisper.net instead. Check the Ryzen AI command under Voice Input." : ""));
+                    }
+
+                    if (!canFallBack)
                         throw;
                 }
             }

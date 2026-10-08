@@ -781,7 +781,7 @@
                                      FontSize="14" Padding="4,6" AcceptsReturn="True" TextWrapping="Wrap"
                                      MinHeight="40" MaxHeight="180" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Center"
                                      local:Ui.Placeholder="Message Voice Chatbot..."
-                                     ToolTip="Enter to send, Shift+Enter for a new line. Ctrl+V pastes images."/>
+                                     ToolTip="Enter or Shift+Enter to send, Ctrl+Enter for a new line. Ctrl+V pastes images."/>
                             <Button x:Name="SendBtn" Grid.Column="1" Style="{StaticResource RoundButton}" local:Ui.Icon="&#xE724;"
                                     VerticalAlignment="Bottom" Margin="8,0,0,0"
                                     Click="SendText_Click" ToolTip="Send (Enter)"/>
@@ -810,7 +810,7 @@
                         </Grid>
                     </Border>
                     <TextBlock HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
-                               Text="Enter send  ·  Shift+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
+                               Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
                 </StackPanel>
             </Border>
         </Grid>

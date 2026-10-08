@@ -128,8 +128,45 @@ public partial class MainWindow : Window
             FaceServiceFactory.CreateProfileStore(_settings.FaceFeatures.ModelOptions),
             _settings.FaceFeatures.ModelOptions);
 
+        WireMessageInput();
         Loaded += MainWindow_Loaded;
         SizeChanged += (_, _) => UpdateChatBubbleWidths();
+    }
+
+    private void WireMessageInput()
+    {
+        // PreviewKeyDown, because a TextBox with AcceptsReturn handles Enter itself and swallows
+        // KeyDown before our handler sees it. Enter and Shift+Enter send; Ctrl+Enter adds a line.
+        MessageInput.PreviewKeyDown += (s, ev) =>
+        {
+            if (ev.Key == Key.V && Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && TryAttachClipboardImage())
+            {
+                ev.Handled = true;
+                return;
+            }
+
+            if (ev.Key != Key.Enter && ev.Key != Key.Return)
+                return;
+
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+            {
+                var caret = MessageInput.CaretIndex;
+                MessageInput.SelectedText = Environment.NewLine;
+                MessageInput.CaretIndex = caret + Environment.NewLine.Length;
+                MessageInput.SelectionLength = 0;
+            }
+            else if (SendBtn.IsEnabled)
+            {
+                SendText_Click(MessageInput, ev);
+            }
+
+            ev.Handled = true;
+        };
+        MessageInput.KeyDown += (s, ev) => PauseListeningForTextInput();
+        DataObject.AddPastingHandler(MessageInput, MessageInput_Pasting);
+        MessageInput.PreviewMouseDown += (s, ev) => PauseListeningForTextInput();
+        MessageInput.GotKeyboardFocus += (s, ev) => PauseListeningForTextInput();
+        MessageInput.LostKeyboardFocus += (s, ev) => ResumeListeningAfterTextInput();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -183,28 +220,6 @@ public partial class MainWindow : Window
             _applyingSettings = false;
             UpdateActiveModelText();
             await InitializeDesktopServiceControlsAsync();
-
-            // Keyboard shortcut: Enter to send, Shift+Enter for new line
-            MessageInput.PreviewKeyDown += (s, ev) =>
-            {
-                if (ev.Key == Key.V && Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && TryAttachClipboardImage())
-                {
-                    ev.Handled = true;
-                }
-            };
-            DataObject.AddPastingHandler(MessageInput, MessageInput_Pasting);
-            MessageInput.KeyDown += (s, ev) =>
-            {
-                PauseListeningForTextInput();
-                if (ev.Key == Key.Enter && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
-                {
-                    SendText_Click(s, ev);
-                    ev.Handled = true;
-                }
-            };
-            MessageInput.PreviewMouseDown += (s, ev) => PauseListeningForTextInput();
-            MessageInput.GotKeyboardFocus += (s, ev) => PauseListeningForTextInput();
-            MessageInput.LostKeyboardFocus += (s, ev) => ResumeListeningAfterTextInput();
 
             // Always-listen toggle
             AlwaysListenToggle.Checked += (s, ev) => StartAutoListen();
@@ -358,9 +373,9 @@ public partial class MainWindow : Window
         _settings.MicDeviceIndex = MicCombo.SelectedItem is AudioDeviceInfo mic ? mic.Index : -1;
         _settings.TranscriptionBackend = GetSelectedTranscriptionBackend();
         var npuCommand = NpuTranscriberCommandBox.Text.Trim();
-        _settings.ExternalNpuTranscriberCommand = string.IsNullOrWhiteSpace(npuCommand)
-            ? AppSettings.DefaultRyzenAiWhisperCommand
-            : npuCommand;
+        _settings.ExternalNpuTranscriberCommand = AppSettings.IsUsableTranscriberCommand(npuCommand)
+            ? npuCommand
+            : AppSettings.DefaultRyzenAiWhisperCommand;
         _settings.VoiceName = VoiceCombo.Text;
         _settings.SpeechRate = (int)RateSlider.Value;
         _settings.Volume = (int)VolumeSlider.Value;
@@ -666,9 +681,9 @@ public partial class MainWindow : Window
         NpuTranscriberCommandBox.TextChanged += (s, e) =>
         {
             var npuCommand = NpuTranscriberCommandBox.Text.Trim();
-            _settings.ExternalNpuTranscriberCommand = string.IsNullOrWhiteSpace(npuCommand)
-                ? AppSettings.DefaultRyzenAiWhisperCommand
-                : npuCommand;
+            _settings.ExternalNpuTranscriberCommand = AppSettings.IsUsableTranscriberCommand(npuCommand)
+                ? npuCommand
+                : AppSettings.DefaultRyzenAiWhisperCommand;
             _speech.ExternalNpuTranscriberCommand = _settings.ExternalNpuTranscriberCommand;
         };
 
@@ -6180,19 +6195,51 @@ public partial class MainWindow : Window
 
     // ==================== Window Events ====================
 
-    private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    private bool _shutdownComplete;
+    private bool _shutdownStarted;
+
+    private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        SaveSettings();
-        _schedulerTimer?.Stop();
-        _schedulerStore.Save();
-        StopFacePresenceAsync().GetAwaiter().GetResult();
-        _phoneRemoteServer.StopAsync().GetAwaiter().GetResult();
-        _speech.Dispose();
-        _camera.Dispose();
-        _phoneRemoteServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _ollama.Dispose();
-        _tavily.Dispose();
-        _comfyImages.Dispose();
+        if (_shutdownComplete)
+            return;
+
+        // Stopping the phone server and camera is async. Blocking the UI thread on it deadlocks
+        // (their continuations need this thread), which is what hung the app when the phone
+        // remote was still running. Cancel this close, shut down asynchronously, then close again.
+        e.Cancel = true;
+        if (_shutdownStarted)
+            return;
+
+        _shutdownStarted = true;
+        IsEnabled = false;
+        StateLabel.Text = "Closing...";
+
+        try
+        {
+            SaveSettings();
+            _schedulerTimer?.Stop();
+            _schedulerStore.Save();
+            _chatCts?.Cancel();
+
+            var shutdown = Task.WhenAll(
+                StopFacePresenceAsync(),
+                _phoneRemoteServer.DisposeAsync().AsTask());
+            // Never let a stuck service keep the window open.
+            await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(6)));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Shutdown error: {ex.Message}");
+        }
+
+        try { _speech.Dispose(); } catch { }
+        try { _camera.Dispose(); } catch { }
+        try { _ollama.Dispose(); } catch { }
+        try { _tavily.Dispose(); } catch { }
+        try { _comfyImages.Dispose(); } catch { }
+
+        _shutdownComplete = true;
+        await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
     }
 
     private static bool ShouldCaptureCameraForPrompt(string text)

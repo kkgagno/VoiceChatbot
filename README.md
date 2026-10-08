@@ -145,7 +145,8 @@ These tools can be installed with WinGet where packages are available.
 
 | Shortcut | Action |
 | --- | --- |
-| Enter / Shift+Enter | Send / new line |
+| Enter or Shift+Enter | Send |
+| Ctrl+Enter | New line |
 | Ctrl+L | Listen for one question |
 | Esc | Stop generating, speaking and listening |
 | Ctrl+B | Show or hide the settings sidebar |

@@ -11,6 +11,15 @@ public class AppSettings
     public const int DefaultImageHeight = 1920;
     public const string DefaultTavilyApiKey = "";
     public const string DefaultRyzenAiWhisperCommand = "call \"%USERPROFILE%\\VoiceChatbot\\tools\\ryzen-ai-whisper-transcribe.bat\" {input}";
+    /// <summary>
+    /// False for blank commands and leftover placeholders such as "{ryzen}" that cmd.exe cannot run.
+    /// </summary>
+    public static bool IsUsableTranscriberCommand(string? command)
+    {
+        var text = command?.Trim() ?? "";
+        return text.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(text, @"^\{[^{}\s]*\}$");
+    }
+
     // Chat backend
     public string ChatProvider { get; set; } = "Ollama";
     public string OllamaUrl { get; set; } = "http://localhost:11434";
@@ -108,7 +117,7 @@ public static class SettingsManager
             {
                 var json = File.ReadAllText(Path);
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOpts) ?? new AppSettings();
-                if (string.IsNullOrWhiteSpace(settings.ExternalNpuTranscriberCommand))
+                if (!AppSettings.IsUsableTranscriberCommand(settings.ExternalNpuTranscriberCommand))
                     settings.ExternalNpuTranscriberCommand = AppSettings.DefaultRyzenAiWhisperCommand;
                 return settings;
             }

@@ -92,8 +92,14 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
         var app = _app;
         _app = null;
-        await app.StopAsync(TimeSpan.FromSeconds(3));
-        await app.DisposeAsync();
+        // ConfigureAwait(false): callers on the UI thread may block on this during shutdown.
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await app.StopAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        await app.DisposeAsync().ConfigureAwait(false);
     }
 
     private void MapRoutes(WebApplication app)
@@ -1368,7 +1374,7 @@ if (!navigator.mediaDevices) add('sys', 'This browser requires HTTPS before micr
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync();
+        await StopAsync().ConfigureAwait(false);
         _certificateInfo?.Certificate.Dispose();
     }
 }
