@@ -24,8 +24,7 @@ public class AppSettings
     /// </summary>
     public static bool IsUsableTranscriberCommand(string? command)
     {
-        var text = command?.Trim() ?? "";
-        return text.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(text, @"^\{[^{}\s]*\}$");
+        return TranscriberCommand.IsUsable(command);
     }
 
     // Chat backend

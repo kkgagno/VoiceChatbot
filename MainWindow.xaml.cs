@@ -581,6 +581,16 @@ public partial class MainWindow : Window
         return TranscriptionBackendCombo?.Text ?? _settings.TranscriptionBackend;
     }
 
+    /// <summary>Moves voice input to Whisper.net for good when the Ryzen AI command does not exist.</summary>
+    private void SwitchToWhisperNet(string reason)
+    {
+        _speech.TranscriptionBackend = "Whisper.net";
+        _settings.TranscriptionBackend = "Whisper.net";
+        SelectTranscriptionBackendCombo("Whisper.net");
+        SaveSettings();
+        AddSystemMessage($"{reason}, so voice input now uses Whisper.net. You can choose AMD Ryzen AI Whisper again under Voice Input once it is installed.");
+    }
+
     private void SelectTranscriptionBackendCombo(string backend)
     {
         foreach (var item in TranscriptionBackendCombo.Items.OfType<ComboBoxItem>())
@@ -608,6 +618,15 @@ public partial class MainWindow : Window
         _speech.WhisperModelPath = GetWhisperModelPath(_settings.WhisperModelSize);
         _speech.TranscriptionBackend = _settings.TranscriptionBackend;
         _speech.ExternalNpuTranscriberCommand = _settings.ExternalNpuTranscriberCommand;
+        _speech.RyzenTranscriberUnavailable += reason => Dispatcher.BeginInvoke(() =>
+            SwitchToWhisperNet($"AMD Ryzen AI Whisper isn't set up on this PC ({reason.Trim()})"));
+        if (_settings.TranscriptionBackend.Contains("Ryzen", StringComparison.OrdinalIgnoreCase) &&
+            TranscriberCommand.GetProgramPath(_settings.ExternalNpuTranscriberCommand) is { } program &&
+            !File.Exists(Environment.ExpandEnvironmentVariables(program)))
+        {
+            Dispatcher.BeginInvoke(() =>
+                SwitchToWhisperNet($"AMD Ryzen AI Whisper isn't set up on this PC ({Environment.ExpandEnvironmentVariables(program)} was not found)"));
+        }
         _speech.VoiceName = _settings.VoiceName;
         _speech.SpeechRate = _settings.SpeechRate;
         _speech.Volume = _settings.Volume;

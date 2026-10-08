@@ -113,6 +113,8 @@ public partial class SpeechEngine : IDisposable
     public string LastTranscriptionBackendUsed { get; private set; } = "Whisper.net";
     public string LastTtsBackendUsed { get; private set; } = "";
     public event Action<string>? TtsBackendUsed;
+    /// <summary>Raised once when the Ryzen AI command does not exist on this PC; the engine has already switched to Whisper.net.</summary>
+    public event Action<string>? RyzenTranscriberUnavailable;
 
     // Hardware
     public List<string> AvailableVoices { get; private set; } = new();
@@ -783,6 +785,12 @@ public partial class SpeechEngine : IDisposable
                     if (IsRyzenAiRequired())
                         return "";
                 }
+                catch (RyzenCommandNotFoundException ex) when (_whisperProcessor != null)
+                {
+                    // Ryzen AI is not set up on this PC at all: stop trying it and use Whisper.net from now on.
+                    TranscriptionBackend = "Whisper.net";
+                    RyzenTranscriberUnavailable?.Invoke(ex.Message);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // Fall back to Whisper.net whenever it is available, so a broken Ryzen command
@@ -908,6 +916,10 @@ public partial class SpeechEngine : IDisposable
             if (process.ExitCode != 0)
             {
                 var error = stderr.ToString().Trim();
+                if (TranscriberCommand.IsNotFoundError(error, process.ExitCode))
+                    throw new RyzenCommandNotFoundException(string.IsNullOrWhiteSpace(error)
+                        ? $"the command exited with code {process.ExitCode}"
+                        : error);
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
                     ? $"External NPU transcriber exited with code {process.ExitCode}."
                     : error);
@@ -1642,4 +1654,10 @@ public partial class SpeechEngine : IDisposable
         _whisperFactory?.Dispose();
         _listenCts?.Dispose();
     }
+}
+
+/// <summary>The external transcriber command or script does not exist (shell "not recognized" / exit 9009).</summary>
+public sealed class RyzenCommandNotFoundException : Exception
+{
+    public RyzenCommandNotFoundException(string message) : base(message) { }
 }
