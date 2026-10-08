@@ -884,6 +884,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("Phone remote chat failed", ex);
             await Dispatcher.InvokeAsync(() =>
             {
                 AddSystemMessage($"Phone remote chat error: {ex.Message}");

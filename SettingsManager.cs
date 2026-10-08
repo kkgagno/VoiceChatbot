@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace VoiceChatbot;
 
@@ -109,6 +113,29 @@ public static class SettingsManager
         DefaultIgnoreCondition = JsonIgnoreCondition.Never
     };
 
+    // Secrets stay plain in AppSettings and are stored as "dpapi:<base64>" in settings.json.
+    private static readonly (string Path, string Label)[] SecretFields =
+    {
+        (nameof(AppSettings.OpenAiCompatibleApiKey), "OpenAI API key"),
+        (nameof(AppSettings.HermesSshPassword), "SSH password"),
+        (nameof(AppSettings.TavilyApiKey), "Tavily API key"),
+        ($"{nameof(AppSettings.PhoneRemote)}.{nameof(PhoneRemoteSettings.Pin)}", "phone remote PIN"),
+    };
+
+    private static readonly ISecretProtector Protector = new DpapiSecretProtector();
+    private static readonly object SaveLock = new();
+    private static string? _loadWarning;
+    private static bool _plainSaveLogged;
+
+    /// <summary>True when secrets are written encrypted (Windows DPAPI is available).</summary>
+    public static bool SecretsEncrypted => Protector.IsAvailable;
+
+    /// <summary>
+    /// A warning from the last Load for the user (for example secrets that could not be decrypted).
+    /// Returns it once, then null.
+    /// </summary>
+    public static string? TakeLoadWarning() => Interlocked.Exchange(ref _loadWarning, null);
+
     public static AppSettings Load()
     {
         try
@@ -116,13 +143,28 @@ public static class SettingsManager
             if (File.Exists(Path))
             {
                 var json = File.ReadAllText(Path);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOpts) ?? new AppSettings();
+                if (JsonNode.Parse(json) is not JsonObject root)
+                {
+                    AppLog.Warn("settings.json is empty or not a JSON object. Using defaults.");
+                    return new AppSettings();
+                }
+
+                var secrets = SettingsSecrets.UnprotectFields(root, SecretFields.Select(f => f.Path), Protector);
+                var settings = root.Deserialize<AppSettings>(JsonOpts) ?? new AppSettings();
                 if (!AppSettings.IsUsableTranscriberCommand(settings.ExternalNpuTranscriberCommand))
                     settings.ExternalNpuTranscriberCommand = AppSettings.DefaultRyzenAiWhisperCommand;
+
+                ReportSecretLoad(secrets);
+                // Encrypt secrets an older version left in plain text now instead of at exit.
+                if (secrets.Plain.Count > 0 && Protector.IsAvailable)
+                    Save(settings);
                 return settings;
             }
         }
-        catch { /* ignore errors, use defaults */ }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not read settings.json. Using defaults.", ex);
+        }
         return new AppSettings();
     }
 
@@ -130,11 +172,50 @@ public static class SettingsManager
     {
         try
         {
-            var dir = System.IO.Path.GetDirectoryName(Path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(settings, JsonOpts);
-            File.WriteAllText(Path, json);
+            lock (SaveLock)
+            {
+                var dir = System.IO.Path.GetDirectoryName(Path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+                var root = JsonSerializer.SerializeToNode(settings, JsonOpts)!.AsObject();
+                var leftPlain = SettingsSecrets.ProtectFields(root, SecretFields.Select(f => f.Path), Protector);
+                if (leftPlain.Count > 0 && !_plainSaveLogged)
+                {
+                    _plainSaveLogged = true;
+                    AppLog.Warn($"Could not encrypt {DescribeFields(leftPlain)}; saved as plain text.");
+                }
+
+                File.WriteAllText(Path, root.ToJsonString(JsonOpts));
+            }
         }
-        catch { /* best effort */ }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not save settings.json.", ex);
+        }
+    }
+
+    private static void ReportSecretLoad(SecretLoadResult secrets)
+    {
+        if (secrets.Plain.Count > 0)
+            AppLog.Info($"Found {DescribeFields(secrets.Plain)} stored as plain text; encrypting it.");
+
+        if (secrets.Failed.Count == 0)
+            return;
+
+        var warning = $"Could not decrypt the saved {DescribeFields(secrets.Failed)}. " +
+                      "settings.json was probably copied from another Windows user or PC. " +
+                      $"Please enter {(secrets.Failed.Count == 1 ? "it" : "them")} again in Settings.";
+        AppLog.Warn(warning);
+        _loadWarning = warning;
+    }
+
+    private static string DescribeFields(IEnumerable<string> paths)
+    {
+        var labels = paths
+            .Select(p => SecretFields.FirstOrDefault(f => f.Path == p).Label ?? p)
+            .ToList();
+        return labels.Count <= 1
+            ? string.Join("", labels)
+            : string.Join(", ", labels.Take(labels.Count - 1)) + " and " + labels[^1];
     }
 }

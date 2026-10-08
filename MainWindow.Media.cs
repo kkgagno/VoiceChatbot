@@ -56,6 +56,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("ComfyUI image creation failed", ex);
             assistantMessage.Body.Text = $"Image creation failed: {ex.Message}";
             AddSystemMessage($"ComfyUI image error: {ex.Message}");
         }
@@ -115,6 +116,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("ComfyUI image edit failed", ex);
             assistantMessage.Body.Text = $"Image edit failed: {ex.Message}";
             AddSystemMessage($"ComfyUI edit error: {ex.Message}");
         }
@@ -174,6 +176,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("ComfyUI video creation failed", ex);
             assistantMessage.Body.Text = $"Video creation failed: {ex.Message}";
             AddSystemMessage($"ComfyUI video error: {ex.Message}");
         }

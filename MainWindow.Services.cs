@@ -114,6 +114,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Warn("Model server service check failed", ex);
             ModelControlStatusText.Text = $"Service check failed: {ex.Message}";
         }
         finally
@@ -279,6 +280,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("Model/ComfyUI control failed", ex);
             ModelControlStatusText.Text = $"Control failed: {ex.Message}";
             AddSystemMessage($"Model/Comfy control failed: {ex.Message}");
             return false;

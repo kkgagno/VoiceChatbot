@@ -295,6 +295,7 @@ public partial class MainWindow : Window
         PhoneRemotePortBox.Text = _settings.PhoneRemote.Port.ToString();
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
         PhoneRemoteAudioToggle.IsChecked = _settings.PhoneRemote.PlayAudioOnPhone;
+        ApplySecretsAndLogsUi();
         UpdatePhoneRemoteUi();
         UpdateFacePresenceUi(_settings.FaceFeatures.CameraFeaturesEnabled
             ? FacePresenceState.CameraUnavailable
@@ -755,6 +756,7 @@ public partial class MainWindow : Window
             return;
 
         _shutdownStarted = true;
+        AppLog.Info("Main window closing. Stopping services.");
         IsEnabled = false;
         StateLabel.Text = "Closing...";
 
@@ -769,11 +771,13 @@ public partial class MainWindow : Window
                 StopFacePresenceAsync(),
                 _phoneRemoteServer.DisposeAsync().AsTask());
             // Never let a stuck service keep the window open.
-            await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(6)));
+            if (await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(6))) != shutdown)
+                AppLog.Warn("Services did not stop within 6 seconds. Closing anyway.");
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Shutdown error: {ex.Message}");
+            AppLog.Warn("Shutdown error", ex);
         }
 
         try { _speech.Dispose(); } catch { }

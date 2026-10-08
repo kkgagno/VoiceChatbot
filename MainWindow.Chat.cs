@@ -843,6 +843,7 @@ public partial class MainWindow
                         }
                         catch (Exception ex)
                         {
+                            AppLog.Error("Code/SVG continuation failed", ex);
                             Dispatcher.Invoke(() =>
                             {
                                 assistantMessage.Body.Text = $"Error: {ex.Message}";
@@ -853,6 +854,7 @@ public partial class MainWindow
                     },
                     onError: ex =>
                     {
+                        AppLog.Error("Chat backend stream failed", ex);
                         Dispatcher.Invoke(() =>
                         {
                             assistantMessage.Body.Text = $"Error: {ex.Message}";
@@ -904,6 +906,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("Chat request failed", ex);
             if (assistantMessage is not null)
                 assistantMessage.Body.Text = $"Error: {ex.Message}";
             AddSystemMessage($"Chat error: {ex.Message}");

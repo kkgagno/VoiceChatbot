@@ -194,5 +194,6 @@ git push origin v1.0.0
 
 - Settings, API keys, downloaded Whisper models, generated media, memories, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
 - Do not commit `settings.json`, certificates, passwords, API keys, model files, or private batch files.
-- SSH passwords are stored in the local settings file. Use a dedicated LAN account and restrict network access appropriately.
+- The SSH password, OpenAI API key, Tavily API key and phone remote PIN are encrypted in `settings.json` with Windows DPAPI for your Windows account (they appear as `"dpapi:..."`). Plain-text values from older versions are encrypted the next time the app starts. A settings file copied to another PC or Windows user cannot be decrypted there: those fields are left empty, the app warns once, and you enter them again. Still use a dedicated LAN account for SSH and restrict network access appropriately.
+- The app keeps a daily log in `%APPDATA%\VoiceChatbot\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
 - Uninstalling the application does not delete `%APPDATA%\VoiceChatbot`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.

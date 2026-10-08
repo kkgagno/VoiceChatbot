@@ -520,6 +520,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("Hermes SSH request failed", ex);
             assistantMessage.Body.Text = $"Hermes error: {ex.Message}";
             AddSystemMessage($"Hermes error: {ex.Message}");
             SetUIState("idle", "Ready");
@@ -577,6 +578,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error("Pi agent request failed", ex);
             assistantMessage.Body.Text = $"Pi error: {ex.Message}";
             AddSystemMessage($"Pi error: {ex.Message}");
             SetUIState("idle", "Ready");

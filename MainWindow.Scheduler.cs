@@ -126,6 +126,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            AppLog.Error($"Scheduled task \"{task.Name}\" failed", ex);
             run.Error = ex.Message;
             task.LastStatus = $"Error: {ex.Message}";
             if (task.ShowInMainChat)

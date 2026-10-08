@@ -350,6 +350,8 @@ public partial class MainWindow
 
     private void AddSystemMessage(string text)
     {
+        // System messages are the app's diagnostics, so keep a copy in the log file.
+        AppLog.Info(text);
         var block = CreateSelectableText(text, FindResource("TextSecondaryBrush") as Brush ?? Brushes.Gray);
         block.FontSize = 11.5;
         block.TextAlignment = TextAlignment.Center;

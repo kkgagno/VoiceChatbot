@@ -217,6 +217,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Password" Style="{StaticResource SectionLabel}"/>
                                     <PasswordBox x:Name="HermesSshPasswordBox"/>
+                                    <TextBlock Text="Saved encrypted for your Windows account." Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                         </Expander>
@@ -592,6 +593,34 @@
                                 <Button x:Name="ClearFacesBtn" Content="Clear Face Samples" local:Ui.Icon="&#xE74D;"
                                         Style="{StaticResource DangerButton}" Click="ClearFaces_Click" Margin="0,0,0,8"/>
                                 <TextBlock x:Name="FacePolicyText" Text="Face gating disabled" Style="{StaticResource FieldHint}"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ================= App ================= -->
+                        <Expander Header="App" local:Ui.Icon="&#xE713;" local:Ui.Subtitle="Saved secrets and log files">
+                            <StackPanel>
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="SecretsStatusIcon" Text="&#xE72E;" Style="{StaticResource IconText}" FontSize="12"
+                                                   Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Top" Margin="0,1,0,0"/>
+                                        <TextBlock x:Name="SecretsStatusText" Grid.Column="1" Margin="8,0,0,0" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="API keys, the SSH password and the phone PIN are saved encrypted for your Windows account."/>
+                                    </Grid>
+                                </Border>
+
+                                <TextBlock Text="LOGS" Style="{StaticResource SubHeading}"/>
+                                <TextBlock x:Name="AppLogFolderText" Text="%APPDATA%\VoiceChatbot\logs" Style="{StaticResource FieldHint}"
+                                           Margin="0,0,0,8"/>
+                                <Button x:Name="OpenLogsFolderBtn" Content="Open logs folder" local:Ui.Icon="&#xE838;"
+                                        Style="{StaticResource SecondaryButton}" Click="OpenLogsFolder_Click"
+                                        ToolTip="Show today's log file in Explorer"/>
+                                <TextBlock Text="One file per day, kept for 7 days. Attach it when reporting a problem; saved keys and passwords are masked."
+                                           Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
                             </StackPanel>
                         </Expander>
 
