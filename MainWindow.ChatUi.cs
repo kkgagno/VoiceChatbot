@@ -475,9 +475,11 @@ public partial class MainWindow
 
                 // Speak sentence by sentence so playback starts after the first sentence is rendered.
                 // The Replay/Download buttons appear once the whole reply has been spoken and saved.
+                // Split first: an exception after BeginSpeechSession would leave a session that never completes.
+                var sentences = SentenceChunker.Split(speechText);
                 var session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
                 AddAudioButtonsWhenSpoken(session, assistantMessage);
-                foreach (var sentence in SentenceChunker.Split(speechText))
+                foreach (var sentence in sentences)
                     session.Enqueue(sentence);
                 session.Complete();
                 // SpeechFinished will restart auto-listen

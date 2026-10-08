@@ -101,9 +101,10 @@ public partial class MainWindow
         if (speech == null)
             return false;
 
-        if (speech.Session.IsCancelled && !speech.UseFinalText)
+        if (speech.Session.IsCancelled)
         {
-            // Stop, the mic button or a replay cut this reply's speech short: stay quiet.
+            // Stop, the mic button, a replay or barge-in cut this reply's speech short: stay quiet,
+            // even when the reply was going to be spoken from its final text.
             SetUIState("idle", "Ready");
             _speech.ReadyForNextSpeech();
             return true;

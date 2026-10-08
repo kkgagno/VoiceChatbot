@@ -75,6 +75,12 @@ public partial class SpeechEngine
         if (wasSpeaking ? CurrentState == VoiceState.Speaking : raiseSpeechFinished && CurrentState == VoiceState.Processing)
             SetState(VoiceState.Idle);
 
+        // An abandoned session that was speaking raises no SpeechFinished, so nothing calls
+        // ReadyForNextSpeech for it; without this StartListening keeps refusing (e.g. the mic button)
+        // when the newer reply fails before it speaks.
+        if (wasSpeaking && !raiseSpeechFinished)
+            _isProcessing = false;
+
         if (raiseSpeechFinished)
             SpeechFinished?.Invoke();
     }
@@ -142,7 +148,8 @@ public sealed class SpeechSession
                 return;
         }
 
-        try { _sentences.Add(text.Trim()); } catch (InvalidOperationException) { }
+        // The session can end (and free its queue) between the check above and the Add.
+        try { _sentences.Add(text.Trim()); } catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
     }
 
     /// <summary>No more sentences will come; the session ends after the last one has played.</summary>
@@ -155,7 +162,7 @@ public sealed class SpeechSession
             _completeRequested = true;
         }
 
-        try { _sentences.CompleteAdding(); } catch (InvalidOperationException) { }
+        try { _sentences.CompleteAdding(); } catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
     }
 
     /// <summary>Stops playback now and drops everything still queued.</summary>
