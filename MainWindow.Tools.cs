@@ -163,6 +163,9 @@ public partial class MainWindow
         var temperature = TempSlider.Value;
         var liveStream = StreamToggle.IsChecked == true;
         var working = new List<ChatMessage>(messagesForModel);
+        // Web text in this turn (the forced search or a web tool result) can carry instructions aimed
+        // at the model; it must not be able to plant memories that every later conversation loads.
+        var webContentInTurn = skipWebSearchTool;
         ChatTurnResult turn;
 
         for (var round = 0; ; round++)
@@ -170,6 +173,11 @@ public partial class MainWindow
             // The last request goes without tools so the model has to answer.
             var offerTools = round < MaxToolRounds;
             SetUIState(liveStream ? "thinking" : "processing", round == 0 ? "Thinking..." : "Reading tool results...");
+            if (round > 0)
+                TrimToolTurnToContextBudget(working, toolSystemPrompt, contextTokens, maxTokens);
+            var roundTools = webContentInTurn
+                ? tools.Where(t => !IsTool(t.Name, BuiltInTools.SaveMemory)).ToList()
+                : tools;
 
             var streamed = new StringBuilder();
             Action<string>? onToken = null;
@@ -188,14 +196,23 @@ public partial class MainWindow
             try
             {
                 turn = await _ollama.ChatStreamWithToolsAsync(model, working, toolSystemPrompt, temperature,
-                    maxTokens, contextTokens, offerTools ? tools : null, onToken, ct);
+                    maxTokens, contextTokens, offerTools ? roundTools : null, onToken, ct);
             }
             catch (ToolsNotSupportedException ex)
             {
-                _modelsWithoutTools.Add(model.Trim());
                 Debug.WriteLine(ex.Message);
                 assistantMessage.Body.Text = "";
-                AddSystemMessage($"{model} does not support tool calling, so tools are off for this model until the app restarts. Answering without tools.");
+                if (round == 0)
+                {
+                    _modelsWithoutTools.Add(model.Trim());
+                    AddSystemMessage($"{model} does not support tool calling, so tools are off for this model until the app restarts. Answering without tools.");
+                }
+                else
+                {
+                    // The tool definitions were accepted in round 0, so the backend rejected the tool
+                    // results just sent; keep tools on for the next message.
+                    AddSystemMessage("The backend could not take the tool results. Answering without tools.");
+                }
                 return false;
             }
 
@@ -209,13 +226,20 @@ public partial class MainWindow
                 ToolCalls = turn.ToolCalls.ToList()
             });
 
+            var webContentThisRound = false;
             foreach (var call in turn.ToolCalls)
             {
                 var note = ModelTools.DescribeCall(call);
                 AddSystemMessage(note);
                 SetUIState(call.Name == BuiltInTools.WebSearch ? "searching" : "processing", note);
 
-                var result = await ModelTools.ExecuteAsync(call, ct);
+                var result = webContentInTurn && IsTool(call.Name, BuiltInTools.SaveMemory)
+                    ? "Error: memories cannot be saved after reading web content in the same answer. " +
+                      "Tell the user they can ask you to remember it in their next message."
+                    : await ModelTools.ExecuteAsync(call, ct);
+                if (IsTool(call.Name, BuiltInTools.WebSearch) || IsTool(call.Name, BuiltInTools.FetchWebPage))
+                    webContentThisRound = true;
+
                 working.Add(new ChatMessage
                 {
                     Role = "tool",
@@ -224,6 +248,9 @@ public partial class MainWindow
                     ToolName = call.Name
                 });
             }
+
+            // Calls in one round are chosen before any of their results are seen.
+            webContentInTurn |= webContentThisRound;
 
             // Any text streamed alongside the calls was a preamble; the answer comes next, below the notes.
             assistantMessage.Body.Text = "";
@@ -258,6 +285,29 @@ public partial class MainWindow
         _history.Add("assistant", cleaned);
         SpeakLastResponse(cleaned, assistantMessage);
         return true;
+    }
+
+    private static bool IsTool(string? name, string toolName) =>
+        string.Equals(name?.Trim(), toolName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Tool results can be long. Before sending them back, drop the oldest chat history until the
+    /// request fits the context budget again; the current question and this turn's tool calls and
+    /// results always stay together (a tool result without its call breaks the request).
+    /// </summary>
+    private static void TrimToolTurnToContextBudget(List<ChatMessage> working, string systemPrompt, int contextTokens, int maxTokens)
+    {
+        if (contextTokens <= 0)
+            return;
+
+        var budget = Math.Max(4096, contextTokens - maxTokens - ContextSafetyTokens);
+        var currentQuestion = working.FindLastIndex(m =>
+            m.Role.Equals("user", StringComparison.OrdinalIgnoreCase) && !m.HasToolData());
+        while (currentQuestion > 0 && EstimatePromptTokens(working, systemPrompt) > budget)
+        {
+            working.RemoveAt(0);
+            currentQuestion--;
+        }
     }
 
     private void MoveAssistantBubbleToEnd(AssistantMessageUi assistantMessage)

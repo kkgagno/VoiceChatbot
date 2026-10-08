@@ -186,9 +186,17 @@ public class OllamaClient : IDisposable
         ResetLastResponseMetadata();
         var toolsToSend = tools is { Count: > 0 } ? tools : null;
 
-        return IsOpenAiCompatible
-            ? await StreamOpenAiTurnAsync(model, messages, systemPrompt, temperature, maxTokens, toolsToSend, onToken, ct).ConfigureAwait(false)
-            : await StreamOllamaTurnAsync(model, messages, systemPrompt, temperature, maxTokens, contextTokens, toolsToSend, onToken, ct).ConfigureAwait(false);
+        try
+        {
+            return IsOpenAiCompatible
+                ? await StreamOpenAiTurnAsync(model, messages, systemPrompt, temperature, maxTokens, toolsToSend, onToken, ct).ConfigureAwait(false)
+                : await StreamOllamaTurnAsync(model, messages, systemPrompt, temperature, maxTokens, contextTokens, toolsToSend, onToken, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ct.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            // Stop can surface as an aborted stream (IOException); report it as the cancel it is.
+            throw new OperationCanceledException(ct);
+        }
     }
 
     private async Task<ChatTurnResult> StreamOllamaTurnAsync(string model, List<ChatMessage> messages, string systemPrompt,
