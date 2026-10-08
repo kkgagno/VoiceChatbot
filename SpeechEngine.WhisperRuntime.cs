@@ -23,7 +23,7 @@ public partial class SpeechEngine
     private string? _whisperModelFile;
 
     /// <summary>Run Whisper.net on the GPU (Vulkan) when possible. Read whenever a model loads.</summary>
-    public bool WhisperUseGpu { get; set; } = true;
+    public bool WhisperUseGpu { get; set; }
 
     /// <summary>What the loaded model runs on, for the UI: "Whisper: Vulkan GPU (AMD Radeon ...)", "Whisper: CPU", or "".</summary>
     public string WhisperRuntime { get; private set; } = "";

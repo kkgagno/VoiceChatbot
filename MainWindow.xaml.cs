@@ -194,7 +194,6 @@ public partial class MainWindow : Window
             {
                 AddSystemMessage($"Speech init failed: {ex.Message}. Text-only mode active.");
             }
-            StartWakeWordDetectorIfEnabled();
 
             // Test connection
             await TestConnection();
@@ -230,6 +229,7 @@ public partial class MainWindow : Window
             // Always-listen toggle
             AlwaysListenToggle.Checked += (s, ev) => StartAutoListen();
             AlwaysListenToggle.Unchecked += (s, ev) => StopAutoListen();
+            StartWaitingForWakeWordIfEnabled();
 
             // Load conversation memories
             _loadedMemories = MemoryManager.LoadAll();
@@ -268,9 +268,6 @@ public partial class MainWindow : Window
         ApplyMarkdownSettings();
         SilenceSlider.Value = _settings.SilenceTimeout;
         NoiseSlider.Value = _settings.NoiseSuppression;
-        AutoDetectToggle.IsChecked = _settings.AutoDetectVoice;
-        WakeWordBox.Text = _settings.WakeWord;
-        WakeWordBox.IsEnabled = !_settings.AutoDetectVoice;
         SelectTranscriptionBackendCombo(_settings.TranscriptionBackend);
         NpuTranscriberCommandBox.Text = _settings.ExternalNpuTranscriberCommand;
         RateSlider.Value = _settings.SpeechRate;
@@ -351,6 +348,16 @@ public partial class MainWindow : Window
                 _settings.ImageWidth = AppSettings.DefaultImageWidth;
                 _settings.ImageHeight = AppSettings.DefaultImageHeight;
             }
+        }
+
+        if (_settings.SettingsVersion < 2)
+        {
+            // 1.0.16 ran Whisper on the GPU by default; on some AMD integrated GPUs it repeated or dropped words.
+            _settings.WhisperUseGpu = false;
+            // The wake word is now "hey onyx"; a phrase the user typed is kept.
+            if (string.IsNullOrWhiteSpace(_settings.WakeWord) ||
+                string.Equals(_settings.WakeWord.Trim(), "hey assistant", StringComparison.OrdinalIgnoreCase))
+                _settings.WakeWord = WakeWordText.DefaultPhrase;
         }
 
         _settings.SettingsVersion = AppSettings.CurrentSettingsVersion;
@@ -438,8 +445,6 @@ public partial class MainWindow : Window
         _settings.InputLanguage = InputLangCombo.Text;
         _settings.SilenceTimeout = SilenceSlider.Value;
         _settings.NoiseSuppression = (int)NoiseSlider.Value;
-        _settings.AutoDetectVoice = AutoDetectToggle.IsChecked == true;
-        _settings.WakeWord = WakeWordBox.Text;
         _settings.MicDeviceIndex = MicCombo.SelectedItem is AudioDeviceInfo mic ? mic.Index : -1;
         _settings.TranscriptionBackend = GetSelectedTranscriptionBackend();
         var npuCommand = NpuTranscriberCommandBox.Text.Trim();
@@ -801,9 +806,6 @@ public partial class MainWindow : Window
         ModelCombo.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new TextChangedEventHandler((s, e) => UpdateActiveModelText()));
 
-        // Wake word change
-        WakeWordBox.TextChanged += (s, e) => { _speech.WakeWord = WakeWordBox.Text; };
-
         TranscriptionBackendCombo.SelectionChanged += (s, e) =>
         {
             _speech.TranscriptionBackend = GetSelectedTranscriptionBackend();
@@ -916,7 +918,6 @@ public partial class MainWindow : Window
             _schedulerTimer?.Stop();
             _schedulerStore.Save();
             _chatCts?.Cancel();
-            DisposeWakeWordDetector();
             CancelKnowledgeIndexing();
             await FlushConversationHistoryAsync(TimeSpan.FromSeconds(3));
 

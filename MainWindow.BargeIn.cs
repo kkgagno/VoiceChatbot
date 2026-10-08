@@ -98,8 +98,7 @@ public partial class MainWindow
             restoreStatus.Stop();
             if (_speech.CurrentState != VoiceState.Listening)
                 return;
-            StateLabel.Text = "Listening...";
-            ActivityLabel.Text = "Listening for speech...";
+            ShowListeningStatus();
         };
         restoreStatus.Start();
     }

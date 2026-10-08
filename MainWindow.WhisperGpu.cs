@@ -7,8 +7,9 @@ namespace VoiceChatbot;
 public partial class MainWindow
 {
     // ==================== Whisper on the GPU ====================
-    // "Use GPU for speech recognition" (Voice Input): Whisper.net runs on a Vulkan GPU when there is
-    // one (SpeechEngine.WhisperRuntime.cs). The line under the switch shows what the model runs on.
+    // "Use GPU for speech recognition" (Voice Input, off by default): Whisper.net runs on a Vulkan GPU
+    // when there is one (SpeechEngine.WhisperRuntime.cs). The line under the switch shows what the
+    // model runs on.
 
     private bool _whisperGpuWired;
 
@@ -55,7 +56,11 @@ public partial class MainWindow
     private void UpdateWhisperRuntimeText()
     {
         var runtime = _speech.WhisperRuntime;
-        WhisperRuntimeText.Text = runtime.Length > 0 ? runtime : "Whisper: loads with the first model";
+        WhisperRuntimeText.Text = runtime.Length == 0
+            ? "Whisper: loads with the first model"
+            : runtime.StartsWith("Whisper: Vulkan GPU", StringComparison.Ordinal)
+                ? $"{runtime}. Can be faster, but on some AMD integrated GPUs it repeats or drops words; turn it off if that happens."
+                : runtime;
         WhisperRuntimeText.ToolTip = runtime.Length > 0 ? runtime : null;
     }
 }

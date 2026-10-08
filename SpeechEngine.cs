@@ -82,7 +82,7 @@ public partial class SpeechEngine : IDisposable
     public double SilenceTimeout { get; set; } = 2.4;
     public int NoiseGate { get; set; } = 30;
     public bool AutoDetect { get; set; } = true;
-    public string WakeWord { get; set; } = "hey assistant";
+    public string WakeWord { get; set; } = WakeWordText.DefaultPhrase;
     public string VoiceName { get; set; } = "am_onyx (American Male)";
     public int SpeechRate { get; set; } = 1;
     public int Volume { get; set; } = 80;
@@ -242,8 +242,13 @@ public partial class SpeechEngine : IDisposable
         if (langCode == "en-US" || langCode == "en-GB") langCode = "en";
         if (langCode.Contains('-')) langCode = langCode.Split('-')[0];
 
+        // Each utterance is transcribed on its own: no text from the previous one as the prompt
+        // (WithNoContext), and one segment per 30 s window (WithSingleSegment), so an early timestamp
+        // cannot make Whisper decode the same audio again and return the sentence twice.
         return factory.CreateBuilder()
             .WithLanguage(langCode)
+            .WithNoContext()
+            .WithSingleSegment()
             .Build();
     }
 
@@ -623,32 +628,16 @@ public partial class SpeechEngine : IDisposable
 
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    text = text.Trim();
-
-                    // Wake word check (not needed when the wake word detector started this turn)
-                    if (!AutoDetect && !wakeWordAlreadyHeard && !string.IsNullOrWhiteSpace(WakeWord))
+                    // "Only respond after the wake word": no phrase or only the phrase ends the turn quietly.
+                    var afterWakePhrase = ApplyWakePhrase(text.Trim(), wakeWordAlreadyHeard);
+                    if (afterWakePhrase == null)
                     {
-                        // Whisper writes "Hey, assistant." - match words, not the exact characters.
-                        if (!WakeWordText.TryFind(text, WakeWord, out var afterWakeWord))
-                        {
-                            // No wake word detected - go back to listening
-                            _isProcessing = false;
-                            SetState(VoiceState.Idle);
-                            ListeningTimedOut?.Invoke();
-                            return;
-                        }
-
-                        // Wake word found - strip it from the text
-                        text = afterWakeWord;
-                        if (string.IsNullOrWhiteSpace(text))
-                        {
-                            // Only wake word was spoken, wait for the actual question
-                            _isProcessing = false;
-                            SetState(VoiceState.Idle);
-                            ListeningTimedOut?.Invoke();
-                            return;
-                        }
+                        _isProcessing = false;
+                        SetState(VoiceState.Idle);
+                        ListeningTimedOut?.Invoke();
+                        return;
                     }
+                    text = afterWakePhrase;
 
                     if (IsIgnoredWhisperText(text))
                     {
@@ -819,15 +808,18 @@ public partial class SpeechEngine : IDisposable
             if (wavStream.CanSeek)
                 wavStream.Position = 0;
 
-            var result = new StringBuilder();
+            var segments = new List<string>();
             await foreach (var segment in processor.ProcessAsync(wavStream, ct).ConfigureAwait(false))
             {
                 var text = CleanWhisperSegment(segment.Text);
                 if (!string.IsNullOrWhiteSpace(text))
-                    result.Append(text);
+                    segments.Add(text);
             }
 
-            var cleaned = CleanTranscriptText(result.ToString());
+            // Whisper can return the same sentence two or more times for one utterance.
+            var cleaned = CleanTranscriptText(TranscriptCleanup.Clean(segments));
+            if (CountWords(cleaned) < CountWords(string.Join(" ", segments)))
+                AppLog.Info("Whisper repeated itself; the repeated sentences were removed.");
             LastTranscriptionBackendUsed = "Whisper.net";
             return IsIgnoredWhisperText(cleaned) ? "" : cleaned;
         }
@@ -924,7 +916,7 @@ public partial class SpeechEngine : IDisposable
                     : error);
             }
 
-            var cleaned = CleanTranscriptText(stdout.ToString());
+            var cleaned = TranscriptCleanup.CollapseRepeatedSentences(CleanTranscriptText(stdout.ToString()));
             return IsIgnoredWhisperText(cleaned) ? "" : cleaned;
         }
         finally
@@ -986,6 +978,8 @@ public partial class SpeechEngine : IDisposable
         cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
         return cleaned;
     }
+
+    private static int CountWords(string text) => Regex.Matches(text, @"[\p{L}\p{N}]+").Count;
 
     private static string CleanWhisperSegment(string? text)
     {

@@ -102,14 +102,16 @@ public partial class MainWindow
     {
         Dispatcher.Invoke(() =>
         {
-            if (_autoListening)
+            // After a bare wake phrase, listen for the request even when Auto is off (Listen was pressed).
+            if (_autoListening || _speech.HasWakePhraseFollowUp)
             {
-                // No speech heard, restart listening
+                // No speech heard (or speech without the wake word), restart listening
                 Task.Delay(300).ContinueWith(_ =>
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        if (_autoListening && !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
+                        if ((_autoListening || _speech.HasWakePhraseFollowUp) &&
+                            !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
                         {
                             if (_speech.CurrentState == VoiceState.Speaking)
                                 return;
@@ -149,14 +151,15 @@ public partial class MainWindow
                     break;
                 case VoiceState.Listening:
                     StateIndicator.Fill = FindResource("ListeningBrush") as SolidColorBrush;
-                    StateLabel.Text = "Listening...";
-                    ActivityLabel.Text = "Listening for speech...";
+                    ShowListeningStatus();
                     _listenStartTime = DateTime.Now;
                     break;
                 case VoiceState.Processing:
                     StateIndicator.Fill = FindResource("WarningBrush") as SolidColorBrush;
                     StateLabel.Text = "Processing...";
-                    ActivityLabel.Text = "Sending to Ollama...";
+                    ActivityLabel.Text = _speech.IsWaitingForWakePhrase
+                        ? "Checking for the wake word..."
+                        : "Sending to Ollama...";
                     break;
                 case VoiceState.Speaking:
                     StateIndicator.Fill = FindResource("SpeakingBrush") as SolidColorBrush;
@@ -187,7 +190,7 @@ public partial class MainWindow
             }
 
             _speech.StopSpeaking();
-            _speech.StartListening();
+            _speech.StartListeningWithoutWakePhrase();
         }
     }
 
@@ -201,7 +204,8 @@ public partial class MainWindow
 
         _speech.StopSpeaking();
         _speech.ReadyForNextSpeech();
-        if (!_speech.StartListening())
+        // Pressing Listen (or the hotkey) is the wake-up: this turn does not need the wake word.
+        if (!_speech.StartListeningWithoutWakePhrase())
             SetUIState("idle", "Voice input unavailable");
     }
 
@@ -264,13 +268,6 @@ public partial class MainWindow
         }
     }
 
-    private void AutoDetectToggle_Click(object sender, RoutedEventArgs e)
-    {
-        var isAuto = AutoDetectToggle.IsChecked == true;
-        WakeWordBox.IsEnabled = !isAuto;
-        _speech.AutoDetect = isAuto;
-    }
-
     private void TtsToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = TtsToggle.IsChecked == true;
@@ -286,7 +283,6 @@ public partial class MainWindow
     {
         ApplySelectedMicrophone();
         SaveSettings();
-        RestartWakeWordDetectorOnNewMicrophone();
         if (MicCombo.SelectedItem is AudioDeviceInfo mic)
             AddSystemMessage($"Microphone set to: {mic.Name}");
     }

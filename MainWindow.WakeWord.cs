@@ -1,281 +1,121 @@
 using System;
-using System.Linq;
 using System.Media;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
 
 namespace VoiceChatbot;
 
 public partial class MainWindow
 {
-    // ==================== Wake word detector ====================
-    // Always-on openWakeWord detector (WakeWordDetector), running in-process with the bundled models.
-    // Hearing the wake word starts one listening turn, like the Listen button. It is paused while the
-    // app listens, thinks or speaks.
+    // ==================== Wake word ====================
+    // "Only respond after the wake word" (Voice Input) turns AutoDetect off: the app keeps listening
+    // (Auto) and answers only speech that contains the wake phrase, "hey onyx" by default
+    // (SpeechEngine.WakeWord.cs). Speech without it is ignored without a chat message. A bare
+    // "Hey Onyx" plays a sound and the next utterance is answered without the phrase.
 
-    private WakeWordDetector? _wakeWord;
     private bool _wakeWordWired;
-    private DispatcherTimer? _wakeWordPauseTimer;
-    private DispatcherTimer? _wakeWordRestartTimer;
-    private string _wakeWordLastHeard = "";
 
+    private bool WakeWordOnly => WakeWordOnlyToggle.IsChecked == true;
+
+    // ApplySettings, before speech init.
     private void ApplyWakeWordSettings()
     {
         if (!_wakeWordWired)
         {
             _wakeWordWired = true;
-            foreach (var model in WakeWordProtocol.Models)
-                WakeWordModelCombo.Items.Add(new ComboBoxItem { Content = WakeWordProtocol.DisplayName(model), Tag = model });
-            WakeWordSensitivitySlider.ValueChanged += (_, _) => OnWakeWordSensitivityChanged();
-            _speech.StateChanged += PauseWakeWordWhileVoiceBusy;
+            WakeWordBox.TextChanged += (_, _) =>
+            {
+                _speech.WakeWord = WakeWordBox.Text;
+                UpdateWakeWordUi();
+            };
+            _speech.WakePhraseHeard += () => Dispatcher.BeginInvoke(OnWakePhraseHeard);
+            AlwaysListenToggle.Checked += (_, _) => UpdateWakeWordUi();
+            AlwaysListenToggle.Unchecked += (_, _) => UpdateWakeWordUi();
         }
 
-        SelectWakeWordModel(_settings.WakeWordModel);
-        WakeWordSensitivitySlider.Value = WakeWordProtocol.ThresholdToSensitivity(_settings.WakeWordThreshold);
-        WakeWordDetectorToggle.IsChecked = _settings.WakeWordDetectorEnabled;
+        WakeWordOnlyToggle.IsChecked = !_settings.AutoDetectVoice;
+        WakeWordBox.Text = _settings.WakeWord;
+        _speech.AutoDetect = _settings.AutoDetectVoice;
+        _speech.WakeWord = _settings.WakeWord;
         UpdateWakeWordUi();
     }
 
     private void SaveWakeWordSettings()
     {
-        _settings.WakeWordDetectorEnabled = WakeWordDetectorToggle.IsChecked == true;
-        _settings.WakeWordModel = GetSelectedWakeWordModel();
-        _settings.WakeWordThreshold = WakeWordProtocol.SensitivityToThreshold(WakeWordSensitivitySlider.Value);
+        _settings.AutoDetectVoice = !WakeWordOnly;
+        _settings.WakeWord = WakeWordBox.Text.Trim();
     }
 
-    // Startup, after speech init.
-    private void StartWakeWordDetectorIfEnabled()
+    // Startup, once everything (face policy included) is ready: wait for the wake word straight away.
+    private void StartWaitingForWakeWordIfEnabled()
     {
-        if (WakeWordDetectorToggle.IsChecked == true)
-            StartWakeWordDetector();
+        if (WakeWordOnly && AlwaysListenToggle.IsChecked != true)
+            AlwaysListenToggle.IsChecked = true;
     }
 
-    private void WakeWordDetectorToggle_Click(object sender, RoutedEventArgs e)
+    private void WakeWordOnlyToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (WakeWordDetectorToggle.IsChecked == true)
-            StartWakeWordDetector();
-        else
-            StopWakeWordDetector();
+        _speech.AutoDetect = !WakeWordOnly;
         SaveSettings();
-    }
 
-    private void WakeWordModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_wakeWordWired || _applyingSettings)
-            return;
-        SaveSettings();
-        ScheduleWakeWordRestart();
+        // Waiting for the wake word needs the microphone on: turn on Auto (continuous listening).
+        if (WakeWordOnly && AlwaysListenToggle.IsChecked != true)
+            AlwaysListenToggle.IsChecked = true;
+        else if (_speech.CurrentState == VoiceState.Listening)
+            ShowListeningStatus();
         UpdateWakeWordUi();
     }
 
-    private void OnWakeWordSensitivityChanged()
+    // UI thread, after a bare "Hey Onyx": the next utterance is answered without the phrase.
+    private void OnWakePhraseHeard()
     {
-        WakeWordSensitivityValue.Text = ((int)Math.Round(WakeWordSensitivitySlider.Value)).ToString();
-        if (_applyingSettings)
-            return;
-        // The threshold is read when the detector starts; restart once the slider settles.
-        ScheduleWakeWordRestart();
+        try { SystemSounds.Asterisk.Play(); } catch { }
+        ActivityLabel.Text = $"Heard \"{WakePhraseForDisplay}\" - listening...";
     }
 
-    private void RestartWakeWordDetectorOnNewMicrophone()
-    {
-        if (_wakeWord?.IsRunning == true)
-            ScheduleWakeWordRestart();
-    }
+    private string WakePhraseForDisplay => WakeWordBox.Text.Trim();
 
-    private void StartWakeWordDetector()
+    /// <summary>Status bar text while the microphone is on: waiting for the wake word, or listening.</summary>
+    private void ShowListeningStatus()
     {
-        try
+        if (_speech.IsWaitingForWakePhrase)
         {
-            if (_wakeWord == null)
-            {
-                _wakeWord = new WakeWordDetector();
-                _wakeWord.Detected += evt => Dispatcher.BeginInvoke(() => OnWakeWordDetected(evt));
-                _wakeWord.StatusChanged += _ => Dispatcher.BeginInvoke(UpdateWakeWordUi);
-                _wakeWord.Error += message => Dispatcher.BeginInvoke(() => OnWakeWordError(message));
-            }
-
-            _wakeWordLastHeard = "";
-            _wakeWord.Start(
-                GetSelectedWakeWordModel(),
-                WakeWordProtocol.SensitivityToThreshold(WakeWordSensitivitySlider.Value),
-                _speech.MicDeviceIndex);
-
-            if (_wakeWordPauseTimer == null)
-            {
-                // Resuming is decided here; pausing also happens straight from the voice state change.
-                _wakeWordPauseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-                _wakeWordPauseTimer.Tick += (_, _) => UpdateWakeWordPause();
-            }
-            _wakeWordPauseTimer.Start();
-            UpdateWakeWordPause();
+            StateLabel.Text = "Waiting for wake word";
+            ActivityLabel.Text = $"Waiting for \"{WakePhraseForDisplay}\"";
         }
-        catch (Exception ex)
-        {
-            AddSystemMessage($"Wake word detector could not start: {ex.Message}");
-        }
-
-        UpdateWakeWordUi();
-    }
-
-    private void StopWakeWordDetector()
-    {
-        _wakeWordPauseTimer?.Stop();
-        _wakeWordRestartTimer?.Stop();
-        try { _wakeWord?.Stop(); } catch { }
-        UpdateWakeWordUi();
-    }
-
-    // Window close: releases the microphone and the models.
-    private void DisposeWakeWordDetector()
-    {
-        _wakeWordPauseTimer?.Stop();
-        _wakeWordRestartTimer?.Stop();
-        var detector = _wakeWord;
-        _wakeWord = null;
-        try { detector?.Dispose(); } catch { }
-    }
-
-    private void ScheduleWakeWordRestart()
-    {
-        if (WakeWordDetectorToggle.IsChecked != true || _shutdownStarted)
-            return;
-
-        if (_wakeWordRestartTimer == null)
-        {
-            _wakeWordRestartTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
-            _wakeWordRestartTimer.Tick += (_, _) =>
-            {
-                _wakeWordRestartTimer.Stop();
-                SaveSettings();
-                if (WakeWordDetectorToggle.IsChecked == true && !_shutdownStarted)
-                    StartWakeWordDetector();
-            };
-        }
-
-        _wakeWordRestartTimer.Stop();
-        _wakeWordRestartTimer.Start();
-    }
-
-    // ==================== Pause while busy ====================
-
-    // Voice engine thread. Stop feeding audio at once so the detector never hears the assistant.
-    private void PauseWakeWordWhileVoiceBusy(VoiceState state)
-    {
-        if (state is VoiceState.Listening or VoiceState.Speaking)
-            _wakeWord?.Pause();
-    }
-
-    private void UpdateWakeWordPause()
-    {
-        var detector = _wakeWord;
-        if (detector == null || !detector.IsRunning)
-            return;
-
-        if (IsAssistantBusyForWakeWord())
-            detector.Pause();
         else
-            detector.Resume();
-    }
-
-    private bool IsAssistantBusyForWakeWord()
-    {
-        // Auto-listen already hears everything; the wake word would only start a second turn.
-        if (_autoListening)
-            return true;
-
-        // The send button is disabled while a reply (or image, search, command) is being produced.
-        // The voice engine can stay in Processing after a command that never speaks, so that state
-        // alone does not count.
-        return _speech.CurrentState is VoiceState.Listening or VoiceState.Speaking || !SendBtn.IsEnabled;
-    }
-
-    // ==================== Detection ====================
-
-    private void OnWakeWordDetected(WakeWordEvent evt)
-    {
-        try
         {
-            var detector = _wakeWord;
-            // _facePolicy is set once startup has finished.
-            if (_shutdownStarted || detector == null || !detector.IsRunning || _facePolicy is null)
-                return;
-
-            _wakeWordLastHeard = $"heard at {DateTime.Now:HH:mm:ss} (score {evt.Score:0.00})";
-            UpdateWakeWordUi();
-            if (IsAssistantBusyForWakeWord())
-                return;
-
-            // Same checks and steps as the Listen button.
-            if (!IsVoiceInputAllowedByFacePolicy())
-            {
-                ActivityLabel.Text = "Wake word heard, but voice input is blocked by local face policy.";
-                return;
-            }
-
-            detector.Pause();
-            try { SystemSounds.Asterisk.Play(); } catch { }
-            _speech.StopSpeaking();
-            _speech.ReadyForNextSpeech();
-            if (!_speech.StartListeningAfterWakeWord())
-            {
-                SetUIState("idle", "Voice input unavailable");
-                return;
-            }
-
-            ActivityLabel.Text = $"Heard \"{WakeWordProtocol.SpokenPhrase(detector.Model)}\" - listening...";
-        }
-        catch (Exception ex)
-        {
-            AddSystemMessage($"Wake word could not start listening: {ex.Message}");
+            StateLabel.Text = "Listening...";
+            ActivityLabel.Text = "Listening for speech...";
         }
     }
-
-    private void OnWakeWordError(string message)
-    {
-        if (_shutdownStarted || _wakeWord == null)
-            return;
-
-        UpdateWakeWordUi();
-        AddSystemMessage($"Wake word detector stopped: {message} Turn \"Listen for a wake word\" off and on to retry.");
-    }
-
-    // ==================== UI ====================
 
     private void UpdateWakeWordUi()
     {
-        var enabled = WakeWordDetectorToggle.IsChecked == true;
-        WakeWordModelCombo.IsEnabled = enabled;
-        WakeWordSensitivitySlider.IsEnabled = enabled;
-        WakeWordSensitivityValue.Text = ((int)Math.Round(WakeWordSensitivitySlider.Value)).ToString();
-
-        var status = _wakeWord?.Status ?? WakeWordStatus.Off;
-        var model = _wakeWord?.Model ?? GetSelectedWakeWordModel();
-        var text = WakeWordProtocol.DescribeStatus(status, model, _wakeWord?.StatusDetail);
-        if ((status is WakeWordStatus.Listening or WakeWordStatus.Paused) && _wakeWordLastHeard.Length > 0)
-            text += $" - {_wakeWordLastHeard}";
+        string text;
+        string brush;
+        if (!WakeWordOnly)
+        {
+            text = "Off: everything you say is answered";
+            brush = "TextMutedBrush";
+        }
+        else if (!WakeWordText.HasWords(WakeWordBox.Text))
+        {
+            text = "Type a wake word below; until then everything is answered";
+            brush = "WarningBrush";
+        }
+        else if (AlwaysListenToggle.IsChecked == true)
+        {
+            text = $"Waiting for \"{WakePhraseForDisplay}\"";
+            brush = "SuccessBrush";
+        }
+        else
+        {
+            text = $"Turn on Auto to wait for \"{WakePhraseForDisplay}\"";
+            brush = "TextSecondaryBrush";
+        }
 
         WakeWordStatusText.Text = text;
-        WakeWordStatusText.ToolTip = string.IsNullOrWhiteSpace(_wakeWord?.StatusDetail) ? null : _wakeWord!.StatusDetail;
-        WakeWordStatusText.SetResourceReference(TextBlock.ForegroundProperty, status switch
-        {
-            WakeWordStatus.Listening => "SuccessBrush",
-            WakeWordStatus.Error => "ErrorBrush",
-            WakeWordStatus.Starting or WakeWordStatus.Paused => "TextSecondaryBrush",
-            _ => "TextMutedBrush"
-        });
-    }
-
-    private string GetSelectedWakeWordModel() =>
-        WakeWordModelCombo.SelectedItem is ComboBoxItem { Tag: string model }
-            ? model
-            : WakeWordProtocol.NormalizeModel(_settings.WakeWordModel);
-
-    private void SelectWakeWordModel(string? model)
-    {
-        var id = WakeWordProtocol.NormalizeModel(model);
-        WakeWordModelCombo.SelectedItem = WakeWordModelCombo.Items.OfType<ComboBoxItem>()
-            .FirstOrDefault(item => item.Tag as string == id);
+        WakeWordStatusText.SetResourceReference(TextBlock.ForegroundProperty, brush);
     }
 }

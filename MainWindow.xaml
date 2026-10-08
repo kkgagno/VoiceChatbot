@@ -430,9 +430,9 @@
                                     </Grid>
                                 </StackPanel>
 
-                                <ToggleButton x:Name="WhisperGpuToggle" Content="Use GPU for speech recognition" IsChecked="True" Margin="0,0,0,2"
+                                <ToggleButton x:Name="WhisperGpuToggle" Content="Use GPU for speech recognition" Margin="0,0,0,2"
                                               Style="{StaticResource SwitchToggle}" Click="WhisperGpuToggle_Click"
-                                              ToolTip="Runs Whisper.net on the graphics card through Vulkan (AMD Radeon, NVIDIA or Intel) and falls back to the CPU when no GPU can be used. Turn off to force the CPU; applies to the next model load."/>
+                                              ToolTip="Runs Whisper.net on the graphics card through Vulkan (AMD Radeon, NVIDIA or Intel). It can be faster, but on some AMD integrated GPUs it repeats or drops words; turn it off if that happens. Off uses the CPU."/>
                                 <TextBlock x:Name="WhisperRuntimeText" Text="Whisper: loads with the first model" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
 
                                 <StackPanel Style="{StaticResource FieldBlock}">
@@ -471,41 +471,16 @@
                                 </Grid>
                                 <Slider x:Name="NoiseSlider" Minimum="0" Maximum="100" Value="30" SmallChange="5" LargeChange="10" Margin="0,0,0,10"/>
 
-                                <ToggleButton x:Name="AutoDetectToggle" Content="Auto-detect voice (no wake word)" IsChecked="True"
-                                              Style="{StaticResource SwitchToggle}" Click="AutoDetectToggle_Click"/>
-
-                                <StackPanel>
-                                    <TextBlock Text="Wake word" Style="{StaticResource SectionLabel}"/>
-                                    <TextBox x:Name="WakeWordBox" Text="hey assistant" IsEnabled="False"/>
-                                </StackPanel>
-
-                                <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
-
-                                <ToggleButton x:Name="WakeWordDetectorToggle" Content="Listen for a wake word" Margin="0,0,0,2"
-                                              Style="{StaticResource SwitchToggle}" Click="WakeWordDetectorToggle_Click"
-                                              ToolTip="Always-on wake word that runs locally with openWakeWord, without Whisper. Say it and the app chimes and listens once, like pressing Listen."/>
-                                <TextBlock x:Name="WakeWordStatusText" Text="Off" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
+                                <ToggleButton x:Name="WakeWordOnlyToggle" Content="Only respond after the wake word" Margin="0,0,0,2"
+                                              Style="{StaticResource SwitchToggle}" Click="WakeWordOnlyToggle_Click"
+                                              ToolTip="Keeps listening (Auto) but only answers speech that contains the wake word, for example &quot;Hey Onyx, what's the weather?&quot;. Or say just &quot;Hey Onyx&quot;, wait for the sound, then ask. Everything else is ignored. Listen, Mic and the hotkey don't need the wake word."/>
+                                <TextBlock x:Name="WakeWordStatusText" Text="Off: everything you say is answered" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
 
                                 <StackPanel Style="{StaticResource FieldBlock}">
-                                    <TextBlock Text="Wake word model" Style="{StaticResource SectionLabel}"/>
-                                    <ComboBox x:Name="WakeWordModelCombo" IsEnabled="False"
-                                              SelectionChanged="WakeWordModelCombo_SelectionChanged"
-                                              ToolTip="The phrase to say. These are openWakeWord's pretrained English models."/>
+                                    <TextBlock Text="Wake word" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="WakeWordBox" Text="hey onyx"
+                                             ToolTip="Recognized however Whisper spells it: &quot;Hey, Onyx.&quot;, &quot;hi onix&quot; and similar all count."/>
                                 </StackPanel>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Wake word sensitivity" Style="{StaticResource SectionLabel}"/>
-                                    <TextBlock x:Name="WakeWordSensitivityValue" Grid.Column="1" Text="50" Style="{StaticResource SliderValue}"/>
-                                </Grid>
-                                <Slider x:Name="WakeWordSensitivitySlider" Minimum="10" Maximum="90" Value="50"
-                                        SmallChange="5" LargeChange="10" IsEnabled="False"
-                                        ToolTip="Higher reacts to quieter or less exact speech but triggers by mistake more often. Lower it if it wakes up on its own."/>
-                                <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
-                                           Text="Runs on this PC with the bundled openWakeWord models; nothing else to install. Keeps the microphone open while on."/>
 
                                 <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
 

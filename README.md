@@ -60,7 +60,9 @@ Finished replies are shown formatted: headings, bold, italic and strikethrough t
 
 Local transcription uses Whisper.net. Use **Download Model** inside the app to download a Whisper model. A microphone is required for voice input.
 
-Whisper runs on the graphics card when it can: the installer includes the Vulkan build of Whisper.net, which works on AMD Radeon (including Ryzen integrated graphics), NVIDIA and Intel GPUs with a current driver. This is the fast path out of the box, with nothing else to install. Without a usable Vulkan GPU, or if it fails to load, Whisper falls back to the CPU automatically. **Use GPU for speech recognition** under **Voice Input** (on by default, saved as `WhisperUseGpu`) turns this off to force the CPU; the line under it shows what the model runs on, for example `Whisper: Vulkan GPU (AMD Radeon(TM) 780M)` or `Whisper: CPU`. Changing it reloads the model; switching back to the GPU after starting with it off needs a restart.
+Whisper can run on the graphics card: the installer includes the Vulkan build of Whisper.net, which works on AMD Radeon (including Ryzen integrated graphics), NVIDIA and Intel GPUs with a current driver. Turn on **Use GPU for speech recognition** under **Voice Input** (off by default, saved as `WhisperUseGpu`) to try it. It can be faster, but on some AMD integrated GPUs it repeats or drops words (every sentence arriving twice, or no reply at all); turn it off if that happens. Without a usable Vulkan GPU, or if it fails to load, Whisper falls back to the CPU automatically. The line under the switch shows what the model runs on, for example `Whisper: Vulkan GPU (AMD Radeon(TM) 780M)` or `Whisper: CPU`. Changing it reloads the model; switching to the GPU after starting with it off needs a restart. Updating from 1.0.16, which had it on by default, turns it off once.
+
+Each utterance is transcribed on its own, without the previous one as context, and a sentence Whisper repeats back to back ("This is bullshit.This is bullshit.") is sent once.
 
 If **Listen** does not start on a new PC:
 
@@ -131,18 +133,16 @@ Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut 
 - Bluetooth headsets may switch to their lower-quality call audio while the microphone is open during speech.
 - Saved as `BargeInEnabled` and `BargeInSensitivity` (0-100, default 50) in `settings.json`.
 
-### Always-on wake word
+### Wake word ("Hey Onyx")
 
-The **Wake word** box under **Voice Input** is checked against Whisper transcripts, so it only works while the app is already listening. For a real always-on wake word, turn on **Listen for a wake word** under **Voice Input** and choose the **Wake word model**: Hey Jarvis (default), Alexa, Hey Mycroft, or Hey Rhasspy.
+Turn on **Only respond after the wake word** under **Voice Input** to have the app keep listening but answer only when you address it. Turning it on also turns on **Auto** (continuous listening), and it starts waiting again when the app opens. The status shows `Waiting for "hey onyx"`.
 
-It runs [openWakeWord](https://github.com/dscripka/openWakeWord)'s models inside the app with ONNX Runtime. The models ship with the installer (`Resources\Models\WakeWord`), so there is nothing else to install: no Python, no internet, no Whisper. It needs only a few percent of one CPU core.
-
-The line under the switch shows `Loading the wake word model...`, `Listening for "hey jarvis"`, `Paused...`, or the error. When the app hears the wake word, it plays the Windows "Asterisk" sound and listens for one request, as if you had pressed **Listen**. Face gating still applies. Say your request after the sound. The text wake word is not needed for that turn, and if you say nothing for about 8 seconds the app stops listening. Detection pauses while the app is listening, working on a reply or speaking, and while **Auto** listening is on, so the assistant's own voice cannot wake it.
-
-- **Wake word sensitivity** (10-90, default 50): higher reacts to quieter or less exact speech but wakes up by mistake more often. Lower it if the app wakes up on its own.
-- The microphone stays open while the detector is on, so Bluetooth headsets may stay in their call-quality audio mode.
-- Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
-- The pretrained wake word models are licensed CC BY-NC-SA 4.0 (non-commercial use only); see `Resources\Models\WakeWord\README.md`.
+- Say the wake word and your request together: "Hey Onyx, what's the weather?" sends "what's the weather?".
+- Or say just "Hey Onyx", wait for the Windows "Asterisk" sound, then ask within about 8 seconds. That one request needs no wake word.
+- Everything else is ignored: no chat message and no reply (it is written to the log), and the app keeps listening. After each reply it waits for the wake word again.
+- **Listen**, **Mic**, the global hotkey and the tray's Listen item start a turn that does not need the wake word. A turn that interrupts the assistant (**Interrupt by speaking**) does need it.
+- Change the phrase in the **Wake word** box (default `hey onyx`). It is matched in the Whisper transcript, ignoring case and punctuation, with the usual spellings of "hey" (hay, hi, hei, a) and small spelling differences in the name ("Hey, Onix.", "Hey Annex", "Hey on X"), but not other names such as "Hey Annie".
+- Saved as `AutoDetectVoice` (false when the switch is on) and `WakeWord` in `settings.json`. The old default "hey assistant" becomes "hey onyx"; a phrase you typed is kept. The openWakeWord detector ("Hey Jarvis") from 1.0.16 has been removed.
 
 ## Conversations, memory and knowledge
 

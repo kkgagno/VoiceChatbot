@@ -35,8 +35,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [InstallDelete]
-; The wake word no longer uses Python; remove the old helper left by earlier versions.
+; The wake word is now matched in the Whisper transcript; remove the openWakeWord helper (earlier
+; versions), its models and ONNX Runtime (1.0.16).
 Type: filesandordirs; Name: "{app}\Tools\WakeWord"
+Type: filesandordirs; Name: "{app}\Resources\Models\WakeWord"
+Type: files; Name: "{app}\Microsoft.ML.OnnxRuntime.dll"
+Type: files; Name: "{app}\onnxruntime.dll"
+Type: files; Name: "{app}\onnxruntime_providers_shared.dll"
 
 [Files]
 Source: "..\bin\Release\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
