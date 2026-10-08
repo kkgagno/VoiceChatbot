@@ -50,6 +50,7 @@ public sealed class JsonFaceProfileStore : IFaceProfileStore
                         profile.DisplayName = profile.Identity == FaceIdentity.Unknown ? Path.GetFileNameWithoutExtension(file) : profile.Identity.ToString();
                     if (string.IsNullOrWhiteSpace(profile.ProfileId))
                         profile.ProfileId = FaceProfileNames.ToProfileId(profile.DisplayName);
+                    FaceProfileRoles.Migrate(profile);
                     profiles.Add(profile);
                 }
             }
@@ -66,6 +67,7 @@ public sealed class JsonFaceProfileStore : IFaceProfileStore
     {
         Directory.CreateDirectory(_profileDirectory);
         profile.UpdatedUtc = DateTime.UtcNow;
+        FaceProfileRoles.Migrate(profile);
         if (string.IsNullOrWhiteSpace(profile.DisplayName))
             profile.DisplayName = profile.Identity == FaceIdentity.Unknown ? "Unknown" : profile.Identity.ToString();
         profile.ProfileId = FaceProfileNames.ToProfileId(profile.DisplayName);
@@ -94,17 +96,6 @@ public static class FaceProfileNames
             .ToArray());
         safe = string.Join("_", safe.Split('_', StringSplitOptions.RemoveEmptyEntries));
         return string.IsNullOrWhiteSpace(safe) ? "profile" : safe.ToLowerInvariant();
-    }
-
-    public static FaceIdentity ToPolicyIdentity(string displayName)
-    {
-        var normalized = NormalizeDisplayName(displayName);
-        if (string.Equals(normalized, "Keith", StringComparison.OrdinalIgnoreCase))
-            return FaceIdentity.Keith;
-
-        return normalized.StartsWith("child", StringComparison.OrdinalIgnoreCase)
-            ? FaceIdentity.Child1
-            : FaceIdentity.Unknown;
     }
 }
 
@@ -149,35 +140,77 @@ public sealed class FaceIdentityManager
         _embeddingGenerator = new SFaceEmbeddingGenerator(options);
     }
 
-    public async Task<int> EnrollSampleAsync(string displayName, Mat frame, Rect faceBounds, CancellationToken cancellationToken = default)
+    public FaceModelOptions Options => _options;
+
+    /// <summary>Embedding model in use (<see cref="FaceEmbeddingFormats"/>), or null until it has loaded.</summary>
+    public string? ActiveEmbeddingModel => _embeddingGenerator.ActiveModel;
+
+    /// <summary>Loads the ONNX model and eye cascade on a worker thread so the first scan does not block the UI.</summary>
+    public Task WarmUpAsync() => Task.Run(_embeddingGenerator.EnsureLoaded);
+
+    /// <summary>
+    /// Saves one sample under <paramref name="role"/>. Outdated samples of the same model are dropped from
+    /// the profile, since they can no longer match. Returns the profile's usable sample count and how many
+    /// outdated samples were removed.
+    /// </summary>
+    public async Task<(int SampleCount, int RemovedOutdated)> EnrollSampleAsync(
+        string displayName,
+        FaceProfileRole role,
+        Mat frame,
+        Rect faceBounds,
+        CancellationToken cancellationToken = default)
     {
         displayName = FaceProfileNames.NormalizeDisplayName(displayName);
         var profileId = FaceProfileNames.ToProfileId(displayName);
-        var identity = FaceProfileNames.ToPolicyIdentity(displayName);
 
-        var embedding = _embeddingGenerator.CreateEmbedding(frame, faceBounds);
+        var embedding = await CreateEmbeddingAsync(frame, faceBounds, cancellationToken).ConfigureAwait(false);
         var profiles = (await _profileStore.LoadProfilesAsync(cancellationToken).ConfigureAwait(false)).ToList();
         var profile = profiles.FirstOrDefault(p => string.Equals(p.ProfileId, profileId, StringComparison.OrdinalIgnoreCase))
             ?? new LocalFaceProfile
         {
             ProfileId = profileId,
-            Identity = identity,
             DisplayName = displayName
         };
 
         profile.DisplayName = displayName;
-        profile.Identity = identity;
-        profile.Embeddings.Add(new FaceEmbedding { Values = embedding });
+        profile.Role = role;
+        profile.RoleInferred = false;
+        profile.Identity = FaceProfileRoles.ToPolicyIdentity(role);
+        var removed = profile.Embeddings.RemoveAll(stored =>
+            FaceEmbeddingFormats.IsOutdated(stored)
+            && string.Equals(FaceEmbeddingFormats.ModelOf(stored), embedding.Model, StringComparison.Ordinal));
+        profile.Embeddings.Add(embedding);
         await _profileStore.SaveProfileAsync(profile, cancellationToken).ConfigureAwait(false);
-        return profile.Embeddings.Count;
+        return (FaceEmbeddingFormats.CountUsable(profile, embedding.Model), removed);
     }
 
-    public async Task<int> CountSamplesAsync(string displayName, CancellationToken cancellationToken = default)
+    /// <summary>Changes the role of an existing profile. Returns false if there is no such profile.</summary>
+    public async Task<bool> SetRoleAsync(string displayName, FaceProfileRole role, CancellationToken cancellationToken = default)
+    {
+        var profile = await FindProfileAsync(displayName, cancellationToken).ConfigureAwait(false);
+        if (profile == null)
+            return false;
+
+        profile.Role = role;
+        profile.RoleInferred = false;
+        profile.Identity = FaceProfileRoles.ToPolicyIdentity(role);
+        await _profileStore.SaveProfileAsync(profile, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task<LocalFaceProfile?> FindProfileAsync(string displayName, CancellationToken cancellationToken = default)
     {
         displayName = FaceProfileNames.NormalizeDisplayName(displayName);
         var profileId = FaceProfileNames.ToProfileId(displayName);
         var profiles = await _profileStore.LoadProfilesAsync(cancellationToken).ConfigureAwait(false);
-        return profiles.FirstOrDefault(profile => string.Equals(profile.ProfileId, profileId, StringComparison.OrdinalIgnoreCase))?.Embeddings.Count ?? 0;
+        return profiles.FirstOrDefault(profile => string.Equals(profile.ProfileId, profileId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Samples of this profile that the active model can match against.</summary>
+    public async Task<int> CountSamplesAsync(string displayName, CancellationToken cancellationToken = default)
+    {
+        var profile = await FindProfileAsync(displayName, cancellationToken).ConfigureAwait(false);
+        return profile == null ? 0 : FaceEmbeddingFormats.CountUsable(profile, ActiveEmbeddingModel);
     }
 
     public async Task<IReadOnlyList<LocalFaceProfile>> LoadProfilesAsync(CancellationToken cancellationToken = default)
@@ -199,9 +232,17 @@ public sealed class FaceIdentityManager
 
     public async Task<FaceRecognitionResult> RecognizeAsync(Mat frame, Rect faceBounds, CancellationToken cancellationToken = default)
     {
-        var embedding = _embeddingGenerator.CreateEmbedding(frame, faceBounds);
+        var embedding = await CreateEmbeddingAsync(frame, faceBounds, cancellationToken).ConfigureAwait(false);
         var profiles = await _profileStore.LoadProfilesAsync(cancellationToken).ConfigureAwait(false);
-        return FaceEmbeddingMath.Match(embedding, profiles, _options.RecognitionThreshold);
+        return FaceEmbeddingMath.Match(embedding, profiles, _options.RecognitionThreshold, _options.RecognitionMargin);
+    }
+
+    private async Task<FaceEmbedding> CreateEmbeddingAsync(Mat frame, Rect faceBounds, CancellationToken cancellationToken)
+    {
+        // Work on a copy: the caller's snapshot can be replaced and disposed while the model runs
+        // on the worker thread.
+        using var copy = frame.Clone();
+        return await Task.Run(() => _embeddingGenerator.CreateEmbedding(copy, faceBounds), cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -211,6 +252,9 @@ public sealed class SFaceEmbeddingGenerator
     private readonly Lazy<Net?> _model;
     private readonly Lazy<CascadeClassifier?> _eyeClassifier;
 
+    // cv::dnn::Net and CascadeClassifier are not safe for concurrent use.
+    private readonly object _sync = new();
+
     public SFaceEmbeddingGenerator(FaceModelOptions options)
     {
         _options = options;
@@ -218,31 +262,53 @@ public sealed class SFaceEmbeddingGenerator
         _eyeClassifier = new Lazy<CascadeClassifier?>(LoadEyeClassifier);
     }
 
-    public float[] CreateEmbedding(Mat frame, Rect faceBounds)
+    /// <summary><see cref="FaceEmbeddingFormats.SFaceModel"/>, the legacy fallback, or null before the model has loaded.</summary>
+    public string? ActiveModel => !_model.IsValueCreated
+        ? null
+        : _model.Value != null ? FaceEmbeddingFormats.SFaceModel : FaceEmbeddingFormats.LegacyModel;
+
+    public void EnsureLoaded()
     {
-        var model = _model.Value;
-        if (model == null)
-            return LegacyFaceEmbeddingGenerator.CreateEmbedding(frame, faceBounds);
+        _ = _model.Value;
+        _ = _eyeClassifier.Value;
+    }
 
-        var safeBounds = LegacyFaceEmbeddingGenerator.Clamp(faceBounds, frame.Width, frame.Height, expandRatio: 0.18);
-        if (safeBounds.Width <= 0 || safeBounds.Height <= 0)
-            throw new InvalidOperationException("No valid face crop is available.");
+    public FaceEmbedding CreateEmbedding(Mat frame, Rect faceBounds)
+    {
+        lock (_sync)
+        {
+            var model = _model.Value;
+            if (model == null)
+            {
+                return FaceEmbeddingFormats.Create(
+                    FaceEmbeddingFormats.LegacyModel,
+                    LegacyFaceEmbeddingGenerator.CreateEmbedding(frame, faceBounds));
+            }
 
-        using var face = new Mat(frame, safeBounds);
-        using var aligned = AlignFace(face);
-        using var resized = Letterbox(aligned, 112, 112);
-        using var blob = CvDnn.BlobFromImage(
-            resized,
-            1.0 / 255.0,
-            new Size(112, 112),
-            new Scalar(0, 0, 0),
-            swapRB: false,
-            crop: false);
+            var safeBounds = LegacyFaceEmbeddingGenerator.Clamp(faceBounds, frame.Width, frame.Height, expandRatio: 0.18);
+            if (safeBounds.Width <= 0 || safeBounds.Height <= 0)
+                throw new InvalidOperationException("No valid face crop is available.");
 
-        model.SetInput(blob);
-        using var output = model.Forward();
-        output.GetArray(out float[] values);
-        return Normalize(values);
+            using var face = new Mat(frame, safeBounds);
+            using var aligned = AlignFace(face);
+            using var resized = Letterbox(aligned, 112, 112);
+
+            // Same input as OpenCV's FaceRecognizerSF::feature: a 112x112 aligned crop as raw 0-255 RGB.
+            // The model subtracts 127.5 and scales by 1/128 itself, so no scaling here, and the
+            // BGR camera frame must be swapped to RGB.
+            using var blob = CvDnn.BlobFromImage(
+                resized,
+                1.0,
+                new Size(112, 112),
+                new Scalar(0, 0, 0),
+                swapRB: true,
+                crop: false);
+
+            model.SetInput(blob);
+            using var output = model.Forward();
+            output.GetArray(out float[] values);
+            return FaceEmbeddingFormats.Create(FaceEmbeddingFormats.SFaceModel, Normalize(values));
+        }
     }
 
     private Mat AlignFace(Mat face)
@@ -482,59 +548,5 @@ public sealed class FaceRecognitionService : IFaceRecognitionService
         _ = profiles;
         _ = _options;
         return new FaceRecognitionResult { Identity = FaceIdentity.Unknown, Similarity = 0f, IsRecognized = false };
-    }
-}
-
-public static class FaceEmbeddingMath
-{
-    public static float CosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
-    {
-        if (left.Count == 0 || left.Count != right.Count) return 0f;
-
-        double dot = 0;
-        double leftMagnitude = 0;
-        double rightMagnitude = 0;
-
-        for (var i = 0; i < left.Count; i++)
-        {
-            dot += left[i] * right[i];
-            leftMagnitude += left[i] * left[i];
-            rightMagnitude += right[i] * right[i];
-        }
-
-        var denominator = Math.Sqrt(leftMagnitude) * Math.Sqrt(rightMagnitude);
-        return denominator <= 0 ? 0f : (float)(dot / denominator);
-    }
-
-    public static FaceRecognitionResult Match(float[] currentEmbedding, IEnumerable<LocalFaceProfile> profiles, float threshold)
-    {
-        var best = new FaceRecognitionResult();
-
-        foreach (var profile in profiles)
-        {
-            var similarities = profile.Embeddings
-                .Select(stored => CosineSimilarity(currentEmbedding, stored.Values))
-                .OrderByDescending(score => score)
-                .Take(5)
-                .ToArray();
-
-            if (similarities.Length == 0)
-                continue;
-
-            var strongest = similarities[0];
-            var topAverage = similarities.Average();
-            var stableScore = (strongest * 0.65f) + (topAverage * 0.35f);
-
-            if (stableScore > best.Similarity)
-                best = new FaceRecognitionResult
-                {
-                    Identity = profile.Identity,
-                    DisplayName = string.IsNullOrWhiteSpace(profile.DisplayName) ? profile.Identity.ToString() : profile.DisplayName,
-                    Similarity = stableScore,
-                    IsRecognized = stableScore >= threshold
-                };
-        }
-
-        return best;
     }
 }
