@@ -27,6 +27,7 @@ public partial class SchedulerWindow : Window
         Action<string> playAudio)
     {
         InitializeComponent();
+        WindowTheme.UseDarkTitleBar(this);
         _store = store;
         _save = save;
         _runNowAsync = runNowAsync;

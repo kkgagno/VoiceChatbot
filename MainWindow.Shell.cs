@@ -1,0 +1,354 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using Microsoft.Win32;
+
+namespace VoiceChatbot;
+
+// Window chrome, sidebar, keyboard shortcuts and Kokoro voice-output settings.
+public partial class MainWindow
+{
+    private bool _kokoroTestRunning;
+
+    // ==================== Kokoro ====================
+
+    private void SelectKokoroModeCombo(string mode)
+    {
+        var normalized = KokoroEndpoint.NormalizeMode(mode);
+        foreach (var item in KokoroModeCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Content?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                KokoroModeCombo.SelectedItem = item;
+                return;
+            }
+        }
+
+        KokoroModeCombo.SelectedIndex = 0;
+    }
+
+    private string GetSelectedKokoroMode() =>
+        KokoroEndpoint.NormalizeMode((KokoroModeCombo.SelectedItem as ComboBoxItem)?.Content?.ToString());
+
+    private void KokoroModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_speech == null || _settings == null)
+            return;
+
+        _settings.KokoroMode = GetSelectedKokoroMode();
+        _speech.KokoroMode = _settings.KokoroMode;
+        _speech.ResetRemoteKokoroBackoff();
+        UpdateKokoroHint();
+    }
+
+    private void UpdateKokoroHint()
+    {
+        if (KokoroStatusText == null || _settings == null)
+            return;
+
+        var baseUrl = KokoroEndpoint.NormalizeBaseUrl(KokoroHostBox.Text);
+        var mode = GetSelectedKokoroMode();
+        var muted = FindResource("TextMutedBrush") as Brush;
+
+        if (string.IsNullOrWhiteSpace(KokoroHostBox.Text))
+        {
+            KokoroStatusText.Text = mode == KokoroEndpoint.ModeRemoteOnly
+                ? "Remote only is selected but no host is set - speech will be silent."
+                : "Blank = bundled local Kokoro. Default remote port is 8880.";
+            KokoroStatusText.Foreground = mode == KokoroEndpoint.ModeRemoteOnly ? FindResource("WarningBrush") as Brush : muted;
+        }
+        else if (baseUrl.Length == 0)
+        {
+            KokoroStatusText.Text = "That doesn't look like a valid host or URL.";
+            KokoroStatusText.Foreground = FindResource("ErrorBrush") as Brush;
+        }
+        else
+        {
+            KokoroStatusText.Text = mode == KokoroEndpoint.ModeLocalOnly
+                ? $"Local only - {baseUrl} is ignored."
+                : $"Will use {KokoroEndpoint.SpeechUrl(baseUrl)}";
+            KokoroStatusText.Foreground = muted;
+        }
+
+        if (string.IsNullOrEmpty(_speech?.LastTtsBackendUsed))
+        {
+            var target = mode == KokoroEndpoint.ModeLocalOnly || baseUrl.Length == 0
+                ? "Kokoro: local"
+                : $"Kokoro: {new Uri(baseUrl).Authority}{(mode == KokoroEndpoint.ModeAuto ? " (local fallback)" : "")}";
+            TtsStatusText.Text = target;
+            TtsStatusText.Foreground = FindResource("TextSecondaryBrush") as Brush;
+            TtsStatusDot.Fill = muted;
+        }
+    }
+
+    private void UpdateTtsStatus(string text, bool ok)
+    {
+        TtsStatusText.Text = text;
+        TtsStatusText.Foreground = FindResource(ok ? "SuccessBrush" : "WarningBrush") as Brush;
+        TtsStatusDot.Fill = FindResource(ok ? "SuccessBrush" : "WarningBrush") as Brush;
+    }
+
+    private async void KokoroTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (_kokoroTestRunning)
+            return;
+
+        _kokoroTestRunning = true;
+        KokoroTestBtn.IsEnabled = false;
+        KokoroStatusText.Text = "Testing...";
+        KokoroStatusText.Foreground = FindResource("TextSecondaryBrush") as Brush;
+
+        try
+        {
+            var result = await KokoroEndpoint.ProbeAsync(KokoroHostBox.Text);
+            KokoroStatusText.Text = result.Ok ? $"{result.Message} - {result.BaseUrl}" : result.Message;
+            KokoroStatusText.Foreground = FindResource(result.Ok ? "SuccessBrush" : "ErrorBrush") as Brush;
+
+            if (!result.Ok)
+                return;
+
+            _speech.ResetRemoteKokoroBackoff();
+            UpdateTtsStatus($"Kokoro: {new Uri(result.BaseUrl).Authority} reachable", ok: true);
+
+            if (result.Voices.Count > 0)
+                ReplaceVoiceList(result.Voices);
+        }
+        finally
+        {
+            _kokoroTestRunning = false;
+            KokoroTestBtn.IsEnabled = true;
+        }
+    }
+
+    private void ReplaceVoiceList(System.Collections.Generic.IEnumerable<string> voiceIds)
+    {
+        var currentId = (VoiceCombo.SelectedItem?.ToString() ?? _settings.VoiceName).Split('(')[0].Trim();
+        var described = voiceIds.Select(KokoroEndpoint.DescribeVoice).ToList();
+
+        VoiceCombo.Items.Clear();
+        foreach (var voice in described)
+            VoiceCombo.Items.Add(voice);
+
+        var match = described.FirstOrDefault(v => v.Split('(')[0].Trim().Equals(currentId, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+            VoiceCombo.SelectedItem = match;
+        else if (VoiceCombo.Items.Count > 0)
+            VoiceCombo.SelectedIndex = 0;
+    }
+
+    private async void VoicePreview_Click(object sender, RoutedEventArgs e)
+    {
+        var voice = VoiceCombo.SelectedItem?.ToString() ?? _speech.VoiceName;
+        if (TtsToggle.IsChecked != true)
+        {
+            AddSystemMessage("Turn on \"Speak responses\" to preview voices.");
+            return;
+        }
+
+        VoicePreviewBtn.IsEnabled = false;
+        try
+        {
+            var name = voice.Split('(')[0].Trim();
+            var spoken = name.Length > 3 ? char.ToUpperInvariant(name[3]) + name[4..] : "your assistant";
+            var previewDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "voice-preview");
+            var path = await _speech.CreateSpeechAudioFileAsync(
+                $"Hi, I'm {spoken}. This is how I'll sound when I answer you.", previewDir);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                AddSystemMessage("Voice preview failed. Check the Kokoro host or local Kokoro install.");
+                return;
+            }
+
+            _speech.PlayAudioFile(path);
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Voice preview failed: {ex.Message}");
+        }
+        finally
+        {
+            VoicePreviewBtn.IsEnabled = true;
+        }
+    }
+
+    // ==================== Header / sidebar ====================
+
+    private void UpdateActiveModelText()
+    {
+        if (ActiveModelText == null || _settings == null)
+            return;
+
+        var model = ModelCombo.Text;
+        ActiveModelText.Text = string.IsNullOrWhiteSpace(model)
+            ? _settings.ChatProvider
+            : $"{model}  ·  {_settings.ChatProvider}";
+        Title = string.IsNullOrWhiteSpace(model) ? "Voice Chatbot" : $"Voice Chatbot - {model}";
+    }
+
+    private void SetSidebarVisible(bool visible)
+    {
+        if (visible)
+        {
+            SidebarPanel.Visibility = Visibility.Visible;
+            SidebarSplitter.Visibility = Visibility.Visible;
+            SidebarColumn.MinWidth = 280;
+            SidebarColumn.Width = new GridLength(Math.Clamp(_settings.SidebarWidth, 280, SidebarColumn.MaxWidth));
+        }
+        else
+        {
+            if (SidebarPanel.Visibility == Visibility.Visible && SidebarColumn.ActualWidth > 0)
+                _settings.SidebarWidth = SidebarColumn.ActualWidth;
+            SidebarPanel.Visibility = Visibility.Collapsed;
+            SidebarSplitter.Visibility = Visibility.Collapsed;
+            SidebarColumn.MinWidth = 0;
+            SidebarColumn.Width = new GridLength(0);
+        }
+
+        _settings.SidebarVisible = visible;
+        Dispatcher.BeginInvoke(UpdateChatBubbleWidths, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void SidebarToggle_Click(object sender, RoutedEventArgs e) =>
+        SetSidebarVisible(SidebarPanel.Visibility != Visibility.Visible);
+
+    private void SidebarSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        _settings.SidebarWidth = SidebarColumn.ActualWidth;
+        UpdateChatBubbleWidths();
+    }
+
+    // ==================== Chat surface ====================
+
+    private void ChatScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        var distanceFromBottom = ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset;
+        ScrollToBottomBtn.Visibility = distanceFromBottom > 160 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ScrollToBottom_Click(object sender, RoutedEventArgs e) => ChatScroll.ScrollToEnd();
+
+    private void Suggestion_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string prompt })
+            return;
+
+        MessageInput.Text = prompt;
+        MessageInput.Focus();
+        MessageInput.CaretIndex = MessageInput.Text.Length;
+    }
+
+    private void SaveChat_Click(object sender, RoutedEventArgs e)
+    {
+        var text = _history.Export();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            AddSystemMessage("Nothing to save yet.");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save conversation",
+            Filter = "Markdown (*.md)|*.md|Text (*.txt)|*.txt",
+            FileName = $"voice-chat_{DateTime.Now:yyyyMMdd_HHmm}.md",
+            AddExtension = true,
+            DefaultExt = ".md"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            var header = $"# Voice Chatbot conversation\n\n_{DateTime.Now:f} · {ModelCombo.Text}_\n\n";
+            File.WriteAllText(dialog.FileName, header + text);
+            AddSystemMessage($"Conversation saved to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Save failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Copies all text shown in an assistant bubble (prose and code blocks).</summary>
+    private void CopyBubbleText(Panel content)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        CollectText(content, parts);
+        var text = string.Join("\n\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        try
+        {
+            Clipboard.SetText(text);
+            ActivityLabel.Text = "Copied to clipboard";
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Copy failed: {ex.Message}");
+        }
+    }
+
+    private static void CollectText(DependencyObject parent, System.Collections.Generic.List<string> parts)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>())
+        {
+            if (child is TextBox box)
+                parts.Add(box.Text);
+            else
+                CollectText(child, parts);
+        }
+    }
+
+    // ==================== Keyboard ====================
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+
+        if (ctrl && e.Key == Key.B)
+        {
+            SetSidebarVisible(SidebarPanel.Visibility != Visibility.Visible);
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.L)
+        {
+            if (ListenBtn.IsEnabled)
+                ListenToggle_Click(ListenBtn, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.K)
+        {
+            MessageInput.Focus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && !IsInsideOpenDropDown(e.OriginalSource as DependencyObject))
+        {
+            var busy = _chatCts != null || _speech.CurrentState != VoiceState.Idle || _autoListening;
+            if (busy)
+            {
+                StopAll_Click(StopBtn, new RoutedEventArgs());
+                e.Handled = true;
+            }
+        }
+    }
+
+    private static bool IsInsideOpenDropDown(DependencyObject? source)
+    {
+        for (var node = source; node != null;
+             node = node is Visual ? VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node))
+        {
+            if (node is ComboBox { IsDropDownOpen: true })
+                return true;
+        }
+
+        return false;
+    }
+}

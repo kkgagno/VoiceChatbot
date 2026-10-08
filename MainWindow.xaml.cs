@@ -93,6 +93,9 @@ public partial class MainWindow : Window
     private bool _comfyUiRunning;
     private bool _serviceControlBusy;
     private string _desktopRunningModel = "";
+    // True while startup pushes saved settings into the UI. Selection-changed handlers call
+    // SaveSettings, which would otherwise copy half-initialized controls back over the saved values.
+    private bool _applyingSettings;
 
     private double ChatContentWidth => Math.Max(360, ChatScroll.ActualWidth - 64);
     private double UserBubbleMaxWidth => Math.Clamp(ChatContentWidth * 0.78, 500, 1400);
@@ -102,6 +105,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        WindowTheme.UseDarkTitleBar(this);
         _settings = SettingsManager.Load();
         _schedulerStore = SchedulerStore.Load();
         _history = new ConversationHistory();
@@ -132,6 +136,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            _applyingSettings = true;
             ApplySettings();
             SetupSliderBindings();
             SetupTimers();
@@ -175,6 +180,8 @@ public partial class MainWindow : Window
             else if (ModelCombo.Items.Count > 0)
                 ModelCombo.SelectedIndex = 0;
 
+            _applyingSettings = false;
+            UpdateActiveModelText();
             await InitializeDesktopServiceControlsAsync();
 
             // Keyboard shortcut: Enter to send, Shift+Enter for new line
@@ -212,6 +219,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _applyingSettings = false;
             AddSystemMessage($"Startup error: {ex}");
             System.Diagnostics.Debug.WriteLine($"Startup error: {ex}");
         }
@@ -243,10 +251,12 @@ public partial class MainWindow : Window
         RateSlider.Value = _settings.SpeechRate;
         VolumeSlider.Value = _settings.Volume;
         TtsToggle.IsChecked = _settings.TtsEnabled;
+        KokoroHostBox.Text = _settings.KokoroRemoteUrl;
+        SelectKokoroModeCombo(_settings.KokoroMode);
+        UpdateKokoroHint();
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
-        WebSearchToggle.Content = _settings.WebSearchEnabled ? "Web Search ON" : "Web Search OFF";
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
         ComfyUrlBox.Text = _settings.ComfyUiUrl;
         if (_settings.ImageWidth == 1328 && _settings.ImageHeight == 1328)
@@ -264,16 +274,12 @@ public partial class MainWindow : Window
         VideoSecondsBox.Text = _settings.VideoSeconds.ToString();
         VideoFpsBox.Text = _settings.VideoFps.ToString();
         FaceFeaturesToggle.IsChecked = _settings.FaceFeatures.CameraFeaturesEnabled;
-        FaceFeaturesToggle.Content = _settings.FaceFeatures.CameraFeaturesEnabled ? "Camera ON" : "Camera OFF";
         FaceGatingToggle.IsChecked = _settings.FaceFeatures.FaceGatingEnabled;
-        FaceGatingToggle.Content = _settings.FaceFeatures.FaceGatingEnabled ? "Use Identity ON" : "Use Identity OFF";
         FacePolicyText.Text = _settings.FaceFeatures.FaceGatingEnabled ? "Face gating enabled" : "Face gating disabled";
         PhoneRemoteToggle.IsChecked = _settings.PhoneRemote.Enabled;
-        PhoneRemoteToggle.Content = _settings.PhoneRemote.Enabled ? "Phone Remote ON" : "Phone Remote OFF";
         PhoneRemotePortBox.Text = _settings.PhoneRemote.Port.ToString();
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
         PhoneRemoteAudioToggle.IsChecked = _settings.PhoneRemote.PlayAudioOnPhone;
-        PhoneRemoteAudioToggle.Content = _settings.PhoneRemote.PlayAudioOnPhone ? "Phone Audio ON" : "Phone Audio OFF";
         UpdatePhoneRemoteUi();
         UpdateFacePresenceUi(_settings.FaceFeatures.CameraFeaturesEnabled
             ? FacePresenceState.CameraUnavailable
@@ -289,6 +295,10 @@ public partial class MainWindow : Window
         }
         Width = _settings.WindowWidth;
         Height = _settings.WindowHeight;
+        if (_settings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+
+        SetSidebarVisible(_settings.SidebarVisible);
     }
 
     private async Task RefreshFaceProfileChoicesAsync()
@@ -307,11 +317,7 @@ public partial class MainWindow : Window
         FaceProfileCombo.Items.Clear();
         foreach (var name in names)
         {
-            FaceProfileCombo.Items.Add(new ComboBoxItem
-            {
-                Content = name,
-                Foreground = Brushes.Black
-            });
+            FaceProfileCombo.Items.Add(new ComboBoxItem { Content = name });
         }
 
         FaceProfileCombo.Text = string.IsNullOrWhiteSpace(current) ? "Keith" : current;
@@ -328,6 +334,9 @@ public partial class MainWindow : Window
 
     private void SaveSettings()
     {
+        if (_applyingSettings)
+            return;
+
         _settings.OllamaUrl = OllamaUrlBox.Text.Trim();
         _settings.OpenAiCompatibleUrl = OpenAiUrlBox.Text.Trim();
         _settings.OpenAiCompatibleApiKey = OpenAiApiKeyBox.Password.Trim();
@@ -356,6 +365,8 @@ public partial class MainWindow : Window
         _settings.SpeechRate = (int)RateSlider.Value;
         _settings.Volume = (int)VolumeSlider.Value;
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
+        _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
+        _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
         _settings.WebSearchEnabled = WebSearchToggle.IsChecked == true;
@@ -380,10 +391,18 @@ public partial class MainWindow : Window
             : 5100;
         _settings.PhoneRemote.Pin = PhoneRemotePinBox.Text.Trim();
         _settings.PhoneRemote.PlayAudioOnPhone = PhoneRemoteAudioToggle.IsChecked == true;
-        _settings.WindowWidth = Width;
-        _settings.WindowHeight = Height;
-        _settings.WindowLeft = Left;
-        _settings.WindowTop = Top;
+        // Remember the restored size/position even when closing maximized.
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+        if (!bounds.IsEmpty)
+        {
+            _settings.WindowWidth = bounds.Width;
+            _settings.WindowHeight = bounds.Height;
+            _settings.WindowLeft = bounds.Left;
+            _settings.WindowTop = bounds.Top;
+        }
+        _settings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (SidebarPanel.Visibility == Visibility.Visible)
+            _settings.SidebarWidth = SidebarColumn.ActualWidth;
 
         SettingsManager.Save(_settings);
         ConfigureChatClient();
@@ -480,6 +499,9 @@ public partial class MainWindow : Window
         _speech.SpeechRate = _settings.SpeechRate;
         _speech.Volume = _settings.Volume;
         _speech.TtsEnabled = _settings.TtsEnabled;
+        _speech.KokoroRemoteUrl = _settings.KokoroRemoteUrl;
+        _speech.KokoroMode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
+        _speech.TtsBackendUsed += backend => Dispatcher.BeginInvoke(() => UpdateTtsStatus(backend, ok: true));
 
         _speech.Initialize();
 
@@ -494,6 +516,8 @@ public partial class MainWindow : Window
         VoiceCombo.Items.Clear();
         foreach (var v in _speech.AvailableVoices)
             VoiceCombo.Items.Add(v);
+        if (!string.IsNullOrEmpty(_settings.VoiceName) && !VoiceCombo.Items.Contains(_settings.VoiceName))
+            VoiceCombo.Items.Add(_settings.VoiceName);
         if (!string.IsNullOrEmpty(_settings.VoiceName) && VoiceCombo.Items.Contains(_settings.VoiceName))
             VoiceCombo.SelectedItem = _settings.VoiceName;
         else if (VoiceCombo.Items.Count > 0)
@@ -619,6 +643,18 @@ public partial class MainWindow : Window
             if (!string.IsNullOrEmpty(selected))
                 _speech.VoiceName = selected;
         };
+
+        KokoroHostBox.TextChanged += (s, e) =>
+        {
+            _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
+            _speech.KokoroRemoteUrl = _settings.KokoroRemoteUrl;
+            _speech.ResetRemoteKokoroBackoff();
+            UpdateKokoroHint();
+        };
+
+        ModelCombo.SelectionChanged += (s, e) => Dispatcher.BeginInvoke(UpdateActiveModelText, DispatcherPriority.Background);
+        ModelCombo.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
+            new TextChangedEventHandler((s, e) => UpdateActiveModelText()));
 
         // Wake word change
         WakeWordBox.TextChanged += (s, e) => { _speech.WakeWord = WakeWordBox.Text; };
@@ -780,7 +816,7 @@ public partial class MainWindow : Window
         if (!_settings.FaceFeatures.CameraFeaturesEnabled)
         {
             FacePresenceText.Text = "Camera features off";
-            FacePresenceDot.Fill = new SolidColorBrush(Color.FromRgb(136, 136, 136));
+            FacePresenceDot.Fill = FindResource("TextMutedBrush") as Brush;
             return;
         }
 
@@ -993,6 +1029,7 @@ public partial class MainWindow : Window
             StatusText.Text = connected ? $"Connected ({_settings.ChatProvider})" : $"Disconnected ({_settings.ChatProvider})";
             StatusText.Foreground = connected ? FindResource("SuccessBrush") as SolidColorBrush : FindResource("ErrorBrush") as SolidColorBrush;
             StatusDot.Fill = connected ? FindResource("SuccessBrush") as SolidColorBrush : FindResource("ErrorBrush") as SolidColorBrush;
+            UpdateActiveModelText();
         });
     }
 
@@ -2715,13 +2752,8 @@ public partial class MainWindow : Window
 
         var saveBtn = new Button
         {
+            Style = (Style)FindResource("BubbleActionButton"),
             Content = "Save Image",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Margin = new Thickness(0, 0, 6, 0),
-            Background = new SolidColorBrush(Color.FromRgb(0, 184, 148)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
             Tag = imagePath
         };
         saveBtn.Click += SaveGeneratedImage_Click;
@@ -2784,13 +2816,8 @@ public partial class MainWindow : Window
 
         var playBtn = new Button
         {
-            Content = "Play Video",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Margin = new Thickness(0, 0, 6, 0),
-            Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0)
+            Style = (Style)FindResource("BubbleActionButton"),
+            Content = "Play Video"
         };
         playBtn.Click += (_, _) =>
         {
@@ -2801,13 +2828,8 @@ public partial class MainWindow : Window
 
         var openBtn = new Button
         {
+            Style = (Style)FindResource("BubbleActionButton"),
             Content = "Open Video",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Margin = new Thickness(0, 0, 6, 0),
-            Background = new SolidColorBrush(Color.FromRgb(9, 132, 227)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
             Tag = videoPath
         };
         openBtn.Click += OpenGeneratedVideo_Click;
@@ -2815,12 +2837,8 @@ public partial class MainWindow : Window
 
         var saveBtn = new Button
         {
+            Style = (Style)FindResource("BubbleActionButton"),
             Content = "Save Video",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Background = new SolidColorBrush(Color.FromRgb(0, 184, 148)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
             Tag = videoPath
         };
         saveBtn.Click += SaveGeneratedVideo_Click;
@@ -3981,7 +3999,6 @@ public partial class MainWindow : Window
     private void AutoDetectToggle_Click(object sender, RoutedEventArgs e)
     {
         var isAuto = AutoDetectToggle.IsChecked == true;
-        AutoDetectToggle.Content = isAuto ? "ON" : "OFF";
         WakeWordBox.IsEnabled = !isAuto;
         _speech.AutoDetect = isAuto;
     }
@@ -3989,7 +4006,6 @@ public partial class MainWindow : Window
     private void TtsToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = TtsToggle.IsChecked == true;
-        TtsToggle.Content = enabled ? "Speech ON" : "Speech OFF";
         _speech.TtsEnabled = enabled;
     }
 
@@ -4029,14 +4045,12 @@ public partial class MainWindow : Window
     private void WebSearchToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = WebSearchToggle.IsChecked == true;
-        WebSearchToggle.Content = enabled ? "Web Search ON" : "Web Search OFF";
         _settings.WebSearchEnabled = enabled;
     }
 
     private async void PhoneRemoteToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = PhoneRemoteToggle.IsChecked == true;
-        PhoneRemoteToggle.Content = enabled ? "Phone Remote ON" : "Phone Remote OFF";
         SaveSettings();
 
         if (enabled)
@@ -4065,7 +4079,6 @@ public partial class MainWindow : Window
 
     private void PhoneRemoteAudioToggle_Click(object sender, RoutedEventArgs e)
     {
-        PhoneRemoteAudioToggle.Content = PhoneRemoteAudioToggle.IsChecked == true ? "Phone Audio ON" : "Phone Audio OFF";
         SaveSettings();
     }
 
@@ -4224,7 +4237,6 @@ public partial class MainWindow : Window
     private async void FaceFeaturesToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = FaceFeaturesToggle.IsChecked == true;
-        FaceFeaturesToggle.Content = enabled ? "Camera ON" : "Camera OFF";
         _settings.FaceFeatures.CameraFeaturesEnabled = enabled;
         SaveSettings();
         await InitializeFacePresenceAsync();
@@ -4233,7 +4245,6 @@ public partial class MainWindow : Window
     private void FaceGatingToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = FaceGatingToggle.IsChecked == true;
-        FaceGatingToggle.Content = enabled ? "Use Identity ON" : "Use Identity OFF";
         _settings.FaceFeatures.FaceGatingEnabled = enabled;
 
         if (enabled)
@@ -4730,9 +4741,11 @@ public partial class MainWindow : Window
         {
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(245, 245, 250)),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(8, 6, 8, 6),
+                Background = FindResource("InputBrush") as Brush,
+                BorderBrush = FindResource("BorderBrush") as Brush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 4)
             };
 
@@ -4743,7 +4756,7 @@ public partial class MainWindow : Window
                 Text = mem.Timestamp,
                 FontSize = 9,
                 FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 92, 231)) // #6C5CE7
+                Foreground = FindResource("PrimaryLightBrush") as Brush
             };
             stack.Children.Add(header);
 
@@ -4751,15 +4764,15 @@ public partial class MainWindow : Window
             {
                 Text = $"Messages: {mem.MessageCount} | Duration: {mem.DurationMinutes:F0} min | Model: {mem.Model}",
                 FontSize = 9,
-                Foreground = new SolidColorBrush(Color.FromRgb(136, 136, 136))
+                Foreground = FindResource("TextMutedBrush") as Brush
             };
             stack.Children.Add(detail);
 
             var summary = new TextBlock
             {
                 Text = mem.Summary.Length > 200 ? mem.Summary[..200] + "..." : mem.Summary,
-                FontSize = 10,
-                Foreground = Brushes.Black,
+                FontSize = 11,
+                Foreground = FindResource("TextPrimaryBrush") as Brush,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 2, 0, 0)
             };
@@ -4773,13 +4786,8 @@ public partial class MainWindow : Window
 
             var editBtn = new Button
             {
+                Style = (Style)FindResource("BubbleActionButton"),
                 Content = "Edit",
-                FontSize = 9,
-                Padding = new Thickness(4, 1, 4, 1),
-                Margin = new Thickness(0, 0, 4, 0),
-                Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
                 Tag = mem
             };
             editBtn.Click += EditSingleMemory_Click;
@@ -4787,12 +4795,8 @@ public partial class MainWindow : Window
 
             var delBtn = new Button
             {
+                Style = (Style)FindResource("BubbleDangerButton"),
                 Content = "Delete",
-                FontSize = 9,
-                Padding = new Thickness(4, 1, 4, 1),
-                Background = new SolidColorBrush(Color.FromRgb(225, 112, 85)), // #E17055
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
                 Tag = mem.Timestamp
             };
             delBtn.Click += DeleteSingleMemory_Click;
@@ -4809,7 +4813,7 @@ public partial class MainWindow : Window
             {
                 Text = "No memories saved yet. Click 'Save Memory' during or after a conversation.",
                 FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromRgb(136, 136, 136)),
+                Foreground = FindResource("TextMutedBrush") as Brush,
                 TextWrapping = TextWrapping.Wrap
             });
         }
@@ -4832,7 +4836,7 @@ public partial class MainWindow : Window
             Text = isNew ? "Adding manual memory" : $"Editing memory from {mem!.Timestamp}",
             FontSize = 10,
             FontWeight = FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromRgb(100, 92, 231)),
+            Foreground = FindResource("PrimaryLightBrush") as Brush,
             Margin = new Thickness(0, 0, 0, 4)
         });
 
@@ -4844,10 +4848,7 @@ public partial class MainWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MinHeight = 120,
             MaxHeight = 260,
-            FontSize = 11,
-            Foreground = Brushes.Black,
-            Background = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(204, 204, 204)),
+            FontSize = 12,
             Margin = new Thickness(0, 0, 0, 6)
         };
         panel.Children.Add(editor);
@@ -4855,13 +4856,8 @@ public partial class MainWindow : Window
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
         var saveBtn = new Button
         {
-            Content = "Save",
-            FontSize = 10,
-            Padding = new Thickness(8, 2, 8, 2),
-            Margin = new Thickness(0, 0, 4, 0),
-            Background = new SolidColorBrush(Color.FromRgb(0, 184, 148)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0)
+            Style = (Style)FindResource("BubbleActionButton"),
+            Content = "Save"
         };
         saveBtn.Click += (_, _) =>
         {
@@ -4904,12 +4900,8 @@ public partial class MainWindow : Window
 
         var cancelBtn = new Button
         {
-            Content = "Cancel",
-            FontSize = 10,
-            Padding = new Thickness(8, 2, 8, 2),
-            Background = new SolidColorBrush(Color.FromRgb(99, 110, 114)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0)
+            Style = (Style)FindResource("BubbleActionButton"),
+            Content = "Cancel"
         };
         cancelBtn.Click += (_, _) => RefreshMemoryPanel();
         actions.Children.Add(cancelBtn);
@@ -5629,12 +5621,13 @@ public partial class MainWindow : Window
 
     private Border AddUserMessage(string text, IEnumerable<string>? imagePaths = null)
     {
+        HideWelcomeCard();
         var border = new Border
         {
-            Background = FindResource("PrimaryBrush") as SolidColorBrush,
-            CornerRadius = new CornerRadius(12, 12, 4, 12),
-            Padding = new Thickness(14, 10, 14, 10),
-            Margin = new Thickness(60, 4, 16, 4),
+            Background = FindResource("UserBubbleBrush") as Brush,
+            CornerRadius = new CornerRadius(18, 18, 6, 18),
+            Padding = new Thickness(16, 10, 16, 12),
+            Margin = new Thickness(80, 8, 4, 8),
             HorizontalAlignment = HorizontalAlignment.Right,
             MaxWidth = UserBubbleMaxWidth
         };
@@ -5642,13 +5635,14 @@ public partial class MainWindow : Window
         var stack = new StackPanel();
         var header = new TextBlock
         {
-            Text = "You",
+            Text = $"You  ·  {DateTime.Now:t}",
             FontSize = 10,
-            FontWeight = FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromArgb(190, 255, 255, 255)),
             Margin = new Thickness(0, 0, 0, 4)
         };
         var body = CreateSelectableText(text, Brushes.White);
+        body.FontSize = 14;
 
         stack.Children.Add(header);
         foreach (var imagePath in imagePaths ?? Enumerable.Empty<string>())
@@ -5659,18 +5653,30 @@ public partial class MainWindow : Window
             var image = new Image
             {
                 Source = new BitmapImage(new Uri(imagePath)),
-                MaxWidth = 220,
-                MaxHeight = 160,
-                Stretch = Stretch.Uniform,
-                Margin = new Thickness(0, 0, 0, 8)
+                MaxWidth = 260,
+                MaxHeight = 200,
+                Stretch = Stretch.Uniform
             };
-            stack.Children.Add(image);
+            stack.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(10),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 2, 0, 8),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Child = image
+            });
         }
         stack.Children.Add(body);
         border.Child = stack;
         ChatPanel.Children.Add(border);
         ScrollChat();
         return border;
+    }
+
+    private void HideWelcomeCard()
+    {
+        if (WelcomeCard.Parent is Panel panel)
+            panel.Children.Remove(WelcomeCard);
     }
 
     private void UpdateChatBubbleWidths()
@@ -5704,42 +5710,93 @@ public partial class MainWindow : Window
 
     private AssistantMessageUi AddAssistantMessage(string text)
     {
+        // Outer border keeps HorizontalAlignment.Left so UpdateChatBubbleWidths can resize it.
         var border = new Border
         {
-            Background = FindResource("CardBgBrush") as SolidColorBrush,
-            CornerRadius = new CornerRadius(12, 12, 12, 4),
-            Padding = new Thickness(14, 10, 14, 10),
-            Margin = new Thickness(16, 4, 60, 4),
+            Margin = new Thickness(0, 8, 60, 8),
             HorizontalAlignment = HorizontalAlignment.Left,
             MaxWidth = AssistantBubbleMaxWidth
         };
 
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var avatar = new Border
+        {
+            Width = 30,
+            Height = 30,
+            CornerRadius = new CornerRadius(10),
+            Background = FindResource("BrandGradientBrush") as Brush,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 2, 10, 0),
+            Child = new TextBlock
+            {
+                Text = "\uE99A",
+                FontFamily = FindResource("IconFont") as FontFamily,
+                FontSize = 14,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        };
+        row.Children.Add(avatar);
+
+        var card = new Border
+        {
+            Background = FindResource("CardBgBrush") as Brush,
+            BorderBrush = FindResource("BorderBrush") as Brush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6, 18, 18, 18),
+            Padding = new Thickness(16, 10, 16, 12)
+        };
+        Grid.SetColumn(card, 1);
+        row.Children.Add(card);
+
         var stack = new StackPanel();
 
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 4), LastChildFill = false };
         var nameBlock = new TextBlock
         {
-            Text = "Assistant",
+            Text = $"Assistant  ·  {DateTime.Now:t}",
             FontSize = 10,
-            FontWeight = FontWeights.Bold,
-            Foreground = FindResource("AccentBrush") as SolidColorBrush
+            FontWeight = FontWeights.SemiBold,
+            Foreground = FindResource("AccentBrush") as SolidColorBrush,
+            VerticalAlignment = VerticalAlignment.Center
         };
+        DockPanel.SetDock(nameBlock, Dock.Left);
         header.Children.Add(nameBlock);
         stack.Children.Add(header);
 
         var content = new StackPanel();
-        var body = CreateSelectableText(text, FindResource("TextPrimaryBrush") as Brush ?? Brushes.Black);
+        var body = CreateSelectableText(text, FindResource("TextPrimaryBrush") as Brush ?? Brushes.White);
+        body.FontSize = 14;
         content.Children.Add(body);
 
+        var copyButton = new Button
+        {
+            Style = (Style)FindResource("IconButton"),
+            Width = 24,
+            Height = 22,
+            ToolTip = "Copy response",
+            Opacity = 0.7
+        };
+        Ui.SetIcon(copyButton, "\uE8C8");
+        Ui.SetIconSize(copyButton, 12);
+        copyButton.Click += (_, _) => CopyBubbleText(content);
+        DockPanel.SetDock(copyButton, Dock.Right);
+        header.Children.Add(copyButton);
+
         stack.Children.Add(content);
-        var actions = new StackPanel
+        var actions = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, 10, 0, 0),
             Visibility = Visibility.Collapsed
         };
         stack.Children.Add(actions);
-        border.Child = stack;
+        card.Child = stack;
+        border.Child = row;
         ChatPanel.Children.Add(border);
         ScrollChat();
         return new AssistantMessageUi(body, content, actions);
@@ -5824,25 +5881,30 @@ public partial class MainWindow : Window
     {
         var wrapper = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(245, 247, 250)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(205, 213, 224)),
+            Background = new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x12)),
+            BorderBrush = FindResource("BorderBrush") as Brush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(10),
             Margin = new Thickness(0, 8, 0, 8),
-            Padding = new Thickness(8),
             MaxWidth = CodeBlockMaxWidth,
-            Tag = "CodeBlock"
+            Tag = "CodeBlock",
+            ClipToBounds = true
         };
 
         var stack = new StackPanel();
-        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var header = new DockPanel
+        {
+            Background = FindResource("SurfaceBrush") as Brush,
+            LastChildFill = false
+        };
         var label = new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(language) ? "Code" : language,
+            Text = string.IsNullOrWhiteSpace(language) ? "code" : language.ToLowerInvariant(),
             FontSize = 11,
-            FontWeight = FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromRgb(45, 55, 72)),
-            VerticalAlignment = VerticalAlignment.Center
+            FontFamily = FindResource("CodeFont") as FontFamily,
+            Foreground = FindResource("TextSecondaryBrush") as Brush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0)
         };
         DockPanel.SetDock(label, Dock.Left);
         header.Children.Add(label);
@@ -5850,28 +5912,27 @@ public partial class MainWindow : Window
         var copyButton = new Button
         {
             Content = "Copy",
-            FontSize = 10,
-            Padding = new Thickness(8, 2, 8, 2),
-            Background = FindResource("AccentBrush") as Brush ?? Brushes.DodgerBlue,
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Tag = code,
-            HorizontalAlignment = HorizontalAlignment.Right
+            Style = (Style)FindResource("GhostButton"),
+            FontSize = 11,
+            Padding = new Thickness(10, 5, 10, 5),
+            Tag = code
         };
+        Ui.SetIcon(copyButton, "\uE8C8");
+        Ui.SetIconSize(copyButton, 12);
         copyButton.Click += (_, _) =>
         {
             Clipboard.SetText(code);
-            AddSystemMessage("Code copied to clipboard.");
+            copyButton.Content = "Copied";
+            Ui.SetIcon(copyButton, "\uE73E");
         };
         DockPanel.SetDock(copyButton, Dock.Right);
         header.Children.Add(copyButton);
         stack.Children.Add(header);
 
-        var codeBox = CreateSelectableText(code, new SolidColorBrush(Color.FromRgb(26, 32, 44)));
-        codeBox.FontFamily = new FontFamily("Consolas");
-        codeBox.FontSize = 12;
-        codeBox.Background = Brushes.White;
-        codeBox.BorderBrush = new SolidColorBrush(Color.FromRgb(226, 232, 240));
+        var codeBox = CreateSelectableText(code, new SolidColorBrush(Color.FromRgb(0xE3, 0xE6, 0xF0)));
+        codeBox.FontFamily = FindResource("CodeFont") as FontFamily;
+        codeBox.FontSize = 12.5;
+        codeBox.Padding = new Thickness(14, 10, 14, 12);
         codeBox.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
         codeBox.TextWrapping = TextWrapping.NoWrap;
         stack.Children.Add(codeBox);
@@ -5883,10 +5944,20 @@ public partial class MainWindow : Window
     private void AddSystemMessage(string text)
     {
         var block = CreateSelectableText(text, FindResource("TextSecondaryBrush") as Brush ?? Brushes.Gray);
-        block.FontSize = 11;
+        block.FontSize = 11.5;
         block.TextAlignment = TextAlignment.Center;
-        block.Margin = new Thickness(0, 8, 0, 4);
-        ChatPanel.Children.Add(block);
+        var pill = new Border
+        {
+            Background = FindResource("SurfaceBrush") as Brush,
+            BorderBrush = FindResource("BorderBrush") as Brush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(40, 6, 40, 6),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = block
+        };
+        ChatPanel.Children.Add(pill);
         ScrollChat();
     }
 
@@ -6055,13 +6126,8 @@ public partial class MainWindow : Window
 
         var replayBtn = new Button
         {
+            Style = (Style)FindResource("BubbleActionButton"),
             Content = "Replay Audio",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Margin = new Thickness(0, 0, 6, 0),
-            Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
             Tag = audioPath
         };
         replayBtn.Click += ReplayAssistantAudio_Click;
@@ -6069,12 +6135,8 @@ public partial class MainWindow : Window
 
         var downloadBtn = new Button
         {
+            Style = (Style)FindResource("BubbleActionButton"),
             Content = "Download Audio",
-            FontSize = 10,
-            Padding = new Thickness(6, 2, 6, 2),
-            Background = new SolidColorBrush(Color.FromRgb(0, 184, 148)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
             Tag = audioPath
         };
         downloadBtn.Click += DownloadAssistantAudio_Click;
@@ -6534,5 +6596,5 @@ public partial class MainWindow : Window
 
     private sealed record PendingImageAttachment(string Path, string Base64);
     private sealed record PendingDocumentAttachment(string Path, DocumentTextResult Document);
-    private sealed record AssistantMessageUi(TextBox Body, StackPanel Content, StackPanel Actions);
+    private sealed record AssistantMessageUi(TextBox Body, StackPanel Content, Panel Actions);
 }

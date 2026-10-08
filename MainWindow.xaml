@@ -1,593 +1,817 @@
 <Window x:Class="VoiceChatbot.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Voice Chatbot - Ollama" 
-        Width="1100" Height="750"
+        xmlns:local="clr-namespace:VoiceChatbot"
+        Title="Voice Chatbot"
+        Width="1280" Height="820"
         MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource DarkBgBrush}"
+        FontFamily="{StaticResource UiFont}"
+        Foreground="{StaticResource TextPrimaryBrush}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
         Closing="Window_Closing"
-        StateChanged="Window_StateChanged">
+        StateChanged="Window_StateChanged"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <!-- Small value readout to the right of sliders -->
+        <Style x:Key="SliderValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontFamily" Value="{StaticResource CodeFont}"/>
+            <Setter Property="Foreground" Value="{StaticResource PrimaryLightBrush}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+        </Style>
+        <Style x:Key="FieldBlock" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="SubHeading" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="Margin" Value="0,4,0,8"/>
+        </Style>
+        <Style x:Key="Divider" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Margin" Value="0,4,0,12"/>
+        </Style>
     </Window.Resources>
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="280" MinWidth="240"/>
-            <ColumnDefinition Width="1"/>
+            <ColumnDefinition x:Name="SidebarColumn" Width="340" MinWidth="280" MaxWidth="560"/>
+            <ColumnDefinition x:Name="SplitterColumn" Width="Auto"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
+        <!-- ===================================================================
+             SIDEBAR - settings
+             =================================================================== -->
+        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource PanelBgBrush}">
+            <DockPanel>
 
-        <!-- ===================== LEFT PANEL ===================== -->
-        <Border Grid.Column="0" Background="#F0F0F5" CornerRadius="0">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10">
-                <StackPanel>
-
-                    <!-- Title -->
-                    <TextBlock Text="Voice Chatbot" FontSize="18" FontWeight="Bold"
-                               Foreground="#222222" HorizontalAlignment="Center" Margin="0,10,0,12"/>
-                    <Button x:Name="SchedulerBtn" Content="Scheduler" Style="{StaticResource ActionButton}"
-                            Click="Scheduler_Click" Margin="0,0,0,8"/>
-
-                    <!-- Connection -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="CONNECTION" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,4"/>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="12" Foreground="#E17055" VerticalAlignment="Center"/>
-                                <Ellipse x:Name="StatusDot" Width="10" Height="10" Grid.Column="1" Fill="#E17055" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                            </Grid>
-                        </StackPanel>
+                <!-- Brand header -->
+                <Grid DockPanel.Dock="Top" Margin="18,18,14,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource BrandGradientBrush}">
+                        <TextBlock Text="&#xE720;" Style="{StaticResource IconText}" FontSize="17" Foreground="White"
+                                   HorizontalAlignment="Center"/>
                     </Border>
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Voice Chatbot" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock Text="Local AI voice assistant" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                    </StackPanel>
+                    <Button Grid.Column="2" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE76B;"
+                            Click="SidebarToggle_Click" ToolTip="Hide settings (Ctrl+B)"/>
+                </Grid>
 
-                    <!-- Phone Remote -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="IPHONE REMOTE" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock x:Name="PhoneRemoteStatusText" Text="Stopped" FontSize="12" Foreground="#222222" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                            <ToggleButton x:Name="PhoneRemoteToggle" Content="Phone Remote OFF" IsChecked="False"
-                                          Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left"
-                                          Click="PhoneRemoteToggle_Click" Margin="0,0,0,6"/>
-                            <Grid Margin="0,0,0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="70"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Port" FontSize="11" Foreground="#222222" VerticalAlignment="Center"/>
-                                <TextBox x:Name="PhoneRemotePortBox" Grid.Column="1" Text="5100" Foreground="Black" Background="White"
-                                         BorderBrush="#CCCCCC"/>
-                            </Grid>
-                            <TextBlock Text="PIN optional" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="PhoneRemotePinBox" Foreground="Black" Background="White" BorderBrush="#CCCCCC"
-                                     Margin="0,0,0,6"/>
-                            <ToggleButton x:Name="PhoneRemoteAudioToggle" Content="Phone Audio ON" IsChecked="True"
-                                          Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left"
-                                          Click="PhoneRemoteAudioToggle_Click" Margin="0,0,0,6"/>
-                            <Button x:Name="PhoneRemoteStartStopBtn" Content="Start Phone Remote" Style="{StaticResource ActionButton}"
-                                    Click="PhoneRemoteStartStop_Click" Margin="0,0,0,4"/>
-                            <Button x:Name="PhoneRemoteCopyUrlBtn" Content="Copy Phone URL" Style="{StaticResource ActionButton}"
-                                    Click="PhoneRemoteCopyUrl_Click" Margin="0,0,0,4"/>
-                            <Button x:Name="PhoneRemoteCertBtn" Content="Open Certificate Folder" Style="{StaticResource ActionButton}"
-                                    Click="PhoneRemoteCert_Click" Margin="0,0,0,6"/>
-                            <TextBlock x:Name="PhoneRemoteHelpText" Text="Install and fully trust the .cer file on iPhone once, then open the URL while on the same Wi-Fi."
-                                       FontSize="10" Foreground="#666666" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
+                <!-- Live service status -->
+                <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Margin="14,0,14,10" Padding="12,10">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{StaticResource ErrorBrush}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                <TextBlock Text="CHAT" FontSize="9" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="12" Foreground="{StaticResource ErrorBrush}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="TtsStatusDot" Width="8" Height="8" Fill="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                <TextBlock Text="SPEECH" FontSize="9" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="TtsStatusText" Text="Kokoro: not used yet" FontSize="12"
+                                           Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
-                    <!-- Face Presence -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="FACE PRESENCE" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="FacePresenceText" Text="Camera features off" FontSize="12" Foreground="#888888" VerticalAlignment="Center"/>
-                                <Ellipse x:Name="FacePresenceDot" Width="10" Height="10" Grid.Column="1" Fill="#888888" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                            </Grid>
-                            <ToggleButton x:Name="FaceFeaturesToggle" Content="Camera OFF" IsChecked="False"
-                                          Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left"
-                                          Click="FaceFeaturesToggle_Click" Margin="0,0,0,4"/>
-                            <ToggleButton x:Name="FaceGatingToggle" Content="Use Identity OFF" IsChecked="False"
-                                          Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left"
-                                          Click="FaceGatingToggle_Click" Margin="0,0,0,6"/>
-                            <Border Background="#111111" Height="130" CornerRadius="4" Margin="0,0,0,6">
-                                <Image x:Name="FacePreviewImage" Stretch="Uniform"/>
-                            </Border>
-                            <TextBlock x:Name="FaceIdentityText" Text="Identity: Unknown" FontSize="11" Foreground="#222222" Margin="0,2,0,6" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="FaceDebugText" Text="Samples: 0 | Model: SFace ONNX" FontSize="10" Foreground="#666666" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                            <Button x:Name="FaceSnapshotBtn" Content="Scan Face Once" Style="{StaticResource ActionButton}"
-                                    Click="FaceSnapshot_Click" Margin="0,0,0,6"/>
-                            <Grid Margin="0,0,0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ComboBox x:Name="FaceProfileCombo" Foreground="Black" Background="White" SelectedIndex="0" Margin="0,0,6,0"
-                                          IsEditable="True" Text="Keith"
-                                          SelectionChanged="FaceProfileCombo_SelectionChanged">
-                                    <ComboBoxItem Foreground="Black" Content="Keith"/>
-                                </ComboBox>
-                                <Button x:Name="EnrollFaceBtn" Grid.Column="1" Content="Save Face" Style="{StaticResource ActionButton}"
-                                        Click="EnrollFace_Click" MinWidth="70"/>
-                            </Grid>
-                            <Button x:Name="ClearFacesBtn" Content="Clear Face Samples" Style="{StaticResource ActionButton}"
-                                    Click="ClearFaces_Click" Margin="0,0,0,6" Background="{StaticResource ErrorBrush}"/>
-                            <TextBlock x:Name="FacePolicyText" Text="Face gating disabled" FontSize="10" Foreground="#888888" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="14,0,10,14">
+                    <StackPanel>
 
-                    <!-- Chat Backend -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="CHAT BACKEND" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock Text="Provider" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="ProviderCombo" Foreground="Black" Background="White" Margin="0,0,0,8"
-                                      SelectionChanged="ProviderCombo_SelectionChanged">
-                                <ComboBoxItem Foreground="Black" Content="Ollama"/>
-                                <ComboBoxItem Foreground="Black" Content="OpenAI-compatible"/>
-                            </ComboBox>
+                        <!-- ================= Chat backend ================= -->
+                        <Expander Header="Chat Backend" IsExpanded="True" local:Ui.Icon="&#xE8F2;"
+                                  local:Ui.Subtitle="Provider, model and prompt">
+                            <StackPanel>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Provider" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="ProviderCombo" SelectionChanged="ProviderCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Ollama"/>
+                                        <ComboBoxItem Content="OpenAI-compatible"/>
+                                    </ComboBox>
+                                </StackPanel>
 
-                            <TextBlock Text="Ollama URL" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="OllamaUrlBox" Foreground="Black" Background="White" Text="http://localhost:11434" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Ollama URL" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="OllamaUrlBox" Text="http://localhost:11434" local:Ui.Placeholder="http://localhost:11434"/>
+                                </StackPanel>
 
-                            <TextBlock Text="OpenAI / llama.cpp URL" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="OpenAiUrlBox" Foreground="Black" Background="White" Text="http://localhost:8080/v1" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="OpenAI / llama.cpp URL" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="OpenAiUrlBox" Text="http://localhost:8080/v1" local:Ui.Placeholder="http://host:8080/v1"/>
+                                </StackPanel>
 
-                            <TextBlock Text="OpenAI API Key optional" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <PasswordBox x:Name="OpenAiApiKeyBox" Foreground="Black" Background="White" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="OpenAI API key (optional)" Style="{StaticResource SectionLabel}"/>
+                                    <PasswordBox x:Name="OpenAiApiKeyBox"/>
+                                </StackPanel>
 
-                            <TextBlock Text="Hermes SSH Host" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="HermesSshHostBox" Foreground="Black" Background="White" Text="127.0.0.1" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
-
-                            <TextBlock Text="Hermes SSH Port" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="HermesSshPortBox" Foreground="Black" Background="White" Text="2222" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
-
-                            <TextBlock Text="Hermes SSH User" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="HermesSshUserBox" Foreground="Black" Background="White" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
-
-                            <TextBlock Text="Hermes SSH Password" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <PasswordBox x:Name="HermesSshPasswordBox" Foreground="Black" Background="White" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
-
-                            <TextBlock Text="Model" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="ModelCombo" Foreground="Black" Background="White" Margin="0,0,0,6" IsEditable="True"/>
-
-                            <Button x:Name="RefreshModelsBtn" Content="Refresh Models" Style="{StaticResource ActionButton}" Click="RefreshModels_Click" Margin="0,0,0,8"/>
-
-                            <Border Background="#F4F5F7" BorderBrush="#D7D9DE" BorderThickness="1" CornerRadius="6"
-                                    Padding="8" Margin="0,0,0,8">
-                                <StackPanel>
-                                    <TextBlock Text="MODEL / COMFY CONTROL" FontSize="9" FontWeight="Bold"
-                                               Foreground="#777777" Margin="0,0,0,5"/>
-                                    <TextBlock x:Name="ModelControlStatusText" Text="Checking services..."
-                                               FontSize="10" Foreground="#555555" TextWrapping="Wrap" Margin="0,0,0,6"/>
-                                    <Button x:Name="StopCurrentModelBtn" Content="Stop Current Model"
-                                            Style="{StaticResource ActionButton}" Click="StopCurrentModel_Click"
-                                            Background="{StaticResource ErrorBrush}" Margin="0,0,0,6"/>
-                                    <Grid Margin="0,0,0,6">
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Model" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="6"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <ComboBox x:Name="LaunchModelCombo" Foreground="Black" Background="White"
-                                                  MinWidth="120" IsEnabled="False"/>
-                                        <Button x:Name="StartSelectedModelBtn" Grid.Column="2" Content="Start Model"
-                                                Style="{StaticResource ActionButton}" Click="StartSelectedModel_Click"
-                                                IsEnabled="False" MinWidth="82"/>
+                                        <ComboBox x:Name="ModelCombo" IsEditable="True"/>
+                                        <Button x:Name="RefreshModelsBtn" Grid.Column="1" Style="{StaticResource SecondaryButton}"
+                                                local:Ui.Icon="&#xE72C;" Content="Refresh Models" Margin="6,0,0,0"
+                                                Click="RefreshModels_Click" ToolTip="Reload the model list from the server"/>
                                     </Grid>
-                                    <Button x:Name="ComfyUiStartStopBtn" Content="Start ComfyUI"
-                                            Style="{StaticResource ActionButton}" Click="ComfyUiStartStop_Click"
-                                            IsEnabled="False"/>
                                 </StackPanel>
-                            </Border>
 
-                            <TextBlock Text="System Prompt" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="SystemPromptBox" Foreground="Black" Background="White" TextWrapping="Wrap" AcceptsReturn="True"
-                                     MinHeight="50" MaxHeight="80" Margin="0,0,0,8" BorderBrush="#CCCCCC"
-                                     Text="You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. IMPORTANT: Never use emojis, hashtags, asterisks, markdown formatting, or special symbols in normal conversation. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block."/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="System prompt" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="SystemPromptBox" TextWrapping="Wrap" AcceptsReturn="True"
+                                             MinHeight="70" MaxHeight="160" VerticalScrollBarVisibility="Auto"
+                                             Text="You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. IMPORTANT: Never use emojis, hashtags, asterisks, markdown formatting, or special symbols in normal conversation. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block."/>
+                                </StackPanel>
 
-                            <TextBlock Text="Temperature" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="TempSlider" Minimum="0" Maximum="2" Value="0.7" SmallChange="0.1" LargeChange="0.2" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TempValue" Grid.Column="1" Text="0.7" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Temperature" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="TempValue" Grid.Column="1" Text="0.7" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="TempSlider" Minimum="0" Maximum="2" Value="0.7" SmallChange="0.1" LargeChange="0.2"/>
+                            </StackPanel>
+                        </Expander>
 
-                    <!-- Image Backend -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="IMAGE BACKEND" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock Text="ComfyUI URL" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="ComfyUrlBox" Foreground="Black" Background="White"
-                                     Text="http://localhost:8000" Margin="0,0,0,8" BorderBrush="#CCCCCC"/>
+                        <!-- ================= Models & services (SSH) ================= -->
+                        <Expander Header="Model Server Control" local:Ui.Icon="&#xE945;"
+                                  local:Ui.Subtitle="Hermes SSH, llama.cpp and ComfyUI">
+                            <StackPanel>
+                                <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
+                                    <TextBlock x:Name="ModelControlStatusText" Text="Checking services..." FontSize="11"
+                                               Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                </Border>
 
-                            <TextBlock Text="Qwen Image Size" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="ImageWidthBox" Foreground="Black" Background="White" Text="1080" BorderBrush="#CCCCCC"/>
-                                <TextBox x:Name="ImageHeightBox" Grid.Column="2" Foreground="Black" Background="White" Text="1920" BorderBrush="#CCCCCC"/>
-                            </Grid>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="LaunchModelCombo" MinWidth="120" IsEnabled="False"/>
+                                    <Button x:Name="StartSelectedModelBtn" Grid.Column="1" Content="Start" local:Ui.Icon="&#xE768;"
+                                            Style="{StaticResource ActionButton}" Click="StartSelectedModel_Click"
+                                            IsEnabled="False" Margin="6,0,0,0"/>
+                                </Grid>
+                                <UniformGrid Columns="2" Margin="0,0,0,12">
+                                    <Button x:Name="StopCurrentModelBtn" Content="Stop Model" local:Ui.Icon="&#xE71A;"
+                                            Style="{StaticResource DangerButton}" Click="StopCurrentModel_Click" Margin="0,0,3,0"/>
+                                    <Button x:Name="ComfyUiStartStopBtn" Content="Start ComfyUI" local:Ui.Icon="&#xE790;"
+                                            Style="{StaticResource SecondaryButton}" Click="ComfyUiStartStop_Click"
+                                            IsEnabled="False" Margin="3,0,0,0"/>
+                                </UniformGrid>
 
-                            <TextBlock Text="Create / Edit Steps" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="QwenCreateStepsBox" Foreground="Black" Background="White" Text="4" BorderBrush="#CCCCCC"/>
-                                <TextBox x:Name="QwenEditStepsBox" Grid.Column="2" Foreground="Black" Background="White" Text="40" BorderBrush="#CCCCCC"/>
-                            </Grid>
+                                <Border Style="{StaticResource Divider}"/>
+                                <TextBlock Text="HERMES SSH" Style="{StaticResource SubHeading}"/>
 
-                            <TextBlock Text="Video Seconds / FPS" FontSize="11" Foreground="#222222" Margin="0,4,0,2"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="VideoSecondsBox" Foreground="Black" Background="White" Text="6" BorderBrush="#CCCCCC"/>
-                                <TextBox x:Name="VideoFpsBox" Grid.Column="2" Foreground="Black" Background="White" Text="24" BorderBrush="#CCCCCC"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="76"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Host" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="HermesSshHostBox" Text="127.0.0.1"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Port" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="HermesSshPortBox" Text="2222"/>
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="User" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="HermesSshUserBox"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Password" Style="{StaticResource SectionLabel}"/>
+                                    <PasswordBox x:Name="HermesSshPasswordBox"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
 
-                    <!-- Voice Input -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="VOICE INPUT" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock Text="Microphone" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ComboBox x:Name="MicCombo" Foreground="Black" Background="White" Margin="0,0,6,0"
-                                          SelectionChanged="MicCombo_SelectionChanged"/>
-                                <Button x:Name="RefreshMicsBtn" Grid.Column="1" Content="Refresh" FontSize="10"
-                                        Click="RefreshMics_Click" Padding="6,2"/>
-                            </Grid>
+                        <!-- ================= Voice output (Kokoro) ================= -->
+                        <Expander Header="Voice Output" IsExpanded="True" local:Ui.Icon="&#xE767;"
+                                  local:Ui.Subtitle="Kokoro host, voice, speed and volume">
+                            <StackPanel>
+                                <ToggleButton x:Name="TtsToggle" Content="Speak responses" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="TtsToggle_Click"/>
 
-                            <TextBlock Text="Recognition Language" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="InputLangCombo" Foreground="Black" Background="White" Margin="0,0,0,8"/>
+                                <TextBlock Text="KOKORO SERVER" Style="{StaticResource SubHeading}"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Remote Kokoro host" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="KokoroHostBox" local:Ui.Placeholder="192.168.1.50:8880"
+                                                 ToolTip="IP or hostname of a Kokoro-FastAPI server. Accepts 192.168.1.50, 192.168.1.50:8880 or http://host:8880/v1. Leave blank to use the bundled local Kokoro server."/>
+                                        <Button x:Name="KokoroTestBtn" Grid.Column="1" Content="Test" local:Ui.Icon="&#xE9D9;"
+                                                Style="{StaticResource SecondaryButton}" Margin="6,0,0,0"
+                                                Click="KokoroTest_Click" ToolTip="Check the connection and load the server's voices"/>
+                                    </Grid>
+                                    <TextBlock x:Name="KokoroStatusText" Text="Blank = local Kokoro only. Default port 8880."
+                                               Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
+                                </StackPanel>
 
-                            <TextBlock Text="Whisper Model" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="WhisperModelCombo" Foreground="Black" Background="White" Margin="0,0,0,4">
-                                <ComboBoxItem Foreground="Black" Content="tiny"/>
-                                <ComboBoxItem Foreground="Black" Content="base"/>
-                                <ComboBoxItem Foreground="Black" Content="small" IsSelected="True"/>
-                                <ComboBoxItem Foreground="Black" Content="medium"/>
-                            </ComboBox>
-                            <Button x:Name="DownloadModelBtn" Content="Download Model" Style="{StaticResource ActionButton}" Click="DownloadModel_Click" Margin="0,0,0,8" Background="{StaticResource AccentBrush}"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Engine" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="KokoroModeCombo" SelectionChanged="KokoroModeCombo_SelectionChanged"
+                                              ToolTip="Auto tries the remote host first and falls back to the local Kokoro server.">
+                                        <ComboBoxItem Content="Auto"/>
+                                        <ComboBoxItem Content="Remote only"/>
+                                        <ComboBoxItem Content="Local only"/>
+                                    </ComboBox>
+                                </StackPanel>
 
-                            <TextBlock Text="Transcription Backend" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="TranscriptionBackendCombo" Foreground="Black" Background="White" Margin="0,0,0,6">
-                                <ComboBoxItem Foreground="Black" Content="Whisper.net"/>
-                                <ComboBoxItem Foreground="Black" Content="AMD Ryzen AI Whisper"/>
-                                <ComboBoxItem Foreground="Black" Content="AMD Ryzen AI Whisper with fallback"/>
-                            </ComboBox>
+                                <Border Style="{StaticResource Divider}"/>
 
-                            <TextBlock Text="Ryzen AI Command" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="NpuTranscriberCommandBox" Foreground="Black" Background="White" TextWrapping="Wrap"
-                                     MinHeight="40" MaxHeight="70" Margin="0,0,0,8" BorderBrush="#CCCCCC"
-                                     ToolTip="Command that transcribes a WAV file with AMD Ryzen AI Whisper. Use {input} where the WAV path should go; stdout should be transcript text."/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Voice" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="VoiceCombo" MaxDropDownHeight="360"/>
+                                        <Button x:Name="VoicePreviewBtn" Grid.Column="1" Style="{StaticResource IconButton}"
+                                                local:Ui.Icon="&#xE768;" Margin="6,0,0,0" Background="{StaticResource PrimarySoftBrush}"
+                                                Foreground="{StaticResource PrimaryLightBrush}"
+                                                Click="VoicePreview_Click" ToolTip="Preview this voice"/>
+                                    </Grid>
+                                </StackPanel>
 
-                            <TextBlock Text="Silence Timeout" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="SilenceSlider" Minimum="0.5" Maximum="8" Value="2.4" SmallChange="0.1" LargeChange="0.5" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="SilenceValue" Grid.Column="1" Text="2.4" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Speech rate" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="RateValue" Grid.Column="1" Text="+1" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="RateSlider" Minimum="-5" Maximum="5" Value="1" SmallChange="1" LargeChange="1"
+                                        IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,10"/>
 
-                            <TextBlock Text="Noise Suppression" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="NoiseSlider" Minimum="0" Maximum="100" Value="30" SmallChange="5" LargeChange="10" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="NoiseValue" Grid.Column="1" Text="30%" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Volume" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="VolumeValue" Grid.Column="1" Text="80%" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" SmallChange="5" LargeChange="10"/>
+                            </StackPanel>
+                        </Expander>
 
-                            <TextBlock Text="Auto-detect voice" FontSize="11" Foreground="#222222" Margin="0,8,0,2"/>
-                            <ToggleButton x:Name="AutoDetectToggle" Content="ON" IsChecked="True" Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left" Click="AutoDetectToggle_Click" Margin="0,0,0,4"/>
+                        <!-- ================= Voice input ================= -->
+                        <Expander Header="Voice Input" local:Ui.Icon="&#xE720;"
+                                  local:Ui.Subtitle="Microphone, Whisper and detection">
+                            <StackPanel>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Microphone" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="MicCombo" SelectionChanged="MicCombo_SelectionChanged"/>
+                                        <Button x:Name="RefreshMicsBtn" Grid.Column="1" Style="{StaticResource IconButton}"
+                                                local:Ui.Icon="&#xE72C;" Margin="6,0,0,0"
+                                                Click="RefreshMics_Click" ToolTip="Refresh microphones"/>
+                                    </Grid>
+                                </StackPanel>
 
-                            <TextBlock Text="Wake Word" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <TextBox x:Name="WakeWordBox" Foreground="Black" Background="White" Text="hey assistant" IsEnabled="False" Margin="0,0,0,4" BorderBrush="#CCCCCC"/>
-                        </StackPanel>
-                    </Border>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Recognition language" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="InputLangCombo" MaxDropDownHeight="320"/>
+                                </StackPanel>
 
-                    <!-- Voice Output -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="VOICE OUTPUT" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock Text="Voice" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <ComboBox x:Name="VoiceCombo" Foreground="Black" Background="White" Margin="0,0,0,8"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Whisper model" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="WhisperModelCombo">
+                                            <ComboBoxItem Content="tiny"/>
+                                            <ComboBoxItem Content="base"/>
+                                            <ComboBoxItem Content="small" IsSelected="True"/>
+                                            <ComboBoxItem Content="medium"/>
+                                        </ComboBox>
+                                        <Button x:Name="DownloadModelBtn" Grid.Column="1" Content="Download Model" local:Ui.Icon="&#xE896;"
+                                                Style="{StaticResource SecondaryButton}" Click="DownloadModel_Click" Margin="6,0,0,0"/>
+                                    </Grid>
+                                </StackPanel>
 
-                            <TextBlock Text="Speech Rate" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="RateSlider" Minimum="-5" Maximum="5" Value="1" SmallChange="1" LargeChange="1" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="RateValue" Grid.Column="1" Text="+1" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Transcription backend" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="TranscriptionBackendCombo">
+                                        <ComboBoxItem Content="Whisper.net"/>
+                                        <ComboBoxItem Content="AMD Ryzen AI Whisper"/>
+                                        <ComboBoxItem Content="AMD Ryzen AI Whisper with fallback"/>
+                                    </ComboBox>
+                                </StackPanel>
 
-                            <TextBlock Text="Volume" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" SmallChange="5" LargeChange="10" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="VolumeValue" Grid.Column="1" Text="80%" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Ryzen AI command" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="NpuTranscriberCommandBox" TextWrapping="Wrap" MinHeight="40" MaxHeight="80"
+                                             FontFamily="{StaticResource CodeFont}" FontSize="11"
+                                             ToolTip="Command that transcribes a WAV file with AMD Ryzen AI Whisper. Use {input} where the WAV path should go; stdout should be transcript text."/>
+                                </StackPanel>
 
-                            <ToggleButton x:Name="TtsToggle" Content="Speech ON" IsChecked="True" Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left" Click="TtsToggle_Click" Margin="0,0,0,4"/>
-                        </StackPanel>
-                    </Border>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Silence timeout (s)" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="SilenceValue" Grid.Column="1" Text="2.4" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="SilenceSlider" Minimum="0.5" Maximum="8" Value="2.4" SmallChange="0.1" LargeChange="0.5" Margin="0,0,0,10"/>
 
-                    <!-- Conversation -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="CONVERSATION" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <TextBlock Text="Max Context" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="40"/>
-                                </Grid.ColumnDefinitions>
-                                <Slider x:Name="ContextSlider" Minimum="2" Maximum="50" Value="20" SmallChange="1" LargeChange="5" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="ContextValue" Grid.Column="1" Text="20" FontSize="11" Foreground="#222222" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                            </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Noise suppression" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="NoiseValue" Grid.Column="1" Text="30%" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="NoiseSlider" Minimum="0" Maximum="100" Value="30" SmallChange="5" LargeChange="10" Margin="0,0,0,10"/>
 
-                            <ToggleButton x:Name="StreamToggle" Content="Stream responses" IsChecked="True" Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left" Click="StreamToggle_Click" Margin="0,0,0,8"/>
+                                <ToggleButton x:Name="AutoDetectToggle" Content="Auto-detect voice (no wake word)" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="AutoDetectToggle_Click"/>
 
-                            <Button x:Name="SummarizeBtn" Content="Save Memory" Style="{StaticResource ActionButton}" Click="SummarizeConversation_Click" Margin="0,0,0,4" Background="#6C5CE7"/>
-                            <Button x:Name="ViewMemoryBtn" Content="View Memory" Style="{StaticResource ActionButton}" Click="ViewMemory_Click" Margin="0,0,0,4"/>
-                            <Button x:Name="ClearChatBtn" Content="Clear Chat" Style="{StaticResource ActionButton}" Click="ClearChat_Click" Margin="0,0,0,4" Background="{StaticResource ErrorBrush}"/>
-                            <Button x:Name="ExportBtn" Content="Export Chat" Style="{StaticResource ActionButton}" Click="ExportChat_Click" Margin="0,0,0,4"/>
-                        </StackPanel>
-                    </Border>
+                                <StackPanel>
+                                    <TextBlock Text="Wake word" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="WakeWordBox" Text="hey assistant" IsEnabled="False"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
 
-                    <!-- Web Search -->
-                    <Border Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock Text="WEB SEARCH" FontSize="9" FontWeight="Bold" Foreground="#888888" Margin="0,0,0,6"/>
-                            <ToggleButton x:Name="WebSearchToggle" Content="Web Search ON" IsChecked="True"
-                                          Style="{StaticResource ToggleFlatButton}" HorizontalAlignment="Left"
-                                          Click="WebSearchToggle_Click" Margin="0,0,0,8"/>
+                        <!-- ================= Conversation ================= -->
+                        <Expander Header="Conversation" local:Ui.Icon="&#xE81C;"
+                                  local:Ui.Subtitle="Context, streaming and memory">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Max context messages" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="ContextValue" Grid.Column="1" Text="20" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="ContextSlider" Minimum="2" Maximum="50" Value="20" SmallChange="1" LargeChange="5" Margin="0,0,0,10"/>
 
-                            <TextBlock Text="Tavily API Key" FontSize="11" Foreground="#222222" Margin="0,0,0,2"/>
-                            <PasswordBox x:Name="TavilyApiKeyBox" Foreground="Black" Background="White"
-                                         Margin="0,0,0,4" BorderBrush="#CCCCCC"/>
-                        </StackPanel>
-                    </Border>
+                                <ToggleButton x:Name="StreamToggle" Content="Stream responses" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="StreamToggle_Click"/>
 
-                    <!-- Memory Viewer (collapsible) -->
-                    <Border x:Name="MemoryPanel" Background="White" CornerRadius="6" Padding="10" Margin="0,0,0,8" Visibility="Collapsed">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,4">
-                                <TextBlock Text="SAVED MEMORIES" FontSize="9" FontWeight="Bold" Foreground="#888888" VerticalAlignment="Center"/>
-                                <Button Content="X" FontSize="9" HorizontalAlignment="Right" Padding="4,1" 
-                                        Click="CloseMemoryPanel_Click" Background="#E17055" Foreground="White" BorderThickness="0"/>
-                            </Grid>
-                            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="MemoryListPanel"/>
-                            </ScrollViewer>
-                            <Button x:Name="AddManualMemoryBtn" Content="Add Memory" FontSize="10"
-                                    Click="AddManualMemory_Click" Margin="0,4,0,0" Padding="4,2"
-                                    Background="#00B894" Foreground="White" BorderThickness="0"/>
-                            <Button x:Name="ClearMemoryBtn" Content="Clear All Memory" FontSize="10"
-                                    Click="ClearMemory_Click" Margin="0,4,0,0" Padding="4,2"
-                                    Background="{StaticResource ErrorBrush}" Foreground="White" BorderThickness="0"/>
-                        </StackPanel>
-                    </Border>
+                                <UniformGrid Columns="2" Margin="0,4,0,0">
+                                    <Button x:Name="SummarizeBtn" Content="Save Memory" local:Ui.Icon="&#xE74E;"
+                                            Style="{StaticResource ActionButton}" Click="SummarizeConversation_Click" Margin="0,0,3,6"/>
+                                    <Button x:Name="ViewMemoryBtn" Content="View Memory" local:Ui.Icon="&#xE8F1;"
+                                            Style="{StaticResource SecondaryButton}" Click="ViewMemory_Click" Margin="3,0,0,6"/>
+                                    <Button x:Name="ExportBtn" Content="Copy Chat" local:Ui.Icon="&#xE8C8;"
+                                            Style="{StaticResource SecondaryButton}" Click="ExportChat_Click" Margin="0,0,3,6"
+                                            ToolTip="Copy the conversation to the clipboard"/>
+                                    <Button x:Name="SaveChatBtn" Content="Save Chat" local:Ui.Icon="&#xE792;"
+                                            Style="{StaticResource SecondaryButton}" Click="SaveChat_Click" Margin="3,0,0,6"
+                                            ToolTip="Save the conversation as a Markdown file"/>
+                                </UniformGrid>
+                                <Button x:Name="ClearChatBtn" Content="Clear Chat" local:Ui.Icon="&#xE74D;"
+                                        Style="{StaticResource DangerButton}" Click="ClearChat_Click"/>
+                            </StackPanel>
+                        </Expander>
 
-                </StackPanel>
-            </ScrollViewer>
+                        <!-- Memory viewer (shown by View Memory) -->
+                        <Border x:Name="MemoryPanel" Style="{StaticResource Card}" Margin="0,0,0,8" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE8F1;" Style="{StaticResource IconText}" Foreground="{StaticResource PrimaryLightBrush}"/>
+                                        <TextBlock Text="Saved memories" FontWeight="SemiBold" FontSize="13" Margin="8,0,0,0"/>
+                                    </StackPanel>
+                                    <Button Style="{StaticResource IconButton}" local:Ui.Icon="&#xE711;" Width="28" Height="28"
+                                            HorizontalAlignment="Right" Click="CloseMemoryPanel_Click" ToolTip="Close"/>
+                                </Grid>
+                                <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                                    <StackPanel x:Name="MemoryListPanel"/>
+                                </ScrollViewer>
+                                <UniformGrid Columns="2" Margin="0,8,0,0">
+                                    <Button x:Name="AddManualMemoryBtn" Content="Add" local:Ui.Icon="&#xE710;"
+                                            Style="{StaticResource SecondaryButton}" Click="AddManualMemory_Click" Margin="0,0,3,0"/>
+                                    <Button x:Name="ClearMemoryBtn" Content="Clear All" local:Ui.Icon="&#xE74D;"
+                                            Style="{StaticResource DangerButton}" Click="ClearMemory_Click" Margin="3,0,0,0"/>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ================= Web search ================= -->
+                        <Expander Header="Web Search" local:Ui.Icon="&#xE774;" local:Ui.Subtitle="Tavily live search">
+                            <StackPanel>
+                                <ToggleButton x:Name="WebSearchToggle" Content="Enable web search" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="WebSearchToggle_Click"/>
+                                <TextBlock Text="Tavily API key" Style="{StaticResource SectionLabel}"/>
+                                <PasswordBox x:Name="TavilyApiKeyBox"/>
+                                <TextBlock Text="Get a free key at tavily.com. Stored locally only." Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ================= Image / video ================= -->
+                        <Expander Header="Images &amp; Video" local:Ui.Icon="&#xE91B;" local:Ui.Subtitle="ComfyUI generation settings">
+                            <StackPanel>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="ComfyUI URL" Style="{StaticResource SectionLabel}"/>
+                                    <TextBox x:Name="ComfyUrlBox" Text="http://localhost:8000" local:Ui.Placeholder="http://localhost:8000"/>
+                                </StackPanel>
+
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Image width" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="ImageWidthBox" Text="1080"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Image height" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="ImageHeightBox" Text="1920"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Create steps" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="QwenCreateStepsBox" Text="4"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Edit steps" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="QwenEditStepsBox" Text="40"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Video seconds" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="VideoSecondsBox" Text="6"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Video FPS" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="VideoFpsBox" Text="24"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ================= Phone remote ================= -->
+                        <Expander Header="Phone Remote" local:Ui.Icon="&#xE8EA;" local:Ui.Subtitle="Use the chatbot from your iPhone">
+                            <StackPanel>
+                                <Border Background="{StaticResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                                    <TextBlock x:Name="PhoneRemoteStatusText" Text="Stopped" FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{StaticResource TextSecondaryBrush}"/>
+                                </Border>
+                                <ToggleButton x:Name="PhoneRemoteToggle" Content="Start with app" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="PhoneRemoteToggle_Click"/>
+                                <ToggleButton x:Name="PhoneRemoteAudioToggle" Content="Play audio on phone" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="PhoneRemoteAudioToggle_Click"/>
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Port" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="PhoneRemotePortBox" Text="5100"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="PIN (optional)" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="PhoneRemotePinBox"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Button x:Name="PhoneRemoteStartStopBtn" Content="Start Phone Remote" local:Ui.Icon="&#xE768;"
+                                        Style="{StaticResource ActionButton}" Click="PhoneRemoteStartStop_Click" Margin="0,0,0,6"/>
+                                <UniformGrid Columns="2" Margin="0,0,0,8">
+                                    <Button x:Name="PhoneRemoteCopyUrlBtn" Content="Copy URL" local:Ui.Icon="&#xE71B;"
+                                            Style="{StaticResource SecondaryButton}" Click="PhoneRemoteCopyUrl_Click" Margin="0,0,3,0"/>
+                                    <Button x:Name="PhoneRemoteCertBtn" Content="Certificate" local:Ui.Icon="&#xE8B7;"
+                                            Style="{StaticResource SecondaryButton}" Click="PhoneRemoteCert_Click" Margin="3,0,0,0"
+                                            ToolTip="Open the certificate folder"/>
+                                </UniformGrid>
+                                <TextBlock x:Name="PhoneRemoteHelpText" Style="{StaticResource FieldHint}"
+                                           Text="Install and fully trust the .cer file on iPhone once, then open the URL while on the same Wi-Fi."/>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ================= Face presence ================= -->
+                        <Expander Header="Face Presence" local:Ui.Icon="&#xE77B;" local:Ui.Subtitle="Camera identity and gating">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse x:Name="FacePresenceDot" Width="8" Height="8" Fill="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="FacePresenceText" Grid.Column="1" Text="Camera features off" FontSize="12"
+                                               Foreground="{StaticResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </Grid>
+                                <ToggleButton x:Name="FaceFeaturesToggle" Content="Camera features" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="FaceFeaturesToggle_Click"/>
+                                <ToggleButton x:Name="FaceGatingToggle" Content="Use identity gating" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="FaceGatingToggle_Click"/>
+                                <Border Background="#05060A" Height="150" CornerRadius="10" Margin="0,0,0,8" ClipToBounds="True"
+                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Grid>
+                                        <TextBlock Text="&#xE722;" Style="{StaticResource IconText}" FontSize="26"
+                                                   Foreground="{StaticResource BorderStrongBrush}" HorizontalAlignment="Center"/>
+                                        <Image x:Name="FacePreviewImage" Stretch="Uniform"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="FaceIdentityText" Text="Identity: Unknown" FontSize="12" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="FaceDebugText" Text="Samples: 0 | Model: SFace ONNX" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
+                                <Button x:Name="FaceSnapshotBtn" Content="Scan Face Once" local:Ui.Icon="&#xE722;"
+                                        Style="{StaticResource SecondaryButton}" Click="FaceSnapshot_Click" Margin="0,0,0,8"/>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="FaceProfileCombo" SelectedIndex="0" IsEditable="True" Text="Keith"
+                                              SelectionChanged="FaceProfileCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Keith"/>
+                                    </ComboBox>
+                                    <Button x:Name="EnrollFaceBtn" Grid.Column="1" Content="Save Face" local:Ui.Icon="&#xE74E;"
+                                            Style="{StaticResource ActionButton}" Click="EnrollFace_Click" Margin="6,0,0,0"/>
+                                </Grid>
+                                <Button x:Name="ClearFacesBtn" Content="Clear Face Samples" local:Ui.Icon="&#xE74D;"
+                                        Style="{StaticResource DangerButton}" Click="ClearFaces_Click" Margin="0,0,0,8"/>
+                                <TextBlock x:Name="FacePolicyText" Text="Face gating disabled" Style="{StaticResource FieldHint}"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <TextBlock Text="Settings save automatically when you close the app." Style="{StaticResource FieldHint}"
+                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
         </Border>
 
-        <!-- Divider -->
-        <Border Grid.Column="1" Background="#2D2D5E" Width="1"/>
+        <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="3" HorizontalAlignment="Stretch"
+                      ResizeBehavior="PreviousAndNext" DragCompleted="SidebarSplitter_DragCompleted"/>
 
-        <!-- ===================== RIGHT PANEL - Chat ===================== -->
+        <!-- ===================================================================
+             MAIN - chat
+             =================================================================== -->
         <Grid Grid.Column="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Top bar -->
-            <Border Grid.Row="0" Background="{StaticResource PanelBgBrush}" Padding="16,10" CornerRadius="0">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Status indicator -->
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse x:Name="StateIndicator" Width="12" Height="12" Fill="{StaticResource SuccessBrush}" Margin="0,0,10,0"/>
-                        <TextBlock x:Name="StateLabel" Text="Ready" FontSize="14" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
-                    </StackPanel>
-
-                    <!-- Quick actions -->
-                    <StackPanel Orientation="Horizontal" Grid.Column="1">
-                        <Button x:Name="MicBtn" Content="Mic" Style="{StaticResource ActionButton}" 
-                                Click="MicToggle_Click" Margin="0,0,8,0" Width="80"/>
-                        <Button x:Name="TranscribeBtn" Content="Transcribe" Style="{StaticResource ActionButton}"
-                                Click="Transcribe_Click" Margin="0,0,8,0" Width="105"
-                                Background="#A6E3A1" Foreground="#11111B"
-                                ToolTip="Open live transcription and summarization window"/>
-                        <Button x:Name="ListenBtn" Content="Listen" Style="{StaticResource ActionButton}"
-                                Click="ListenToggle_Click" Margin="0,0,8,0" Width="85"
-                                Background="{StaticResource SuccessBrush}"/>
-                        <ToggleButton x:Name="AlwaysListenToggle" Content=" Auto" 
-                                      Style="{StaticResource ToggleFlatButton}" Margin="0,0,8,0"
-                                      ToolTip="Continuously listen and respond"/>
-                        <Button x:Name="StopBtn" Content="Stop" Style="{StaticResource ActionButton}"
-                                Click="StopAll_Click" Width="70" Background="{StaticResource ErrorBrush}"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-
-            <!-- Chat area -->
-            <Border Grid.Row="1" Background="{StaticResource DarkBgBrush}" Margin="0" CornerRadius="0">
-                <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto" 
-                              HorizontalScrollBarVisibility="Disabled" Padding="16">
-                    <StackPanel x:Name="ChatPanel">
-                        <!-- Welcome message -->
-                        <Border Background="{StaticResource CardBgBrush}" CornerRadius="12" Padding="16" Margin="0,8">
-                            <StackPanel>
-                                <TextBlock Text=" Welcome to Voice Chatbot!" FontSize="18" FontWeight="Bold"
-                                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,8"/>
-                                <TextBlock TextWrapping="Wrap" Foreground="Black" FontSize="13">
-                                    <Run Text="This app connects to your local Ollama instance for AI-powered voice conversation."/>
-                                    <LineBreak/>
-                                    <LineBreak/>
-                                    <Run Text=" Click "/><Run Text="'Listen'" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                                    <Run Text=" to start a single voice interaction"/>
-                                    <LineBreak/>
-                                    <Run Text=" Toggle "/><Run Text="'Auto'" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                                    <Run Text=" for continuous hands-free conversation"/>
-                                    <LineBreak/>
-                                    <Run Text="Click "/><Run Text="'Mic'" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                                    <Run Text=" for push-to-talk mode"/>
-                                    <LineBreak/>
-                                    <LineBreak/>
-                                    <Run Text="Model control examples:" FontWeight="Bold"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes stop current running llama.cpp model"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gpt-oss:120b"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gemma"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gemma 4b"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gemma 12b"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gemma speculative"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start gemma 26b a4b"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start mistral"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes start comfyui"/>
-                                    <LineBreak/>
-                                    <Run Text="Hermes stop comfyui"/>
-                                    <LineBreak/>
-                                    <LineBreak/>
-                                    <Run Text="Configure your Ollama connection and voice settings in the left panel."/>
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </Border>
-
-            <!-- Waveform / activity bar -->
-            <Border Grid.Row="2" Background="{StaticResource PanelBgBrush}" Padding="16,4" Height="40">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="ActivityLabel" Text="" FontSize="11" 
-                               Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <ProgressBar x:Name="VolumeMeter" Grid.Column="1" Minimum="0" Maximum="100" Value="0"
-                                 Height="12" Foreground="{StaticResource AccentBrush}" Background="#1A1A3E"
-                                 VerticalAlignment="Center"/>
-                    <TextBlock x:Name="TimerLabel" Grid.Column="2" Text="" FontSize="11"
-                               Foreground="White" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                </Grid>
-            </Border>
-
-            <!-- Text input area -->
-            <Border Grid.Row="3" Background="{StaticResource PanelBgBrush}" Padding="12,8" CornerRadius="0">
+            <Border Grid.Row="0" Background="{StaticResource DarkBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="MessageInput" Background="White" 
-                             Foreground="Black" 
-                             BorderBrush="#888888" FontSize="13" Padding="12,8"
-                             AcceptsReturn="True" MaxHeight="120"
-                             ToolTip="Type a message. Enter to send, Shift+Enter for new line."/>
-                    <Grid Grid.Row="1" Margin="0,8,0,0">
+                    <Grid Margin="12,10,16,10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <WrapPanel Grid.Column="0" HorizontalAlignment="Right" Margin="0,0,8,0">
-                            <Button x:Name="CameraBtn" Content="Camera"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="CameraAsk_Click" MinWidth="80"
-                                    ToolTip="Take one photo and ask what the assistant sees."/>
-                            <Button x:Name="ImageBtn" Content="Image"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="AttachImage_Click" MinWidth="80"
-                                    ToolTip="Attach image files from this computer to the next message."/>
-                            <Button x:Name="DocumentBtn" Content="Document"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="AttachDocument_Click" MinWidth="95"
-                                    ToolTip="Attach a PDF, Word document, or text file to the next message."/>
-                            <CheckBox x:Name="KeepDocumentActiveToggle" Content="Keep doc"
-                                      Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"
-                                      Checked="KeepDocumentActiveToggle_Changed"
-                                      Unchecked="KeepDocumentActiveToggle_Changed"
-                                      ToolTip="When checked, the attached document stays in context for each question until unchecked."/>
-                            <Button x:Name="CreateImageBtn" Content="Create"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="CreateImage_Click" MinWidth="80"
-                                    ToolTip="Create an image from the typed prompt using Qwen Image."/>
-                            <Button x:Name="EditImageBtn" Content="Edit"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="EditImage_Click" MinWidth="70"
-                                    ToolTip="Edit the attached or last generated image using Qwen Image Edit."/>
-                            <Button x:Name="AudioBtn" Content="Video Audio"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="AttachVideoAudio_Click" MinWidth="105"
-                                    ToolTip="Attach optional audio for the next video generation."/>
-                            <Button x:Name="CreateVideoBtn" Content="Video"
-                                    Style="{StaticResource ActionButton}" Margin="0,0,8,0"
-                                    Click="CreateVideo_Click" MinWidth="70"
-                                    ToolTip="Make a video from the attached or last generated image using ComfyUI."/>
+
+                        <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE700;"
+                                Click="SidebarToggle_Click" ToolTip="Show / hide settings (Ctrl+B)" Margin="0,0,10,0"/>
+
+                        <!-- State -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Grid Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center">
+                                <Ellipse x:Name="StateHalo" Width="18" Height="18" Fill="{Binding Fill, ElementName=StateIndicator}"
+                                         Opacity="0.35" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <ScaleTransform x:Name="StateHaloScale" ScaleX="0.5" ScaleY="0.5"/>
+                                    </Ellipse.RenderTransform>
+                                    <Ellipse.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard RepeatBehavior="Forever">
+                                                    <DoubleAnimation Storyboard.TargetName="StateHaloScale" Storyboard.TargetProperty="ScaleX"
+                                                                     From="0.5" To="1" Duration="0:0:1.6"/>
+                                                    <DoubleAnimation Storyboard.TargetName="StateHaloScale" Storyboard.TargetProperty="ScaleY"
+                                                                     From="0.5" To="1" Duration="0:0:1.6"/>
+                                                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                     From="0.45" To="0" Duration="0:0:1.6"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
+                                    </Ellipse.Triggers>
+                                </Ellipse>
+                                <Ellipse x:Name="StateIndicator" Width="9" Height="9" Fill="{StaticResource SuccessBrush}"/>
+                            </Grid>
+                            <StackPanel VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="StateLabel" Text="Ready" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="TimerLabel" Text="" FontSize="12" Margin="8,1,0,0"
+                                               FontFamily="{StaticResource CodeFont}" Foreground="{StaticResource AccentBrush}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="ActiveModelText" Text="" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="260"/>
+                                    <TextBlock x:Name="ActivityLabel" Text="" FontSize="11" Margin="8,0,0,0"
+                                               Foreground="{StaticResource PrimaryLightBrush}" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Voice controls -->
+                        <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                            <Button x:Name="ListenBtn" Content="Listen" local:Ui.Icon="&#xE720;" Style="{StaticResource ActionButton}"
+                                    Click="ListenToggle_Click" Margin="0,0,6,0" ToolTip="Listen for one question (Ctrl+L)"/>
+                            <ToggleButton x:Name="AlwaysListenToggle" Content="Auto" local:Ui.Icon="&#xE8EE;"
+                                          Style="{StaticResource ToggleFlatButton}" Margin="0,0,6,0"
+                                          ToolTip="Continuous hands-free conversation"/>
+                            <Button x:Name="MicBtn" Content="Mic" local:Ui.Icon="&#xE7C8;" Style="{StaticResource SecondaryButton}"
+                                    Click="MicToggle_Click" Margin="0,0,6,0" ToolTip="Toggle the microphone on or off"/>
+                            <Button x:Name="TranscribeBtn" Content="Transcribe" local:Ui.Icon="&#xE8FD;" Style="{StaticResource SecondaryButton}"
+                                    Click="Transcribe_Click" Margin="0,0,6,0"
+                                    ToolTip="Open live transcription and summarization window"/>
+                            <Button x:Name="SchedulerBtn" Content="Scheduler" local:Ui.Icon="&#xE787;" Style="{StaticResource SecondaryButton}"
+                                    Click="Scheduler_Click" Margin="0,0,6,0" ToolTip="Scheduled prompts"/>
+                            <Button x:Name="StopBtn" Content="Stop" local:Ui.Icon="&#xE71A;" Style="{StaticResource DangerButton}"
+                                    Click="StopAll_Click" ToolTip="Stop generating, speaking and listening (Esc)"/>
                         </WrapPanel>
-                        <Button x:Name="SendBtn" Content="Send"
-                                Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                Style="{StaticResource ActionButton}"
-                                Click="SendText_Click" MinWidth="80"/>
                     </Grid>
+
+                    <!-- Live mic level -->
+                    <ProgressBar x:Name="VolumeMeter" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Height="2"
+                                 Background="Transparent" VerticalAlignment="Bottom"/>
                 </Grid>
+            </Border>
+
+            <!-- Chat -->
+            <Grid Grid.Row="1">
+                <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              Padding="24,16,24,16" ScrollChanged="ChatScroll_ScrollChanged">
+                    <StackPanel x:Name="ChatPanel">
+                        <!-- Welcome -->
+                        <Border x:Name="WelcomeCard" Margin="0,24,0,12" MaxWidth="760" HorizontalAlignment="Center">
+                            <StackPanel>
+                                <Border Width="64" Height="64" CornerRadius="20" Background="{StaticResource BrandGradientBrush}"
+                                        HorizontalAlignment="Center" Margin="0,0,0,16">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.55" Color="#7C6CFF"/>
+                                    </Border.Effect>
+                                    <TextBlock Text="&#xE720;" Style="{StaticResource IconText}" FontSize="28" Foreground="White"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="How can I help today?" FontSize="26" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <TextBlock HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,24"
+                                           Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" MaxWidth="560"
+                                           Text="Talk or type. Press Listen for a single question, Auto for hands-free conversation, or just start typing below."/>
+
+                                <TextBlock Text="TRY ASKING" Style="{StaticResource SubHeading}" HorizontalAlignment="Center"/>
+                                <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,20">
+                                    <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE774;" Click="Suggestion_Click"
+                                            Content="What's happening in tech news today?" Tag="What's happening in tech news today?"/>
+                                    <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE790;" Click="Suggestion_Click"
+                                            Content="Create an image of a neon city at night" Tag="Create an image of a neon city at night, cinematic lighting"/>
+                                    <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE714;" Click="Suggestion_Click"
+                                            Content="Summarize a YouTube video" Tag="Summarize this YouTube video: "/>
+                                    <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE943;" Click="Suggestion_Click"
+                                            Content="Write a PowerShell script" Tag="Write a PowerShell script that "/>
+                                </WrapPanel>
+
+                                <TextBlock Text="MODEL CONTROL" Style="{StaticResource SubHeading}" HorizontalAlignment="Center"/>
+                                <WrapPanel HorizontalAlignment="Center">
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma" Tag="Hermes start gemma"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma 12b" Tag="Hermes start gemma 12b"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma 26b a4b" Tag="Hermes start gemma 26b a4b"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma speculative" Tag="Hermes start gemma speculative"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gpt-oss:120b" Tag="Hermes start gpt-oss:120b"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start mistral" Tag="Hermes start mistral"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start comfyui" Tag="Hermes start comfyui"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes stop comfyui" Tag="Hermes stop comfyui"/>
+                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes stop current model" Tag="Hermes stop current running llama.cpp model"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Jump to latest -->
+                <Button x:Name="ScrollToBottomBtn" Style="{StaticResource RoundButton}" local:Ui.Icon="&#xE74B;"
+                        Width="36" Height="36" local:Ui.CornerRadius="18" Background="{StaticResource CardBgBrush}"
+                        Foreground="{StaticResource TextPrimaryBrush}" BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12"
+                        Visibility="Collapsed" Click="ScrollToBottom_Click" ToolTip="Jump to latest">
+                    <Button.Effect>
+                        <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.5" Color="Black"/>
+                    </Button.Effect>
+                </Button>
+            </Grid>
+
+            <!-- Composer -->
+            <Border Grid.Row="2" Background="{StaticResource DarkBgBrush}" Padding="20,4,20,14">
+                <StackPanel MaxWidth="1100">
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1"
+                            CornerRadius="16" Padding="12,10,10,10">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.35" Color="Black"/>
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox x:Name="MessageInput" Grid.ColumnSpan="1" Background="Transparent" BorderThickness="0"
+                                     FontSize="14" Padding="4,6" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="40" MaxHeight="180" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Center"
+                                     local:Ui.Placeholder="Message Voice Chatbot..."
+                                     ToolTip="Enter to send, Shift+Enter for a new line. Ctrl+V pastes images."/>
+                            <Button x:Name="SendBtn" Grid.Column="1" Style="{StaticResource RoundButton}" local:Ui.Icon="&#xE724;"
+                                    VerticalAlignment="Bottom" Margin="8,0,0,0"
+                                    Click="SendText_Click" ToolTip="Send (Enter)"/>
+
+                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,-6">
+                                <Button x:Name="CameraBtn" Content="Camera" local:Ui.Icon="&#xE722;" Style="{StaticResource ChipButton}"
+                                        Click="CameraAsk_Click" ToolTip="Take one photo and ask what the assistant sees."/>
+                                <Button x:Name="ImageBtn" Content="Image" local:Ui.Icon="&#xE8B9;" Style="{StaticResource ChipButton}"
+                                        Click="AttachImage_Click" ToolTip="Attach image files from this computer to the next message."/>
+                                <Button x:Name="DocumentBtn" Content="Document" local:Ui.Icon="&#xE8A5;" Style="{StaticResource ChipButton}"
+                                        Click="AttachDocument_Click" ToolTip="Attach a PDF, Word document, or text file to the next message."/>
+                                <CheckBox x:Name="KeepDocumentActiveToggle" Content="Keep doc" FontSize="12"
+                                          Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="2,0,12,6"
+                                          Checked="KeepDocumentActiveToggle_Changed" Unchecked="KeepDocumentActiveToggle_Changed"
+                                          ToolTip="When checked, the attached document stays in context for each question until unchecked."/>
+                                <Border Width="1" Height="18" Background="{StaticResource BorderBrush}" Margin="0,0,8,6"/>
+                                <Button x:Name="CreateImageBtn" Content="Create" local:Ui.Icon="&#xE790;" Style="{StaticResource ChipButton}"
+                                        Click="CreateImage_Click" ToolTip="Create an image from the typed prompt using Qwen Image."/>
+                                <Button x:Name="EditImageBtn" Content="Edit" local:Ui.Icon="&#xE70F;" Style="{StaticResource ChipButton}"
+                                        Click="EditImage_Click" ToolTip="Edit the attached or last generated image using Qwen Image Edit."/>
+                                <Button x:Name="AudioBtn" Content="Video Audio" local:Ui.Icon="&#xE8D6;" Style="{StaticResource ChipButton}"
+                                        Click="AttachVideoAudio_Click" ToolTip="Attach optional audio for the next video generation."/>
+                                <Button x:Name="CreateVideoBtn" Content="Video" local:Ui.Icon="&#xE714;" Style="{StaticResource ChipButton}"
+                                        Click="CreateVideo_Click" ToolTip="Make a video from the attached or last generated image using ComfyUI."/>
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+                    <TextBlock HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                               Text="Enter send  ·  Shift+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

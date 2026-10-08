@@ -41,6 +41,11 @@ public class AppSettings
     public int Volume { get; set; } = 80;
     public bool TtsEnabled { get; set; } = true;
 
+    // Kokoro text-to-speech. Leave the remote URL blank to use only the bundled local server.
+    // Accepts "192.168.1.50", "192.168.1.50:8880" or "http://host:8880/v1".
+    public string KokoroRemoteUrl { get; set; } = "";
+    public string KokoroMode { get; set; } = KokoroEndpoint.ModeAuto;
+
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
@@ -64,6 +69,9 @@ public class AppSettings
     public double WindowTop { get; set; } = -1;
     public double WindowWidth { get; set; } = 1100;
     public double WindowHeight { get; set; } = 750;
+    public bool WindowMaximized { get; set; } = false;
+    public bool SidebarVisible { get; set; } = true;
+    public double SidebarWidth { get; set; } = 340;
 
     // Face presence / local identity. Disabled by default to preserve current behavior.
     public FaceFeatureSettings FaceFeatures { get; set; } = new();

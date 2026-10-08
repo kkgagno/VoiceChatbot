@@ -5,7 +5,9 @@
         Width="980" Height="640"
         MinWidth="820" MinHeight="520"
         WindowStartupLocation="CenterOwner"
-        Background="#F0F0F5">
+        Background="{StaticResource DarkBgBrush}"
+        FontFamily="{StaticResource UiFont}"
+        Foreground="{StaticResource TextPrimaryBrush}">
     <Grid Margin="12">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="300"/>
@@ -13,18 +15,18 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Background="White" CornerRadius="6" Padding="10">
+        <Border Grid.Column="0" Style="{StaticResource Card}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Content="New" Width="64" Margin="0,0,6,0" Click="NewTask_Click"/>
-                    <Button Content="Delete" Width="72" Click="DeleteTask_Click"/>
+                    <Button Content="New" Style="{StaticResource ActionButton}" Width="72" Margin="0,0,6,0" Click="NewTask_Click"/>
+                    <Button Content="Delete" Style="{StaticResource DangerButton}" Width="80" Click="DeleteTask_Click"/>
                 </StackPanel>
-                <TextBlock DockPanel.Dock="Top" Text="Scheduled Tasks" FontWeight="Bold" Foreground="#222222" Margin="0,0,0,8"/>
+                <TextBlock DockPanel.Dock="Top" Text="Scheduled Tasks" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,8"/>
                 <ListBox x:Name="TaskList" SelectionChanged="TaskList_SelectionChanged"/>
             </DockPanel>
         </Border>
 
-        <Border Grid.Column="2" Background="White" CornerRadius="6" Padding="12">
+        <Border Grid.Column="2" Style="{StaticResource Card}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -40,10 +42,10 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel>
-                        <TextBlock Text="Name" FontSize="11" Foreground="#444444"/>
+                        <TextBlock Text="Name" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBox x:Name="NameBox" Margin="0,2,0,8"/>
 
-                        <TextBlock Text="Prompt" FontSize="11" Foreground="#444444"/>
+                        <TextBlock Text="Prompt" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBox x:Name="PromptBox" MinHeight="110" TextWrapping="Wrap" AcceptsReturn="True"
                                  VerticalScrollBarVisibility="Auto" Margin="0,2,0,8"/>
 
@@ -52,20 +54,20 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="2">
-                        <TextBlock Text="Next Date" FontSize="11" Foreground="#444444"/>
-                        <DatePicker x:Name="RunDatePicker" Margin="0,2,0,8"/>
+                        <TextBlock Text="Next Date" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <DatePicker x:Name="RunDatePicker" Margin="0,2,0,8" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource BorderBrush}"/>
 
-                        <TextBlock Text="Time" FontSize="11" Foreground="#444444"/>
+                        <TextBlock Text="Time" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBox x:Name="RunTimeBox" Text="09:00 AM" Margin="0,2,0,8"/>
 
-                        <TextBlock Text="Recurrence" FontSize="11" Foreground="#444444"/>
+                        <TextBlock Text="Recurrence" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <ComboBox x:Name="RecurrenceBox" Margin="0,2,0,8"/>
 
-                        <TextBlock Text="Runs To Keep" FontSize="11" Foreground="#444444"/>
+                        <TextBlock Text="Runs To Keep" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBox x:Name="KeepRunsBox" Text="5" Margin="0,2,0,12"/>
 
-                        <Button Content="Save Task" Click="SaveTask_Click" Margin="0,0,0,6"/>
-                        <Button Content="Run Now" Click="RunNow_Click"/>
+                        <Button Content="Save Task" Style="{StaticResource ActionButton}" Click="SaveTask_Click" Margin="0,0,0,6"/>
+                        <Button Content="Run Now" Style="{StaticResource SecondaryButton}" Click="RunNow_Click"/>
                     </StackPanel>
                 </Grid>
 
@@ -81,7 +83,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Text="Saved Runs" FontWeight="Bold" Foreground="#222222" Margin="0,0,0,6"/>
+                        <TextBlock Text="Saved Runs" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,6"/>
                         <ListBox x:Name="RunList" Grid.Row="1" SelectionChanged="RunList_SelectionChanged"/>
                     </Grid>
 
@@ -92,19 +94,19 @@
                         </Grid.RowDefinitions>
                         <DockPanel Grid.Row="0" Margin="0,0,0,6">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                <Button x:Name="SendToMainChatBtn" Content="Send to Main Chat" Width="130"
+                                <Button x:Name="SendToMainChatBtn" Content="Send to Main Chat" Style="{StaticResource SecondaryButton}" Width="140"
                                         Click="SendToMainChat_Click" IsEnabled="False" Margin="0,0,6,0"/>
-                                <Button x:Name="PlayAudioBtn" Content="Play Audio" Width="90"
+                                <Button x:Name="PlayAudioBtn" Content="Play Audio" Style="{StaticResource SecondaryButton}" Width="100"
                                         Click="PlayAudio_Click" IsEnabled="False"/>
                             </StackPanel>
-                            <TextBlock Text="Response" FontWeight="Bold" Foreground="#222222" VerticalAlignment="Center"/>
+                            <TextBlock Text="Response" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
                         </DockPanel>
                         <TextBox x:Name="ResponseBox" Grid.Row="1" TextWrapping="Wrap" AcceptsReturn="True"
                                  IsReadOnly="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
                     </Grid>
                 </Grid>
 
-                <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="#555555" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
             </Grid>
         </Border>
     </Grid>

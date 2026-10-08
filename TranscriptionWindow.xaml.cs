@@ -30,6 +30,7 @@ public partial class TranscriptionWindow : Window
         Action<string, string> contextUpdated)
     {
         InitializeComponent();
+        WindowTheme.UseDarkTitleBar(this);
         _speech = speech;
         _summarizeAsync = summarizeAsync;
         _contextUpdated = contextUpdated;

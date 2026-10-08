@@ -47,7 +47,8 @@ public class SpeechEngine : IDisposable
     private System.Diagnostics.Process? _kokoroServerProcess;
     private readonly object _kokoroServerLock = new();
     private const string KokoroServerUrl = "http://127.0.0.1:8765";
-    private const string RemoteKokoroSpeechUrl = "http://192.168.4.22:8880/v1/audio/speech";
+    private DateTime _remoteKokoroRetryAfterUtc = DateTime.MinValue;
+    private string _remoteKokoroFailedUrl = "";
     private readonly SemaphoreSlim _whisperLock = new(1, 1);
     private bool _isRecording;
     private bool _isProcessing;
@@ -85,12 +86,16 @@ public class SpeechEngine : IDisposable
     public string WhisperModelPath { get; set; } = "";
     public string TranscriptionBackend { get; set; } = "Whisper.net";
     public string ExternalNpuTranscriberCommand { get; set; } = "";
+    public string KokoroMode { get; set; } = KokoroEndpoint.ModeAuto;
+    public string KokoroRemoteUrl { get; set; } = "";
 
     // State
     public VoiceState CurrentState { get; private set; } = VoiceState.Idle;
     public string InitError { get; private set; } = "";
     public bool IsInitialized { get; private set; }
     public string LastTranscriptionBackendUsed { get; private set; } = "Whisper.net";
+    public string LastTtsBackendUsed { get; private set; } = "";
+    public event Action<string>? TtsBackendUsed;
 
     // Hardware
     public List<string> AvailableVoices { get; private set; } = new();
@@ -132,10 +137,14 @@ public class SpeechEngine : IDisposable
             "bm_lewis (British Male)"
         };
 
-        // Start persistent Kokoro server in the background so TTS stays warm.
-        var kokoroWarmupThread = new Thread(() => EnsureKokoroServerStarted(waitForReady: false));
-        kokoroWarmupThread.IsBackground = true;
-        kokoroWarmupThread.Start();
+        // Start persistent Kokoro server in the background so TTS stays warm,
+        // unless speech is configured to come only from a remote Kokoro host.
+        if (KokoroEndpoint.NormalizeMode(KokoroMode) != KokoroEndpoint.ModeRemoteOnly)
+        {
+            var kokoroWarmupThread = new Thread(() => EnsureKokoroServerStarted(waitForReady: false));
+            kokoroWarmupThread.IsBackground = true;
+            kokoroWarmupThread.Start();
+        }
 
         // Silence threshold from noise gate (0-100 -> actual sample threshold)
         _silenceThreshold = (int)(NoiseGate * 327.68); // 0-32768 range
@@ -628,22 +637,21 @@ public class SpeechEngine : IDisposable
 
         var clean = text; // MainWindow already prepares speech-safe text.
 
-        var kokoroVoice = VoiceName;
-        if (string.IsNullOrEmpty(kokoroVoice))
-            kokoroVoice = "af_bella";
-        else
-            kokoroVoice = kokoroVoice.Split('(')[0].Trim();
-
-        // Safety: if voice name ended up empty after split, default to af_bella
-        if (string.IsNullOrWhiteSpace(kokoroVoice))
-            kokoroVoice = "af_bella";
-
-        // Determine lang code from voice prefix: af_/am_ = American 'a', bf_/bm_ = British 'b'
-        var kokoroLang = kokoroVoice.StartsWith("bf_") || kokoroVoice.StartsWith("bm_") ? "b" : "a";
+        var (kokoroVoice, kokoroLang) = ResolveKokoroVoice();
 
         var thread = new Thread(() => DoKokoroSpeak(clean, kokoroVoice, kokoroLang));
         thread.IsBackground = true;
         thread.Start();
+    }
+
+    private (string Voice, string Lang) ResolveKokoroVoice()
+    {
+        // Voice names look like "am_onyx (American Male)"; Kokoro wants just the id.
+        var voice = (VoiceName ?? "").Split('(')[0].Trim();
+        if (string.IsNullOrWhiteSpace(voice))
+            voice = "af_bella";
+
+        return (voice, KokoroEndpoint.LanguageForVoice(voice));
     }
 
     public async Task<string?> CreateSpeechAudioFileAsync(string text, string outputDirectory)
@@ -652,16 +660,7 @@ public class SpeechEngine : IDisposable
             return null;
 
         Directory.CreateDirectory(outputDirectory);
-        var kokoroVoice = VoiceName;
-        if (string.IsNullOrEmpty(kokoroVoice))
-            kokoroVoice = "af_bella";
-        else
-            kokoroVoice = kokoroVoice.Split('(')[0].Trim();
-
-        if (string.IsNullOrWhiteSpace(kokoroVoice))
-            kokoroVoice = "af_bella";
-
-        var kokoroLang = kokoroVoice.StartsWith("bf_") || kokoroVoice.StartsWith("bm_") ? "b" : "a";
+        var (kokoroVoice, kokoroLang) = ResolveKokoroVoice();
         var wavFile = await Task.Run(() => GenerateKokoroAudioSync(text, kokoroVoice, kokoroLang)).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(wavFile) || !File.Exists(wavFile))
             return null;
@@ -1041,23 +1040,48 @@ public class SpeechEngine : IDisposable
 
     private string? GenerateKokoroAudioSync(string text, string voice, string lang = "a")
     {
-        var remoteWav = Path.Combine(Path.GetTempPath(), $"tts_remote_{Guid.NewGuid():N}.wav");
-        try
+        var mode = KokoroEndpoint.NormalizeMode(KokoroMode);
+        var remoteBase = KokoroEndpoint.NormalizeBaseUrl(KokoroRemoteUrl);
+
+        if (mode != KokoroEndpoint.ModeLocalOnly && remoteBase.Length > 0 && ShouldTryRemoteKokoro(remoteBase, mode))
         {
-            if (TryGenerateKokoroViaRemote(text, voice, lang, remoteWav))
-                return remoteWav;
-        }
-        catch
-        {
-            try { File.Delete(remoteWav); } catch { }
+            var remoteWav = Path.Combine(Path.GetTempPath(), $"tts_remote_{Guid.NewGuid():N}.wav");
+            try
+            {
+                if (TryGenerateKokoroViaRemote(text, voice, lang, remoteBase, remoteWav))
+                {
+                    _remoteKokoroRetryAfterUtc = DateTime.MinValue;
+                    ReportTtsBackend($"Remote Kokoro ({new Uri(remoteBase).Authority})");
+                    return remoteWav;
+                }
+
+                MarkRemoteKokoroFailed(remoteBase, "server returned no audio");
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(remoteWav); } catch { }
+                MarkRemoteKokoroFailed(remoteBase, ex.GetBaseException().Message);
+            }
         }
 
+        if (mode == KokoroEndpoint.ModeRemoteOnly)
+        {
+            if (remoteBase.Length == 0)
+                Log?.Invoke("[TTS] Kokoro is set to Remote only but no Kokoro host is configured.");
+            return null;
+        }
+
+        // Local Kokoro only knows American and British English pipelines.
+        var localLang = lang is "a" or "b" ? lang : "a";
         var tempWav = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.wav");
 
         try
         {
-            if (TryGenerateKokoroViaServer(text, voice, lang, tempWav))
+            if (TryGenerateKokoroViaServer(text, voice, localLang, tempWav))
+            {
+                ReportTtsBackend("Local Kokoro server");
                 return tempWav;
+            }
         }
         catch
         {
@@ -1065,10 +1089,50 @@ public class SpeechEngine : IDisposable
         }
 
         // Fallback: old one-shot Python path if remote and persistent local server are not available.
-        return GenerateKokoroAudioOneShotSync(text, voice, lang);
+        var oneShot = GenerateKokoroAudioOneShotSync(text, voice, localLang);
+        if (oneShot != null)
+            ReportTtsBackend("Local Kokoro (one-shot)");
+        return oneShot;
     }
 
-    private bool TryGenerateKokoroViaRemote(string text, string voice, string lang, string outputPath)
+    private bool ShouldTryRemoteKokoro(string remoteBase, string mode)
+    {
+        // After a failure in Auto mode, skip the remote host briefly so replies are not delayed
+        // by repeated connection timeouts. Remote-only mode always tries.
+        if (mode == KokoroEndpoint.ModeRemoteOnly)
+            return true;
+
+        return !string.Equals(_remoteKokoroFailedUrl, remoteBase, StringComparison.OrdinalIgnoreCase)
+               || DateTime.UtcNow >= _remoteKokoroRetryAfterUtc;
+    }
+
+    private void MarkRemoteKokoroFailed(string remoteBase, string reason)
+    {
+        var firstFailure = !string.Equals(_remoteKokoroFailedUrl, remoteBase, StringComparison.OrdinalIgnoreCase)
+                           || _remoteKokoroRetryAfterUtc == DateTime.MinValue;
+        _remoteKokoroFailedUrl = remoteBase;
+        _remoteKokoroRetryAfterUtc = DateTime.UtcNow.AddSeconds(60);
+        if (firstFailure)
+            Log?.Invoke($"[TTS] Remote Kokoro at {remoteBase} failed ({reason}).{(KokoroEndpoint.NormalizeMode(KokoroMode) == KokoroEndpoint.ModeAuto ? " Using local Kokoro for now." : "")}");
+    }
+
+    /// <summary>Clears the remote back-off so the next utterance retries the remote host immediately.</summary>
+    public void ResetRemoteKokoroBackoff()
+    {
+        _remoteKokoroRetryAfterUtc = DateTime.MinValue;
+        _remoteKokoroFailedUrl = "";
+    }
+
+    private void ReportTtsBackend(string backend)
+    {
+        if (backend == LastTtsBackendUsed)
+            return;
+
+        LastTtsBackendUsed = backend;
+        TtsBackendUsed?.Invoke(backend);
+    }
+
+    private bool TryGenerateKokoroViaRemote(string text, string voice, string lang, string remoteBase, string outputPath)
     {
         var speed = 1.0 + (SpeechRate * 0.2);
         speed = Math.Max(0.5, Math.Min(2.0, speed));
@@ -1088,9 +1152,8 @@ public class SpeechEngine : IDisposable
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(payload);
-        using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         using var content = new System.Net.Http.StringContent(json, Encoding.UTF8, "application/json");
-        using var response = client.PostAsync(RemoteKokoroSpeechUrl, content).GetAwaiter().GetResult();
+        using var response = KokoroEndpoint.Http.PostAsync(KokoroEndpoint.SpeechUrl(remoteBase), content).GetAwaiter().GetResult();
 
         if (!response.IsSuccessStatusCode)
             return false;

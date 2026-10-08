@@ -90,6 +90,22 @@ To install local Kokoro:
 
 Voice Chatbot starts the bundled local Kokoro server on `http://127.0.0.1:8765` when needed. To use a specific Python executable, set the `VOICECHATBOT_PYTHON` environment variable to its full path.
 
+#### Remote Kokoro server
+
+To use Kokoro running on another machine (for example [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI)), open **Voice Output** in the settings sidebar and enter its address in **Remote Kokoro host**. Any of these forms work:
+
+- `192.168.1.50` (port `8880` is assumed)
+- `192.168.1.50:8880`
+- `http://tts-box:8880/v1` or the full `.../v1/audio/speech` URL
+
+Click **Test** to check the connection. If the server lists its voices, the voice dropdown is refreshed with them. **Engine** controls the fallback:
+
+- `Auto` tries the remote host first and falls back to local Kokoro. After a failure it skips the remote host for 60 seconds so replies are not delayed.
+- `Remote only` never starts the local server.
+- `Local only` ignores the remote host.
+
+Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
+
 ## Optional integrations
 
 ### Web search
@@ -124,6 +140,17 @@ Optional tools improve document support:
 - Poppler `pdftoppm` and Tesseract OCR for scanned PDFs.
 
 These tools can be installed with WinGet where packages are available.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| Enter / Shift+Enter | Send / new line |
+| Ctrl+L | Listen for one question |
+| Esc | Stop generating, speaking and listening |
+| Ctrl+B | Show or hide the settings sidebar |
+| Ctrl+K | Focus the message box |
+| Ctrl+V | Paste text or an image |
 
 ## Building from source
 
