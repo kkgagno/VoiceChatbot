@@ -908,6 +908,16 @@ public partial class MainWindow
 
     private async void ClearFaces_Click(object sender, RoutedEventArgs e)
     {
+        var answer = MessageBox.Show(
+            this,
+            "Delete the saved face samples for every person? Face ID will not recognize anyone until faces are enrolled again. This cannot be undone.",
+            "Clear Face Samples",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+            return;
+
         ClearFacesBtn.IsEnabled = false;
         try
         {

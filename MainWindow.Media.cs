@@ -273,36 +273,52 @@ public partial class MainWindow
             : length;
     }
 
-    private static Task<string> CopyVideoToSyncedDirectoryAsync(string videoPath, CancellationToken ct)
+    // Returns "" when the copy fails: the video itself was created, so a full or locked sync folder
+    // is reported as a system message instead of turning the result into "Video creation failed".
+    private Task<string> CopyVideoToSyncedDirectoryAsync(string videoPath, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(videoPath) || !File.Exists(videoPath))
             return Task.FromResult("");
 
         return Task.Run(() =>
         {
-            Directory.CreateDirectory(SyncedVideoDirectory);
-
-            var extension = Path.GetExtension(videoPath);
-            if (string.IsNullOrWhiteSpace(extension))
-                extension = ".mp4";
-
-            var originalName = Path.GetFileNameWithoutExtension(videoPath);
-            var safeName = Regex.Replace(originalName, @"[^\w\-. ]+", "_").Trim(' ', '.', '_');
-            if (string.IsNullOrWhiteSpace(safeName))
-                safeName = "voicechatbot-video";
-
-            var prefix = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}{extension}");
-            var suffix = 1;
-            while (File.Exists(targetPath))
+            try
             {
-                targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}_{suffix}{extension}");
-                suffix++;
+                return CopyVideoToSyncedDirectory(videoPath);
             }
-
-            File.Copy(videoPath, targetPath, overwrite: false);
-            return targetPath;
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(() =>
+                    AddSystemMessage($"The video was saved, but copying it to {SyncedVideoDirectory} failed: {FriendlyErrors.Describe(ex)}"));
+                return "";
+            }
         }, ct);
+    }
+
+    private static string CopyVideoToSyncedDirectory(string videoPath)
+    {
+        Directory.CreateDirectory(SyncedVideoDirectory);
+
+        var extension = Path.GetExtension(videoPath);
+        if (string.IsNullOrWhiteSpace(extension))
+            extension = ".mp4";
+
+        var originalName = Path.GetFileNameWithoutExtension(videoPath);
+        var safeName = Regex.Replace(originalName, @"[^\w\-. ]+", "_").Trim(' ', '.', '_');
+        if (string.IsNullOrWhiteSpace(safeName))
+            safeName = "voicechatbot-video";
+
+        var prefix = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}{extension}");
+        var suffix = 1;
+        while (File.Exists(targetPath))
+        {
+            targetPath = Path.Combine(SyncedVideoDirectory, $"{prefix}_{safeName}_{suffix}{extension}");
+            suffix++;
+        }
+
+        File.Copy(videoPath, targetPath, overwrite: false);
+        return targetPath;
     }
 
     private void AddGeneratedImageToAssistantMessage(AssistantMessageUi assistantMessage, string imagePath)
@@ -363,8 +379,15 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
-        File.Copy(imagePath, dialog.FileName, overwrite: true);
-        AddSystemMessage($"Image saved to {dialog.FileName}");
+        try
+        {
+            File.Copy(imagePath, dialog.FileName, overwrite: true);
+            AddSystemMessage($"Image saved to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not save the image: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     private void AddGeneratedVideoToAssistantMessage(AssistantMessageUi assistantMessage, string videoPath)
@@ -436,7 +459,14 @@ public partial class MainWindow
             return;
         }
 
-        Process.Start(new ProcessStartInfo(videoPath) { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo(videoPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not open the video: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     private void SaveGeneratedVideo_Click(object sender, RoutedEventArgs e)
@@ -459,8 +489,15 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
-        File.Copy(videoPath, dialog.FileName, overwrite: true);
-        AddSystemMessage($"Video saved to {dialog.FileName}");
+        try
+        {
+            File.Copy(videoPath, dialog.FileName, overwrite: true);
+            AddSystemMessage($"Video saved to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not save the video: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     // The media parsers live in Core/MediaIntentParser.cs: they need explicit image/picture/photo or
