@@ -114,6 +114,40 @@ Click **Test** to check the connection. If the server lists its voices, the voic
 
 Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
 
+### Speaking before the reply finishes
+
+Replies are spoken sentence by sentence: Kokoro renders the next sentence while the current one plays, so speech starts after the first sentence instead of after the whole reply.
+
+With **Stream responses** on, the assistant starts talking while the model is still writing. Turn this off with **Start speaking before the reply finishes** under **Voice Output** (saved as `StreamingSpeechEnabled`). Replies to code or script requests still wait until they are complete, and code blocks are never read aloud. **Stop** (or **Esc**) and the microphone button stop speech straight away. The **Replay Audio** and **Download Audio** buttons appear once the whole reply has been spoken.
+
+### Interrupting by speaking
+
+Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut the assistant off by talking. While it speaks, the app also watches the selected microphone. It measures the room (and any echo of its own voice) during the first 0.3 seconds of playback, then stops speaking once your voice stays clearly above that level for about 0.3 seconds. It shows "Interrupted - listening" and listens as if you had pressed **Listen**, keeping the words that interrupted it when you keep talking. Face gating still applies. The reply text keeps appearing in the chat.
+
+- Works best with headphones. Through speakers the assistant's own voice can interrupt it; lower **Interrupt sensitivity** if that happens. Higher sensitivity reacts to quieter speech.
+- Bluetooth headsets may switch to their lower-quality call audio while the microphone is open during speech.
+- Saved as `BargeInEnabled` and `BargeInSensitivity` (0-100, default 50) in `settings.json`.
+
+### Always-on wake word
+
+The **Wake word** box under **Voice Input** is checked against Whisper transcripts, so it only works while the app is already listening. For a real always-on wake word, Voice Chatbot can run [openWakeWord](https://github.com/dscripka/openWakeWord) on your PC. It does not use Whisper or the internet once installed.
+
+1. Install Python 3.11, 3.12, or 3.13 x64 as for Kokoro above.
+2. Open PowerShell in the installed app's `Tools\WakeWord` folder and run:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install-wakeword.ps1
+   ```
+
+   This installs `openwakeword`, `onnxruntime` and `numpy` and downloads the wake word models (about 10 MB).
+3. Under **Voice Input**, turn on **Listen for a wake word** and choose the **Wake word model**: Hey Jarvis (default), Alexa, Hey Mycroft, or Hey Rhasspy.
+
+The line under the switch shows `Starting...`, `Listening for "hey jarvis"`, `Not installed`, or the error. When the app hears the wake word, it plays the Windows "Asterisk" sound and listens for one request, as if you had pressed **Listen**. Face gating still applies. Say your request after the sound. The text wake word is not needed for that turn, and if you say nothing for about 8 seconds the app stops listening. Detection pauses while the app is listening, working on a reply or speaking, and while **Auto** listening is on, so the assistant's own voice cannot wake it.
+
+- **Wake word sensitivity** (10-90, default 50): higher reacts to quieter or less exact speech but wakes up by mistake more often. Lower it if the app wakes up on its own.
+- The microphone stays open while the detector is on, so Bluetooth headsets may stay in their call-quality audio mode.
+- It uses the same Python as Kokoro; set `VOICECHATBOT_PYTHON` to choose one. Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
+
 ## Optional integrations
 
 ### Web search

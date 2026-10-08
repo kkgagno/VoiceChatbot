@@ -31,7 +31,7 @@ public class AudioDeviceInfo
     public override string ToString() => $"[{Index}] {Name}";
 }
 
-public class SpeechEngine : IDisposable
+public partial class SpeechEngine : IDisposable
 {
     // Components
     private bool _disposed;
@@ -332,9 +332,11 @@ public class SpeechEngine : IDisposable
         _voiceBucketCount = 0;
         _voiceDetected = false;
         _logThrottle = 0;
+        BeginWakeTurnIfStarting();
 
         // Audio buffer to store PCM data
         _audioBuffer = new MemoryStream();
+        SeedRecordingWithBargeInAudio();
 
         try
         {
@@ -430,6 +432,8 @@ public class SpeechEngine : IDisposable
         // Keep the gate modest so short/quiet phrases do not sit in the buffer until the next utterance.
         var voiceThreshold = Math.Max(0.004f, NoiseGate / 5000f);
         bool isVoice = rmsNorm > voiceThreshold;
+        if (IsWakeTurnChime())
+            isVoice = false;
 
         // Log audio levels periodically (every 20 chunks = ~2 seconds)
         _logThrottle++;
@@ -451,6 +455,14 @@ public class SpeechEngine : IDisposable
         else if (_voiceBucketCount > 0)
         {
             _voiceBucketCount--;
+        }
+
+        KeepOrDropBargeInAudio();
+
+        if (WakeTurnHeardNothing())
+        {
+            StopRecordingAndProcess();
+            return;
         }
 
         // Only process if: we heard voice, then silence, and have enough audio
@@ -521,6 +533,7 @@ public class SpeechEngine : IDisposable
         wavStream.Position = 0;
 
         // Process with Whisper on background thread
+        var wakeWordAlreadyHeard = _wakeWordAlreadyHeard;
         _isProcessing = true;
         SetState(VoiceState.Processing);
 
@@ -537,8 +550,8 @@ public class SpeechEngine : IDisposable
                 {
                     text = text.Trim();
 
-                    // Wake word check
-                    if (!AutoDetect && !string.IsNullOrWhiteSpace(WakeWord))
+                    // Wake word check (not needed when the wake word detector started this turn)
+                    if (!AutoDetect && !wakeWordAlreadyHeard && !string.IsNullOrWhiteSpace(WakeWord))
                     {
                         if (text.IndexOf(WakeWord, StringComparison.OrdinalIgnoreCase) < 0)
                         {
@@ -1376,6 +1389,7 @@ public class SpeechEngine : IDisposable
             };
             _waveOut.Init(reader);
             _waveOut.Play();
+            StartBargeInMonitor();
             done.WaitOne(TimeSpan.FromMinutes(10));
         }
         catch (Exception ex)
@@ -1465,50 +1479,19 @@ public class SpeechEngine : IDisposable
         }
     }
 
-    private static string? FindKokoroScript(string fileName)
-    {
-        var candidates = new[]
-        {
-            Path.Combine(AppContext.BaseDirectory, "Tools", "Kokoro", fileName),
-            Path.Combine(AppContext.BaseDirectory, fileName),
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "VoiceChatbot",
-                fileName)
-        };
+    private static string? FindKokoroScript(string fileName) => PythonTools.FindToolScript("Kokoro", fileName);
 
-        return candidates.FirstOrDefault(File.Exists);
-    }
-
-    private static string? FindPythonExecutable()
-    {
-        var configured = Environment.GetEnvironmentVariable("VOICECHATBOT_PYTHON");
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
-            return configured;
-
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var candidates = new[]
-        {
-            Path.Combine(localAppData, "Programs", "Python", "Python313", "python.exe"),
-            Path.Combine(localAppData, "Programs", "Python", "Python312", "python.exe"),
-            Path.Combine(localAppData, "Programs", "Python", "Python311", "python.exe"),
-            Path.Combine(programFiles, "Python313", "python.exe"),
-            Path.Combine(programFiles, "Python312", "python.exe"),
-            Path.Combine(programFiles, "Python311", "python.exe")
-        };
-
-        return candidates.FirstOrDefault(File.Exists) ?? "python.exe";
-    }
+    private static string? FindPythonExecutable() => PythonTools.FindPythonExecutable();
 
     private void PlayWavOnThread(string filePath, bool deleteAfterPlayback = true)
     {
         var thread = new Thread(() =>
         {
+            ManualResetEvent? done = null;
             try
             {
                 using var reader = new NAudio.Wave.WaveFileReader(filePath);
-                var done = new ManualResetEvent(false);
+                done = new ManualResetEvent(false);
                 _playbackStopSignal = done;
                 _waveOut = new NAudio.Wave.WaveOutEvent();
                 _waveOut.Volume = Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
@@ -1518,6 +1501,7 @@ public class SpeechEngine : IDisposable
                 };
                 _waveOut.Init(reader);
                 _waveOut.Play();
+                StartBargeInMonitor();
                 done.WaitOne(TimeSpan.FromMinutes(10));
             }
             catch (Exception ex)
@@ -1532,8 +1516,12 @@ public class SpeechEngine : IDisposable
                 try { _waveOut?.Dispose(); } catch { }
                 _waveOut = null;
                 _playbackStopSignal = null;
-                SetState(VoiceState.Idle);
-                SpeechFinished?.Invoke();
+                // A speech session that took over playback raises SpeechFinished itself.
+                if (done == null || !ReferenceEquals(done, _supersededPlaybackSignal))
+                {
+                    SetState(VoiceState.Idle);
+                    SpeechFinished?.Invoke();
+                }
             }
         });
         thread.IsBackground = true;
@@ -1545,6 +1533,9 @@ public class SpeechEngine : IDisposable
         if (this.CurrentState != newState)
         {
             this.CurrentState = newState;
+            // The barge-in microphone only runs while speaking.
+            if (newState != VoiceState.Speaking)
+                StopBargeInMonitor();
             this.StateChanged?.Invoke(newState);
         }
     }
@@ -1571,6 +1562,8 @@ public class SpeechEngine : IDisposable
 
     public void StopSpeaking()
     {
+        // Cancel a sentence-by-sentence speech session: drops its queue and stops its clip.
+        CancelSpeechSession();
         // Stop audio playback
         try { _waveOut?.Stop(); } catch { }
         try { _playbackStopSignal?.Set(); } catch { }
@@ -1595,6 +1588,7 @@ public class SpeechEngine : IDisposable
         if (_disposed) return;
         _disposed = true;
         StopAll();
+        StopBargeInMonitor();
         if (_kokoroServerProcess != null && !_kokoroServerProcess.HasExited)
         {
             try { _kokoroServerProcess.Kill(true); } catch { }

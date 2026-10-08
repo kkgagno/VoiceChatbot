@@ -163,128 +163,149 @@ public partial class MainWindow
         var temperature = TempSlider.Value;
         var liveStream = StreamToggle.IsChecked == true;
         var working = new List<ChatMessage>(messagesForModel);
-        // Web text in this turn (the forced search or a web tool result) can carry instructions aimed
-        // at the model; it must not be able to plant memories that every later conversation loads.
-        var webContentInTurn = skipWebSearchTool;
-        ChatTurnResult turn;
-
-        for (var round = 0; ; round++)
+        // Speak the answer sentence by sentence while it streams, like the plain chat path.
+        var speech = liveStream ? BeginStreamingSpeech(modelUserText, assistantMessage) : null;
+        try
         {
-            // The last request goes without tools so the model has to answer.
-            var offerTools = round < MaxToolRounds;
-            SetUIState(liveStream ? "thinking" : "processing", round == 0 ? "Thinking..." : "Reading tool results...");
-            if (round > 0)
-                TrimToolTurnToContextBudget(working, toolSystemPrompt, contextTokens, maxTokens);
-            var roundTools = webContentInTurn
-                ? tools.Where(t => !IsTool(t.Name, BuiltInTools.SaveMemory)).ToList()
-                : tools;
+            return await RunToolTurnAsync();
+        }
+        catch
+        {
+            CancelStreamingSpeech(speech);
+            throw;
+        }
 
-            var streamed = new StringBuilder();
-            Action<string>? onToken = null;
-            if (liveStream)
-            {
-                onToken = token => Dispatcher.Invoke(() =>
-                {
-                    streamed.Append(token);
-                    var text = streamed.ToString();
-                    var preserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(text);
-                    assistantMessage.Body.Text = GetStreamingDisplayText(text, preserveCode);
-                    ScrollChat();
-                }, DispatcherPriority.Background);
-            }
+        async Task<bool> RunToolTurnAsync()
+        {
+            // Web text in this turn (the forced search or a web tool result) can carry instructions aimed
+            // at the model; it must not be able to plant memories that every later conversation loads.
+            var webContentInTurn = skipWebSearchTool;
+            ChatTurnResult turn;
 
-            try
+            for (var round = 0; ; round++)
             {
-                turn = await _ollama.ChatStreamWithToolsAsync(model, working, toolSystemPrompt, temperature,
-                    maxTokens, contextTokens, offerTools ? roundTools : null, onToken, ct);
-            }
-            catch (ToolsNotSupportedException ex)
-            {
-                Debug.WriteLine(ex.Message);
-                assistantMessage.Body.Text = "";
-                if (round == 0)
+                // The last request goes without tools so the model has to answer.
+                var offerTools = round < MaxToolRounds;
+                SetUIState(liveStream ? "thinking" : "processing", round == 0 ? "Thinking..." : "Reading tool results...");
+                if (round > 0)
+                    TrimToolTurnToContextBudget(working, toolSystemPrompt, contextTokens, maxTokens);
+                var roundTools = webContentInTurn
+                    ? tools.Where(t => !IsTool(t.Name, BuiltInTools.SaveMemory)).ToList()
+                    : tools;
+
+                var streamed = new StringBuilder();
+                Action<string>? onToken = null;
+                if (liveStream)
                 {
-                    _modelsWithoutTools.Add(model.Trim());
-                    AddSystemMessage($"{model} does not support tool calling, so tools are off for this model until the app restarts. Answering without tools.");
+                    onToken = token => Dispatcher.Invoke(() =>
+                    {
+                        streamed.Append(token);
+                        var text = streamed.ToString();
+                        var preserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(text);
+                        assistantMessage.Body.Text = GetStreamingDisplayText(text, preserveCode);
+                        ScrollChat();
+                        FeedStreamingSpeech(speech, token);
+                    }, DispatcherPriority.Background);
                 }
-                else
+
+                try
                 {
-                    // The tool definitions were accepted in round 0, so the backend rejected the tool
-                    // results just sent; keep tools on for the next message.
-                    AddSystemMessage("The backend could not take the tool results. Answering without tools.");
+                    turn = await _ollama.ChatStreamWithToolsAsync(model, working, toolSystemPrompt, temperature,
+                        maxTokens, contextTokens, offerTools ? roundTools : null, onToken, ct);
                 }
-                return false;
-            }
+                catch (ToolsNotSupportedException ex)
+                {
+                    Debug.WriteLine(ex.Message);
+                    // The plain chat path that runs next starts its own speech.
+                    speech?.Session.Abandon();
+                    assistantMessage.Body.Text = "";
+                    if (round == 0)
+                    {
+                        _modelsWithoutTools.Add(model.Trim());
+                        AddSystemMessage($"{model} does not support tool calling, so tools are off for this model until the app restarts. Answering without tools.");
+                    }
+                    else
+                    {
+                        // The tool definitions were accepted in round 0, so the backend rejected the tool
+                        // results just sent; keep tools on for the next message.
+                        AddSystemMessage("The backend could not take the tool results. Answering without tools.");
+                    }
+                    return false;
+                }
 
-            if (!offerTools || !turn.HasToolCalls)
-                break;
-
-            working.Add(new ChatMessage
-            {
-                Role = "assistant",
-                Content = turn.Content,
-                ToolCalls = turn.ToolCalls.ToList()
-            });
-
-            var webContentThisRound = false;
-            foreach (var call in turn.ToolCalls)
-            {
-                var note = ModelTools.DescribeCall(call);
-                AddSystemMessage(note);
-                SetUIState(call.Name == BuiltInTools.WebSearch ? "searching" : "processing", note);
-
-                var result = webContentInTurn && IsTool(call.Name, BuiltInTools.SaveMemory)
-                    ? "Error: memories cannot be saved after reading web content in the same answer. " +
-                      "Tell the user they can ask you to remember it in their next message."
-                    : await ModelTools.ExecuteAsync(call, ct);
-                if (IsTool(call.Name, BuiltInTools.WebSearch) || IsTool(call.Name, BuiltInTools.FetchWebPage))
-                    webContentThisRound = true;
+                if (!offerTools || !turn.HasToolCalls)
+                    break;
 
                 working.Add(new ChatMessage
                 {
-                    Role = "tool",
-                    Content = result,
-                    ToolCallId = call.Id,
-                    ToolName = call.Name
+                    Role = "assistant",
+                    Content = turn.Content,
+                    ToolCalls = turn.ToolCalls.ToList()
                 });
+
+                var webContentThisRound = false;
+                foreach (var call in turn.ToolCalls)
+                {
+                    var note = ModelTools.DescribeCall(call);
+                    AddSystemMessage(note);
+                    SetUIState(call.Name == BuiltInTools.WebSearch ? "searching" : "processing", note);
+
+                    var result = webContentInTurn && IsTool(call.Name, BuiltInTools.SaveMemory)
+                        ? "Error: memories cannot be saved after reading web content in the same answer. " +
+                          "Tell the user they can ask you to remember it in their next message."
+                        : await ModelTools.ExecuteAsync(call, ct);
+                    if (IsTool(call.Name, BuiltInTools.WebSearch) || IsTool(call.Name, BuiltInTools.FetchWebPage))
+                        webContentThisRound = true;
+
+                    working.Add(new ChatMessage
+                    {
+                        Role = "tool",
+                        Content = result,
+                        ToolCallId = call.Id,
+                        ToolName = call.Name
+                    });
+                }
+
+                // Calls in one round are chosen before any of their results are seen.
+                webContentInTurn |= webContentThisRound;
+
+                // Any text streamed alongside the calls was a preamble; the answer comes next, below the notes.
+                EndStreamingSpeechRound(speech);
+                assistantMessage.Body.Text = "";
+                MoveAssistantBubbleToEnd(assistantMessage);
             }
 
-            // Calls in one round are chosen before any of their results are seen.
-            webContentInTurn |= webContentThisRound;
+            var answer = turn.Content;
+            AddBackendFinishDiagnostic("Backend usage", answer.Length, maxTokens, contextTokens);
 
-            // Any text streamed alongside the calls was a preamble; the answer comes next, below the notes.
-            assistantMessage.Body.Text = "";
-            MoveAssistantBubbleToEnd(assistantMessage);
-        }
+            try
+            {
+                answer = await CompleteCodeArtifactIfNeededAsync(answer, modelUserText, working, toolSystemPrompt,
+                    model, temperature, maxTokens, contextTokens, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Keep what we have rather than replacing the answer with the error.
+                AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
+            }
 
-        var answer = turn.Content;
-        AddBackendFinishDiagnostic("Backend usage", answer.Length, maxTokens, contextTokens);
+            var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(answer);
+            var cleaned = CleanDisplayText(answer, preserveCodeBlocks: isCodeResponse);
+            if (string.IsNullOrWhiteSpace(cleaned))
+            {
+                assistantMessage.Body.Text = "";
+                speech?.Session.Abandon();
+                AddSystemMessage("The model returned an empty answer.");
+                SetUIState("idle", "Ready");
+                return true;
+            }
 
-        try
-        {
-            answer = await CompleteCodeArtifactIfNeededAsync(answer, modelUserText, working, toolSystemPrompt,
-                model, temperature, maxTokens, contextTokens, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Keep what we have rather than replacing the answer with the error.
-            AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
-        }
-
-        var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(answer);
-        var cleaned = CleanDisplayText(answer, preserveCodeBlocks: isCodeResponse);
-        if (string.IsNullOrWhiteSpace(cleaned))
-        {
-            assistantMessage.Body.Text = "";
-            AddSystemMessage("The model returned an empty answer.");
-            SetUIState("idle", "Ready");
+            SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
+            _history.Add("assistant", cleaned);
+            if (!FinishStreamingSpeech(speech, turn.Content, answer))
+                SpeakLastResponse(cleaned, assistantMessage);
             return true;
         }
-
-        SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
-        _history.Add("assistant", cleaned);
-        SpeakLastResponse(cleaned, assistantMessage);
-        return true;
     }
 
     private static bool IsTool(string? name, string toolName) =>
