@@ -248,7 +248,7 @@ public partial class MainWindow
             ? ""
             : $"\nGoogle Drive copy: {syncedVideoPath}";
 
-        return $"{result.WorkflowName} finished.\nPrompt: {result.Prompt}\nLength: {result.Seconds} seconds at {result.Fps} FPS\nSaved: {result.LocalPath}{syncedLine}";
+        return $"{result.WorkflowName} finished.\nPrompt: {result.Prompt}\nLength: {DescribeVideoLength(result)}\nSaved: {result.LocalPath}{syncedLine}";
     }
 
     private static string BuildGeneratedVideoHistoryText(GeneratedVideoResult result, string syncedVideoPath = "")
@@ -257,7 +257,16 @@ public partial class MainWindow
             ? ""
             : $"\nGoogle Drive copy: {syncedVideoPath}";
 
-        return $"{result.WorkflowName} generated a video.\nPrompt: {result.Prompt}\nLength: {result.Seconds} seconds at {result.Fps} FPS\nLocal file: {result.LocalPath}{syncedLine}\nRemote file: {result.RemoteFileName}";
+        return $"{result.WorkflowName} generated a video.\nPrompt: {result.Prompt}\nLength: {DescribeVideoLength(result)}\nLocal file: {result.LocalPath}{syncedLine}\nRemote file: {result.RemoteFileName}";
+    }
+
+    // The real length: frames are capped, so a long request at a high frame rate comes out shorter.
+    private static string DescribeVideoLength(GeneratedVideoResult result)
+    {
+        var length = $"{result.Seconds} seconds at {result.Fps} FPS ({result.Frames} frames, {result.Width}x{result.Height})";
+        return result.RequestedSeconds > result.Seconds
+            ? $"{length}. {result.RequestedSeconds} seconds were requested; videos are limited to {LtxVideoSizing.MaxSeconds} seconds and {LtxVideoSizing.MaxFrames} frames"
+            : length;
     }
 
     private static Task<string> CopyVideoToSyncedDirectoryAsync(string videoPath, CancellationToken ct)

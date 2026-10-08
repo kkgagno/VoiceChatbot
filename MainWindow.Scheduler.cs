@@ -53,18 +53,28 @@ public partial class MainWindow
         _schedulerWindow?.RefreshTasks();
     }
 
+    // Load problems and catch-up decisions are reported once, after startup has finished.
+    private bool _schedulerStartupReported;
+
     private async Task RunDueScheduledTasksAsync()
     {
         if (_schedulerRunning)
             return;
+
+        // The timer starts before MainWindow_Loaded has restored settings and loaded the model
+        // list; a run now would fail on an empty model selection.
+        if (_applyingSettings)
+            return;
+
+        ReportSchedulerStartupNotices();
 
         if (SendBtn?.IsEnabled != true)
             return;
 
         var now = DateTime.Now;
         var due = _schedulerStore.Tasks
-            .Where(t => t.IsEnabled && t.NextRunAt <= now && !string.IsNullOrWhiteSpace(t.Prompt))
-            .OrderBy(t => t.NextRunAt)
+            .Where(t => t.IsEnabled && ScheduleMath.IsDue(t.NextRunAt, t.RetryAt, now) && !string.IsNullOrWhiteSpace(t.Prompt))
+            .OrderBy(t => t.RetryAt ?? t.NextRunAt)
             .ToList();
 
         if (due.Count == 0)
@@ -80,6 +90,18 @@ public partial class MainWindow
         {
             _schedulerRunning = false;
         }
+    }
+
+    private void ReportSchedulerStartupNotices()
+    {
+        if (_schedulerStartupReported)
+            return;
+
+        _schedulerStartupReported = true;
+        if (!string.IsNullOrWhiteSpace(_schedulerStore.LoadError))
+            AddSystemMessage(_schedulerStore.LoadError);
+        foreach (var notice in _schedulerStore.TakeStartupNotices())
+            AddSystemMessage($"Scheduler: {notice}");
     }
 
     private async Task RunScheduledTaskNowAsync(ScheduledPromptTask task)
@@ -115,28 +137,47 @@ public partial class MainWindow
         _schedulerStore.Save();
         _schedulerWindow?.RefreshTasks();
 
+        var succeeded = false;
         try
         {
             var result = await ExecuteScheduledPromptAsync(task.Prompt, ct);
             run.ResponseText = result.Text;
             run.AudioPath = result.AudioPath;
+            succeeded = true;
             task.LastStatus = "Completed";
             if (task.ShowInMainChat)
                 await AddScheduledRunToMainChatAsync(task, run);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!succeeded)
         {
             run.Error = ex.Message;
             task.LastStatus = $"Error: {ex.Message}";
-            if (task.ShowInMainChat)
+            // A failing scheduled run is retried with back-off; only the first failure of a
+            // streak is posted to the main chat.
+            if (task.ShowInMainChat && (!advanceSchedule || task.ConsecutiveFailures == 0))
                 await AddScheduledRunToMainChatAsync(task, run);
+        }
+        catch (Exception ex)
+        {
+            // The answer was produced; only posting it to the main chat failed. Keep the result.
+            task.LastStatus = $"Completed, but it could not be shown in the main chat: {ex.Message}";
         }
         finally
         {
-            run.CompletedAt = DateTime.Now;
-            _schedulerStore.AddRun(task, run);
-            if (advanceSchedule)
-                SchedulerStore.AdvanceAfterRun(task, DateTime.Now);
+            var finishedAt = DateTime.Now;
+            run.CompletedAt = finishedAt;
+            if (advanceSchedule && !succeeded)
+            {
+                // Keep the slot (and keep a Once task enabled) and retry on a later tick.
+                _schedulerStore.RecordFailedAttempt(task, run, finishedAt);
+            }
+            else
+            {
+                _schedulerStore.AddRun(task, run);
+                if (advanceSchedule)
+                    SchedulerStore.AdvanceAfterRun(task, finishedAt);
+            }
+
             _schedulerStore.Save();
             _schedulerWindow?.RefreshTasks();
         }
