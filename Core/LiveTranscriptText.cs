@@ -24,6 +24,12 @@ public static class LiveTranscriptText
             : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
     }
 
+    /// <summary>
+    /// One transcribed chunk as the transcript shows it: sentences Whisper repeated are removed and whitespace is
+    /// collapsed to single spaces. Used by the desktop Live Transcriber and the web transcriber's chunk endpoint.
+    /// </summary>
+    public static string CleanChunk(string? text) => CollapseWhitespace(TranscriptCleanup.CollapseRepeatedSentences(text));
+
     /// <summary>"[mm:ss] text" for one transcribed chunk, or "" for blank text.</summary>
     public static string FormatLine(TimeSpan elapsed, string? text)
     {

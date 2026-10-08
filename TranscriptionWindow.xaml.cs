@@ -638,7 +638,7 @@ public partial class TranscriptionWindow : Window
             _chunkLock.Release();
         }
 
-        var line = LiveTranscriptText.FormatLine(item.At, TranscriptCleanup.CollapseRepeatedSentences(text));
+        var line = LiveTranscriptText.FormatLine(item.At, LiveTranscriptText.CleanChunk(text));
         if (line.Length == 0)
             return;
 

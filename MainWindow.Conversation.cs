@@ -93,11 +93,24 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Sends one transcriber request (a summary, a part of a long transcript, combining parts, or a live-notes
-    /// update; see TranscriptSummaryPrompts) to the chat model and returns the reply as plain text. Runs on the
-    /// UI thread. Only a finished manual summary is announced in the chat, not every live-notes update.
+    /// The desktop Live Transcriber's summary callback: <see cref="RequestTranscriptSummaryAsync"/>, plus a chat
+    /// note when a manual summary is finished (not for every live-notes update). Runs on the UI thread.
     /// </summary>
     private async Task<string> SummarizeLiveTranscriptAsync(TranscriptSummaryRequest request, string systemPrompt, CancellationToken ct)
+    {
+        var cleaned = await RequestTranscriptSummaryAsync(request, systemPrompt, ct);
+        if (!string.IsNullOrWhiteSpace(cleaned) && request.IsFinal && request.Kind != TranscriptSummaryKind.LiveNotes)
+            AddSystemMessage("Live transcript summary updated. Main chat has the latest transcription context.");
+
+        return cleaned;
+    }
+
+    /// <summary>
+    /// Sends one transcriber request (a summary, a part of a long transcript, combining parts, or a live-notes
+    /// update; see TranscriptSummaryPrompts) to the chat model and returns the reply as plain text. Used by the
+    /// desktop Live Transcriber and the web transcriber. Runs on the UI thread (it reads the model picker).
+    /// </summary>
+    private async Task<string> RequestTranscriptSummaryAsync(TranscriptSummaryRequest request, string systemPrompt, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ModelCombo.Text))
             throw new InvalidOperationException("Select a model first.");
@@ -119,11 +132,7 @@ public partial class MainWindow
             _settings.MaxTokens,
             ct);
 
-        var cleaned = MarkdownText.ToPlainText(CleanDisplayText(summary, hidePlanningNotes: false));
-        if (!string.IsNullOrWhiteSpace(cleaned) && request.IsFinal && request.Kind != TranscriptSummaryKind.LiveNotes)
-            AddSystemMessage("Live transcript summary updated. Main chat has the latest transcription context.");
-
-        return cleaned;
+        return MarkdownText.ToPlainText(CleanDisplayText(summary, hidePlanningNotes: false));
     }
 
     private void OnLiveTranscriptionContextUpdated(string transcript, string summary)
@@ -141,23 +150,34 @@ public partial class MainWindow
         OnLiveTranscriptionContextUpdated(transcript, summary);
         ShowFromTray();
 
-        var words = LiveTranscriptText.CountWords(transcript);
-        var parts = new List<string>();
-        if (words > 0)
-            parts.Add(words == 1 ? "1 word of transcript" : $"{words:N0} words of transcript");
-        if (!string.IsNullOrWhiteSpace(summary))
-            parts.Add("the summary");
-        var note = transcript.Trim().Length > LiveTranscriptContextChars
-            ? $" The chat sees the last {LiveTranscriptContextChars:N0} characters of the transcript" +
-              (string.IsNullOrWhiteSpace(summary) ? "; summarize it first to cover all of it." : " plus the summary.")
-            : "";
-        AddSystemMessage($"Live transcript added to the chat context ({string.Join(" and ", parts)}).{note} Ask about it below.");
+        AddSystemMessage($"Live transcript added to the chat context {DescribeTranscriptContext(transcript, summary, "summary")} Ask about it below.");
 
         // Keep a draft the user already typed.
         if (string.IsNullOrWhiteSpace(MessageInput.Text))
             MessageInput.Text = "Using the transcript, ";
         MessageInput.Focus();
         MessageInput.CaretIndex = MessageInput.Text.Length;
+    }
+
+    /// <summary>
+    /// "(1,234 words of transcript and the summary)." plus a note when the chat sees only the end of a long
+    /// transcript. <paramref name="summaryName"/> is what the transcriber calls its summary ("summary", "notes").
+    /// </summary>
+    private static string DescribeTranscriptContext(string transcript, string summary, string summaryName)
+    {
+        var words = LiveTranscriptText.CountWords(transcript);
+        var parts = new List<string>();
+        if (words > 0)
+            parts.Add(words == 1 ? "1 word of transcript" : $"{words:N0} words of transcript");
+        if (!string.IsNullOrWhiteSpace(summary))
+            parts.Add($"the {summaryName}");
+        if (parts.Count == 0)
+            parts.Add("the transcript");
+        var note = transcript.Trim().Length > LiveTranscriptContextChars
+            ? $" The chat sees the last {LiveTranscriptContextChars:N0} characters of the transcript" +
+              (string.IsNullOrWhiteSpace(summary) ? "; summarize it first to cover all of it." : $" plus the {summaryName}.")
+            : "";
+        return $"({string.Join(" and ", parts)}).{note}";
     }
 
     private async void SummarizeConversation_Click(object sender, RoutedEventArgs e)

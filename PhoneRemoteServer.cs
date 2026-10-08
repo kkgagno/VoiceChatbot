@@ -22,7 +22,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace VoiceChatbot;
 
-public sealed class PhoneRemoteServer : IAsyncDisposable
+public sealed partial class PhoneRemoteServer : IAsyncDisposable
 {
     public const string PinHeader = "X-Phone-Remote-Pin";
     private const string AuthorizedItem = "PhoneRemoteAuthorized";
@@ -51,12 +51,14 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         Func<Stream, CancellationToken, Task<string>> transcribeAsync,
         Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> chatAsync,
         Func<string, CancellationToken, Task<DocumentTextResult>> extractDocumentAsync,
-        Func<PhoneRemoteModelState>? modelStateProvider = null)
+        Func<PhoneRemoteModelState>? modelStateProvider = null,
+        PhoneRemoteTranscriberHooks? transcriber = null)
     {
         _transcribeAsync = transcribeAsync;
         _chatAsync = chatAsync;
         _extractDocumentAsync = extractDocumentAsync;
         _modelStateProvider = modelStateProvider ?? (() => new PhoneRemoteModelState("", "", ""));
+        _transcriber = transcriber;
     }
 
     public bool IsRunning => _app != null;
@@ -137,6 +139,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
         var app = _app;
         _app = null;
+        // Summaries the web transcriber started would otherwise keep the chat model busy.
+        _summaryJobs.CancelAll();
         // ConfigureAwait(false): callers on the UI thread may block on this during shutdown.
         try
         {
@@ -151,6 +155,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     {
         app.Use(AuthorizeRequestAsync);
         app.MapGet("/", () => Results.Content(BuildPhonePage(), "text/html; charset=utf-8"));
+        MapTranscriberRoutes(app);
         app.MapGet("/api/status", (HttpRequest request) =>
         {
             // Without a PIN the page only learns that one is needed; with the right PIN it also gets the model.
@@ -614,12 +619,15 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// The page, and the reply audio, images and videos it shows. Media links carry a random 128-bit id
-    /// that is only handed out in an authenticated response; audio and img tags cannot send the PIN header.
+    /// The pages (the remote and the web transcriber, which contain no data), and the reply audio, images and
+    /// videos the remote shows. Media links carry a random 128-bit id that is only handed out in an
+    /// authenticated response; audio and img tags cannot send the PIN header.
     /// </summary>
     private static bool IsPublicPath(PathString path)
     {
         return path == "/" ||
+               path == WebTranscriber.PagePath ||
+               path == WebTranscriber.PagePath + "/" ||
                path.StartsWithSegments("/audio", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWithSegments("/image", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWithSegments("/video", StringComparison.OrdinalIgnoreCase);
@@ -627,6 +635,10 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
     private static long GetMaxBodyBytes(PathString path)
     {
+        if (path.StartsWithSegments(WebTranscriber.ApiPrefix + "/chunk", StringComparison.OrdinalIgnoreCase))
+            return WebTranscriber.ChunkMaxBodyBytes;
+        if (path.StartsWithSegments(WebTranscriber.ApiPrefix, StringComparison.OrdinalIgnoreCase))
+            return WebTranscriber.TextMaxBodyBytes;
         if (path.StartsWithSegments("/api/message", StringComparison.OrdinalIgnoreCase))
             return UploadMaxBodyBytes;
         if (path.StartsWithSegments("/api/chat", StringComparison.OrdinalIgnoreCase) ||
@@ -710,7 +722,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     html { width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: pan-y; }
     body { width: 100%; overflow-x: hidden; margin: 0; background: #101114; color: #f5f5f5; overscroll-behavior-x: none; }
     main { width: 100%; max-width: 720px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 10px; box-sizing: border-box; }
-    header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
     h1 { font-size: 16px; margin: 0; flex: 1; }
     #status, #modelState { color: #aeb3bd; font-size: 12px; }
     #modelState { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -733,6 +745,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     button { border: 0; border-radius: 7px; color: white; background: #00a884; padding: 8px 10px; font-weight: 700; font-size: 13px; line-height: 1.1; }
     button:disabled { opacity: .5; }
     #modelHelp { background: #2d3436; padding: 7px 9px; white-space: nowrap; }
+    #openTranscriber { color: white; background: #6c5ce7; border-radius: 7px; padding: 7px 9px; font-weight: 700; font-size: 13px; line-height: 1.1; text-decoration: none; white-space: nowrap; }
     .commandHelp { align-self: stretch; background: #181a20; border: 1px solid #373b45; }
     .commandTitle { color: #d7dae0; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
     .commandList { display: grid; gap: 6px; }
@@ -756,7 +769,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 </head>
 <body>
 <main>
-  <header><h1>Voice Chatbot</h1><button id="modelHelp" type="button">Model Help</button><span id="modelState"></span><span id="status">Ready</span></header>
+  <header><h1>Voice Chatbot</h1><a id="openTranscriber" href="/transcribe" title="Live transcript with notes, from this device's microphone or a browser tab">Transcribe</a><button id="modelHelp" type="button">Model Help</button><span id="modelState"></span><span id="status">Ready</span></header>
   <div id="chat"></div>
   <div class="controls">
     <button id="talk">Hold to Talk</button>
@@ -841,6 +854,7 @@ const longSilenceToSendMs = 5500;
 const normalMaxClipMs = 300000;
 const longMaxClipMs = 1200000;
 const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+// Shared with the Transcribe page (PhoneRemotePin.BrowserStorageKey), so a PIN entered on one page works on both.
 const pinStorageKey = 'voicechatbot-remote-pin';
 const pinHelp = 'Enter the PIN shown in the desktop app under Settings > Phone Remote.';
 

@@ -124,7 +124,11 @@ public partial class MainWindow : Window
             (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
-            GetPhoneRemoteModelState);
+            GetPhoneRemoteModelState,
+            new PhoneRemoteTranscriberHooks(
+                SummarizeWebTranscriptAsync,
+                SendWebTranscriptToChatAsync,
+                TranscriptionWindow.TranscriptsFolder));
         _faceIdentityManager = new FaceIdentityManager(
             FaceServiceFactory.CreateProfileStore(_settings.FaceFeatures.ModelOptions),
             _settings.FaceFeatures.ModelOptions);

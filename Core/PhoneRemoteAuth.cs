@@ -13,6 +13,12 @@ public static class PhoneRemotePin
     public const int MinLength = 4;
     public const int MaxLength = 64;
 
+    /// <summary>
+    /// The browser localStorage key under which the remote's pages (/ and /transcribe) remember the PIN, so a PIN
+    /// entered on one page works on the other. The main page in PhoneRemoteServer.BuildPhonePage spells it out.
+    /// </summary>
+    public const string BrowserStorageKey = "voicechatbot-remote-pin";
+
     /// <summary>A random 6-digit PIN from the cryptographic random number generator ("000000"-"999999").</summary>
     public static string Generate() =>
         RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);

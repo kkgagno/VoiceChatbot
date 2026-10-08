@@ -56,6 +56,8 @@ public partial class SpeechEngine : IDisposable
     private DateTime _kokoroServerRetryAfterUtc = DateTime.MinValue;
     private string _remoteKokoroFailedUrl = "";
     private readonly SemaphoreSlim _whisperLock = new(1, 1);
+    // One Ryzen AI (NPU) command at a time: the NPU is not shared well between processes.
+    private readonly SemaphoreSlim _ryzenLock = new(1, 1);
     private bool _isRecording;
     private bool _isProcessing;
 
@@ -762,6 +764,12 @@ public partial class SpeechEngine : IDisposable
         PlayWavOnThread(filePath, deleteAfterPlayback: false);
     }
 
+    /// <summary>
+    /// Transcribes one WAV clip. Safe to call from several places at once (voice input, the Live Transcriber,
+    /// the phone remote and the web transcriber): Whisper.net runs one clip at a time under its lock and the
+    /// Ryzen AI command one at a time under its own, so concurrent callers wait their turn instead of sharing
+    /// the model.
+    /// </summary>
     public async Task<string> TranscribeWavAsync(Stream wavStream, CancellationToken ct = default)
     {
         if (IsRyzenAiSelected())
@@ -775,7 +783,17 @@ public partial class SpeechEngine : IDisposable
             {
                 try
                 {
-                    var external = await TranscribeWithRyzenAiAsync(wavStream, ct).ConfigureAwait(false);
+                    string external;
+                    await _ryzenLock.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        external = await TranscribeWithRyzenAiAsync(wavStream, ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _ryzenLock.Release();
+                    }
+
                     if (!string.IsNullOrWhiteSpace(external))
                     {
                         LastTranscriptionBackendUsed = "AMD Ryzen AI Whisper";

@@ -174,7 +174,7 @@ public partial class MainWindow
                 throw new TimeoutException("Phone remote startup timed out. Check whether the HTTPS port is already in use or Windows is blocking the listener.");
             }
             UpdatePhoneRemoteUi();
-            AddSystemMessage($"Phone remote started: {_phoneRemoteServer.Url}");
+            AddSystemMessage($"Phone remote started: {_phoneRemoteServer.Url} (web transcriber: {_phoneRemoteServer.Url.TrimEnd('/')}{WebTranscriber.PagePath})");
             if (!string.IsNullOrWhiteSpace(_phoneRemoteServer.CertificateExportPath))
                 AddSystemMessage($"iPhone certificate: {_phoneRemoteServer.CertificateExportPath}");
         }
@@ -634,6 +634,36 @@ public partial class MainWindow
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
+    }
+
+    // ==================== Web transcriber (the remote's /transcribe page) ====================
+
+    /// <summary>
+    /// The web transcriber's summary and live-notes requests: run on the UI thread like the desktop
+    /// transcriber's, with its system message, but not announced in the chat (the chat only gets the
+    /// transcript as context when the page sends it with Send to chat). Called on a Kestrel thread.
+    /// </summary>
+    private Task<string> SummarizeWebTranscriptAsync(TranscriptSummaryRequest request, CancellationToken ct) =>
+        Dispatcher.InvokeAsync(() => RequestTranscriptSummaryAsync(request, _settings.Transcriber.SystemPrompt, ct)).Task.Unwrap();
+
+    /// <summary>
+    /// The web transcriber's Send to chat: the transcript and notes become the transcription context of the
+    /// desktop chat and the phone remote chat. Returns the message the page shows. Called on a Kestrel thread.
+    /// </summary>
+    private async Task<string> SendWebTranscriptToChatAsync(string transcript, string notes)
+    {
+        var message = "";
+        await Dispatcher.InvokeAsync(() =>
+        {
+            OnLiveTranscriptionContextUpdated(transcript, notes);
+            var context = DescribeTranscriptContext(transcript, notes, "notes");
+            var desktopWindow = _transcriptionWindow != null
+                ? " The desktop Transcribe window is open too: its next change replaces this context."
+                : "";
+            AddSystemMessage($"Web transcriber: transcript added to the chat context {context}{desktopWindow} Ask about it here or in the phone remote.");
+            message = $"Sent to the chat on the PC {context}{desktopWindow} Ask about it in the desktop chat or the remote.";
+        });
+        return message;
     }
 
     // True while a phone request has set the shared busy state (Send disabled). UI thread only.
