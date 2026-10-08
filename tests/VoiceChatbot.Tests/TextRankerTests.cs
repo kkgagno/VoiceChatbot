@@ -124,4 +124,32 @@ public class TextRankerTests
             ranker.Rank("garden roses").Select(r => r.Index),
             ranker.Rank("garden garden garden roses").Select(r => r.Index));
     }
+
+    [Fact]
+    public void Coverage_WeighsMatchedQueryWordsByRarity()
+    {
+        var ranker = new TextRanker(new[] { "solar panels on the roof", "roof repair quote", "garden tools" });
+
+        Assert.Equal(1, ranker.Coverage("solar roof", 0), 6);
+        Assert.Equal(0, ranker.Coverage("solar roof", 2), 6);
+        // "roof" is in two documents and "solar" in one, so matching only "roof" is less than half.
+        Assert.InRange(ranker.Coverage("solar roof", 1), 0.01, 0.49);
+        // A word the corpus never uses weighs as much as its rarest word.
+        Assert.Equal(0.5, ranker.Coverage("solar joke", 0), 6);
+        Assert.True(ranker.Coverage("solar joke comedy", 0) < 0.4);
+        Assert.Equal(0, ranker.Coverage("", 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ranker.Coverage("solar", 3));
+    }
+
+    [Fact]
+    public void Rank_ReportsCoverage()
+    {
+        var ranker = new TextRanker(new[] { "solar panels on the roof", "roof repair quote" });
+
+        var results = ranker.Rank("solar roof");
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal(ranker.Coverage("solar roof", r.Index), r.Coverage, 6));
+        Assert.Equal(new[] { 2, 1 }, results.Select(r => r.MatchedTerms));
+    }
 }

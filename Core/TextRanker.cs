@@ -5,11 +5,15 @@ using System.Text;
 
 namespace VoiceChatbot;
 
-/// <summary>One scored document from <see cref="TextRanker.Rank"/>; Index is its position in the input list.</summary>
-public readonly record struct RankedDocument(int Index, double Score);
+/// <summary>
+/// One scored document from <see cref="TextRanker.Rank"/>; Index is its position in the input list,
+/// Coverage is <see cref="TextRanker.Coverage"/> for the same query and MatchedTerms the number of
+/// distinct query words it contains.
+/// </summary>
+public readonly record struct RankedDocument(int Index, double Score, double Coverage = 0, int MatchedTerms = 0);
 
 /// <summary>
-/// Small in-memory BM25 keyword ranker for short lists of documents (memories, notes, chat titles).
+/// Small in-memory BM25 keyword ranker for document lists (memories, notes, knowledge-folder chunks).
 /// Text is lowercased, split on anything that is not a letter or digit, English stopwords are
 /// dropped and words get a light suffix stemming so "batteries"/"battery" or "coding"/"code" match.
 /// Build it once per document list; ranking is cheap and thread-safe after construction.
@@ -32,12 +36,25 @@ public sealed class TextRanker
         _k1 = k1;
         _b = b;
 
+        // One string instance per distinct word, shared by all documents: a large corpus (thousands of
+        // knowledge-folder chunks) repeats the same words over and over.
+        var words = new HashSet<string>(StringComparer.Ordinal);
         foreach (var document in documents ?? Enumerable.Empty<string?>())
         {
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             var tokens = Tokenize(document);
             foreach (var token in tokens)
-                counts[token] = counts.TryGetValue(token, out var n) ? n + 1 : 1;
+            {
+                if (!words.TryGetValue(token, out var word))
+                {
+                    words.Add(token);
+                    word = token;
+                }
+
+                counts[word] = counts.TryGetValue(word, out var n) ? n + 1 : 1;
+            }
+
+            counts.TrimExcess();
 
             foreach (var term in counts.Keys)
                 _documentFrequency[term] = _documentFrequency.TryGetValue(term, out var df) ? df + 1 : 1;
@@ -61,6 +78,21 @@ public sealed class TextRanker
     }
 
     /// <summary>
+    /// Share (0..1) of the query's idf weight that the document contains, ignoring how often each
+    /// word occurs. A query word the corpus never uses weighs as much as the rarest word in it, so
+    /// "a joke about solar panels" only partly matches a document about solar panels. Unlike a raw
+    /// BM25 score this is comparable across queries and corpus sizes, so it works as a relevance cut-off.
+    /// </summary>
+    public double Coverage(string? query, int index)
+    {
+        if (index < 0 || index >= Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        var terms = QueryTerms(query);
+        return CoverageOfTerms(terms, QueryWeight(terms), index).Coverage;
+    }
+
+    /// <summary>
     /// Documents that match at least one query term, best first. Equal scores keep input order.
     /// </summary>
     public IReadOnlyList<RankedDocument> Rank(string? query, int top = int.MaxValue)
@@ -69,12 +101,16 @@ public sealed class TextRanker
         if (terms.Count == 0 || Count == 0 || top <= 0)
             return Array.Empty<RankedDocument>();
 
+        var queryWeight = QueryWeight(terms);
         var results = new List<RankedDocument>();
         for (var i = 0; i < Count; i++)
         {
             var score = ScoreTerms(terms, i);
-            if (score > 0)
-                results.Add(new RankedDocument(i, score));
+            if (score <= 0)
+                continue;
+
+            var (coverage, matchedTerms) = CoverageOfTerms(terms, queryWeight, i);
+            results.Add(new RankedDocument(i, score, coverage, matchedTerms));
         }
 
         return results
@@ -103,6 +139,33 @@ public sealed class TextRanker
         }
 
         return score;
+    }
+
+    private double QueryWeight(IEnumerable<string> terms) => terms.Sum(CoverageWeight);
+
+    private (double Coverage, int MatchedTerms) CoverageOfTerms(IEnumerable<string> terms, double queryWeight, int index)
+    {
+        var counts = _termCounts[index];
+        double matched = 0;
+        var matchedTerms = 0;
+        foreach (var term in terms)
+        {
+            if (!counts.ContainsKey(term))
+                continue;
+
+            matched += CoverageWeight(term);
+            matchedTerms++;
+        }
+
+        return (queryWeight > 0 ? Math.Min(1, matched / queryWeight) : 0, matchedTerms);
+    }
+
+    // Idf, except that a word no document contains counts as if one did: missing a word the corpus
+    // never uses should not weigh much more than missing its rarest word, or small corpora match nothing.
+    private double CoverageWeight(string term)
+    {
+        var df = _documentFrequency.TryGetValue(term, out var n) ? n : 0;
+        return Math.Log(1 + (Count - Math.Max(df, 1) + 0.5) / (Math.Max(df, 1) + 0.5));
     }
 
     // BM25+ style idf that never goes negative, so a word found in every document still counts a little.

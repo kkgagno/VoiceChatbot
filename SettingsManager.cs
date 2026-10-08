@@ -58,6 +58,11 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    // Knowledge folder: the documents in KnowledgeFolder are indexed into %APPDATA%\VoiceChatbot\knowledge-index.json;
+    // while KnowledgeEnabled is on, up to KnowledgeMaxChunks matching excerpts go with each message.
+    public bool KnowledgeEnabled { get; set; } = false;
+    public string KnowledgeFolder { get; set; } = "";
+    public int KnowledgeMaxChunks { get; set; } = KnowledgeIndex.DefaultMaxChunks;
     // Saved memories in the system prompt: "Relevant" = best matches for the message (up to
     // MemoryMaxItems) plus the newest memory, "All" = every saved memory.
     public string MemoryMode { get; set; } = MemorySelector.ModeRelevant;

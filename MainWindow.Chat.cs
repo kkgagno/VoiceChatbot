@@ -778,6 +778,7 @@ public partial class MainWindow
                 }
             }
 
+            await AddKnowledgeContextAsync(messagesForModel, userText, _chatCts.Token);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);

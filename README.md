@@ -129,6 +129,16 @@ Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\
 
 The hint under the setting shows how many memories the last message used. The settings are saved as `MemoryMode` and `MemoryMaxItems` in `settings.json`.
 
+### Knowledge folder
+
+The assistant can answer from your own documents. Open **Knowledge Folder** in the sidebar, click **Browse** (or type a path and press Enter) and turn on **Use my documents**.
+
+- PDF, Word (`.docx`), `.txt`, `.md`, `.csv`, `.json`, `.xml` and `.log` files are read, including subfolders. Files over 25 MB, hidden files and Office lock files are skipped. Scanned PDFs need the same OCR tools as attached documents (Poppler and Tesseract).
+- Indexing runs in the background. The status line shows progress, then the number of files and chunks and when the folder was last indexed. Hover it to see files that could not be read. While indexing, the button reads **Stop**.
+- While it is on, the folder is checked again a few seconds after the app starts and whenever you change it, and only new or changed files are read again. **Reindex** does the same now and also retries files that could not be read before (for example after installing OCR).
+- For each message, desktop or phone remote, the best-matching passages (up to **Excerpts per message**, default 4, about 900 characters each) are added to that request only, and the chat shows a note such as *Using 3 excerpts from: lease.pdf, car.md*. Matching is keyword based, like memories: a message has to share its main words with a passage, so small talk and general questions are not affected. File and subfolder names count as words too.
+- The index is stored in `%APPDATA%\VoiceChatbot\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
+
 ## Optional integrations
 
 ### Web search

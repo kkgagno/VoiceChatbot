@@ -485,6 +485,51 @@
                             </StackPanel>
                         </Expander>
 
+                        <!-- ================= Knowledge folder ================= -->
+                        <Expander Header="Knowledge Folder" local:Ui.Icon="&#xE8B7;" local:Ui.Subtitle="Answer from your own documents">
+                            <StackPanel>
+                                <ToggleButton x:Name="KnowledgeToggle" Content="Use my documents" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="KnowledgeToggle_Click"
+                                              ToolTip="Search the folder for passages that match each message and send the best ones to the model"/>
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Folder" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="KnowledgeFolderBox" local:Ui.Placeholder="C:\Users\you\Documents\Notes"
+                                                 LostFocus="KnowledgeFolderBox_LostFocus" KeyDown="KnowledgeFolderBox_KeyDown"
+                                                 ToolTip="Folder with your documents. Subfolders are included. Press Enter or click Browse to use it."/>
+                                        <Button x:Name="KnowledgeBrowseBtn" Grid.Column="1" Content="Browse" local:Ui.Icon="&#xE838;"
+                                                Style="{StaticResource SecondaryButton}" Margin="6,0,0,0"
+                                                Click="KnowledgeBrowse_Click" ToolTip="Pick the folder"/>
+                                    </Grid>
+                                </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Excerpts per message" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="KnowledgeMaxChunksValue" Grid.Column="1" Text="4" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="KnowledgeMaxChunksSlider" Minimum="1" Maximum="10" Value="4" SmallChange="1" LargeChange="2"
+                                        IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,10"
+                                        ValueChanged="KnowledgeMaxChunksSlider_ValueChanged"
+                                        ToolTip="Most excerpts (about 900 characters each) added to one message"/>
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                    <TextBlock x:Name="KnowledgeStatusText" Text="Off. Turn on to let answers use your documents."
+                                               FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                </Border>
+                                <Button x:Name="KnowledgeReindexBtn" Content="Reindex" local:Ui.Icon="&#xE72C;"
+                                        Style="{StaticResource SecondaryButton}" Click="KnowledgeReindex_Click" Margin="0,0,0,8"
+                                        ToolTip="Read new and changed files now, and retry files that could not be read"/>
+                                <TextBlock Style="{StaticResource FieldHint}"
+                                           Text="Reads PDF, Word (.docx), text, Markdown, CSV, JSON, XML and log files, including subfolders. Files over 25 MB are skipped. Only the few passages that match your message are sent with it, and the chat shows which files were used."/>
+                            </StackPanel>
+                        </Expander>
+
                         <!-- ================= Web search ================= -->
                         <Expander Header="Web Search" local:Ui.Icon="&#xE774;" local:Ui.Subtitle="Tavily live search">
                             <StackPanel>

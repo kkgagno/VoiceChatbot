@@ -272,6 +272,7 @@ public partial class MainWindow : Window
         UpdateKokoroHint();
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
+        ApplyKnowledgeSettings();
         ApplyMemoryPromptSettings();
         ApplyConversationHistorySettings();
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
@@ -387,6 +388,7 @@ public partial class MainWindow : Window
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
+        SaveKnowledgeSettings();
         SaveMemoryPromptSettings();
         SaveConversationHistorySettings();
         _settings.WebSearchEnabled = WebSearchToggle.IsChecked == true;
@@ -769,6 +771,7 @@ public partial class MainWindow : Window
             _schedulerTimer?.Stop();
             _schedulerStore.Save();
             _chatCts?.Cancel();
+            CancelKnowledgeIndexing();
             await FlushConversationHistoryAsync(TimeSpan.FromSeconds(3));
 
             var shutdown = Task.WhenAll(

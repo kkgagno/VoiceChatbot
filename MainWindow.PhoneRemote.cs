@@ -853,6 +853,7 @@ public partial class MainWindow
                 }
             }
 
+            await AddKnowledgeContextAsync(messagesForModel, userText, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, phoneDocumentContext);
 
             var phoneContextTokens = await GetContextTokensForRequestAsync(model, ct);
