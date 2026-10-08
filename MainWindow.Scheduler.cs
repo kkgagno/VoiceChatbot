@@ -61,14 +61,15 @@ public partial class MainWindow
         if (_schedulerRunning)
             return;
 
-        // The timer starts before MainWindow_Loaded has restored settings and loaded the model
-        // list; a run now would fail on an empty model selection.
+        // The timer starts after MainWindow_Loaded has restored settings and loaded the model list;
+        // keep the guard for a settings reload.
         if (_applyingSettings)
             return;
 
         ReportSchedulerStartupNotices();
 
-        if (SendBtn?.IsEnabled != true)
+        // A turn is in progress: the due task stays due and runs on a later tick.
+        if (SendBtn?.IsEnabled != true || _chatCts != null)
             return;
 
         var now = DateTime.Now;
@@ -80,7 +81,9 @@ public partial class MainWindow
         if (due.Count == 0)
             return;
 
+        // Hold the busy state so a chat cannot run on the shared history meanwhile.
         _schedulerRunning = true;
+        SetUIState("processing", "Running scheduled task...");
         try
         {
             foreach (var task in due)
@@ -100,6 +103,7 @@ public partial class MainWindow
         finally
         {
             _schedulerRunning = false;
+            SetUIState("idle", "Ready");
         }
     }
 
@@ -123,6 +127,7 @@ public partial class MainWindow
             throw new InvalidOperationException("The app is busy. Try again after the current response finishes.");
 
         _schedulerRunning = true;
+        SetUIState("processing", "Running scheduled task...");
         try
         {
             await ExecuteAndStoreScheduledTaskAsync(task, CancellationToken.None, advanceSchedule: false);
@@ -130,6 +135,7 @@ public partial class MainWindow
         finally
         {
             _schedulerRunning = false;
+            SetUIState("idle", "Ready");
         }
     }
 

@@ -395,58 +395,38 @@ public partial class MainWindow
     // Speak the last assistant response
     private void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
     {
-        if (!string.IsNullOrWhiteSpace(text) && TtsToggle.IsChecked == true)
+        // Stop/Esc/Clear Chat during the turn: the reply may still arrive, but it is not spoken.
+        if (!string.IsNullOrWhiteSpace(text) && TtsToggle.IsChecked == true && !IsCurrentTurnCancelled)
         {
+            SpeechSession? session = null;
             try
             {
                 var speechText = CleanSpeechText(text);
-                if (string.IsNullOrWhiteSpace(speechText))
+                if (!string.IsNullOrWhiteSpace(speechText))
                 {
-                    SetUIState("idle", "Ready");
-                    _speech.ReadyForNextSpeech();
+                    // Speak sentence by sentence so playback starts after the first sentence is rendered.
+                    // The Replay/Download buttons appear once the whole reply has been spoken and saved.
+                    // Split first: an exception after BeginSpeechSession would leave a session that never completes.
+                    var sentences = SentenceChunker.Split(speechText);
+                    session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
+                    AddAudioButtonsWhenSpoken(session, assistantMessage);
+                    foreach (var sentence in sentences)
+                        session.Enqueue(sentence);
+                    session.Complete();
+                    // SpeechFinished ends the turn and restarts auto-listen.
                     return;
                 }
-
-                // Speak sentence by sentence so playback starts after the first sentence is rendered.
-                // The Replay/Download buttons appear once the whole reply has been spoken and saved.
-                // Split first: an exception after BeginSpeechSession would leave a session that never completes.
-                var sentences = SentenceChunker.Split(speechText);
-                var session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
-                AddAudioButtonsWhenSpoken(session, assistantMessage);
-                foreach (var sentence in sentences)
-                    session.Enqueue(sentence);
-                session.Complete();
-                // SpeechFinished will restart auto-listen
-                return;
             }
-            catch
+            catch (Exception ex)
             {
-                // Speech failed
+                // Never leave a half-started session playing behind the idle UI.
+                session?.Abandon();
+                AddSystemMessage($"Speech error: {ex.Message}");
             }
         }
-        // No TTS or TTS disabled - mark ready, restart auto-listen if active
-        SetUIState("idle", "Ready");
-        _speech.ReadyForNextSpeech();
 
-        if (_autoListening)
-        {
-            Task.Delay(100).ContinueWith(_ =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    if (_autoListening && !_pausedListeningForTextInput)
-                    {
-                        if (!IsVoiceInputAllowedByFacePolicy())
-                            return;
-
-                        if (_speech.CurrentState == VoiceState.Speaking)
-                            return;
-
-                        _speech.StartListening();
-                    }
-                });
-            });
-        }
+        // Nothing to speak (TTS off, empty text, cancelled turn or a speech error).
+        FinishTurn();
     }
 
     private static string GetAssistantAudioDirectory()

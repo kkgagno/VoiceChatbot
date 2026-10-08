@@ -408,7 +408,8 @@ public partial class MainWindow
 
     private async Task SendHermesAgentMessageAsync(string userText, string hermesPrompt)
     {
-        _chatCts = new CancellationTokenSource();
+        var turnCts = BeginTurnCancellation();
+        var ct = turnCts.Token;
         AssistantMessageUi? assistantMessage = null;
 
         AddUserMessage(userText, new List<string>());
@@ -445,7 +446,7 @@ public partial class MainWindow
             if (approval == HermesApprovalDecision.Approved)
             {
                 AddSystemMessage("Hermes approval received. Running pending SSH command.");
-                using var sshTimeout = CancellationTokenSource.CreateLinkedTokenSource(_chatCts.Token);
+                using var sshTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 sshTimeout.CancelAfter(TimeSpan.FromSeconds(120));
                 var result = await _hermesSsh.RunAsync(command, TimeSpan.FromSeconds(90), sshTimeout.Token);
                 var display = result.ToDisplayText();
@@ -458,12 +459,12 @@ public partial class MainWindow
             else if (TryBuildLlamaModelControlPlan(hermesPrompt, out var modelPlan))
             {
                 AddSystemMessage($"Running direct llama.cpp model control over SSH: {modelPlan.Description}");
-                var display = await RunLlamaModelControlPlanAsync(modelPlan, _chatCts.Token);
+                var display = await RunLlamaModelControlPlanAsync(modelPlan, ct);
                 if (modelPlan.EndpointPort is int endpointPort)
                 {
                     var endpointUrl = SetLlamaEndpointPort(endpointPort);
                     display += $"{Environment.NewLine}{Environment.NewLine}App endpoint set to {endpointUrl}";
-                    var readiness = await WaitForLlamaEndpointReadyAsync(endpointUrl, TimeSpan.FromSeconds(90), _chatCts.Token);
+                    var readiness = await WaitForLlamaEndpointReadyAsync(endpointUrl, TimeSpan.FromSeconds(90), ct);
                     display += $"{Environment.NewLine}{readiness.Message}";
                     if (readiness.Ready && _settings.ChatProvider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase))
                     {
@@ -479,7 +480,7 @@ public partial class MainWindow
             else if (TryGetDirectHermesSshCommand(hermesPrompt, out var directCommand))
             {
                 _hermesApprovals.Stage(hermesPrompt, directCommand, HermesCommandSource.Desktop, DateTime.UtcNow);
-                var staged = await BuildHermesSshApprovalPromptAsync(hermesPrompt, directCommand, _chatCts.Token);
+                var staged = await BuildHermesSshApprovalPromptAsync(hermesPrompt, directCommand, ct);
                 assistantMessage.Body.Text = staged;
                 _history.Add("assistant", staged);
                 SpeakLastResponse(staged, assistantMessage);
@@ -490,7 +491,7 @@ public partial class MainWindow
             var hermesPromptForCli = BuildHermesCliPrompt(hermesPrompt);
             var hermesTimeout = isModelControl ? TimeSpan.FromSeconds(90) : TimeSpan.FromMinutes(3);
             var hermesMaxTurns = isModelControl ? 12 : 12;
-            using var hermesCliTimeout = CancellationTokenSource.CreateLinkedTokenSource(_chatCts.Token);
+            using var hermesCliTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             hermesCliTimeout.CancelAfter(hermesTimeout + TimeSpan.FromSeconds(10));
             var cliResult = await _hermesSsh.RunHermesCliAsync(hermesPromptForCli, hermesTimeout, hermesMaxTurns, hermesCliTimeout.Token);
             var cleaned = CleanDisplayText(cliResult.Stdout);
@@ -511,15 +512,21 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
-            assistantMessage.Body.Text = BuildHermesTimeoutMessage(hermesPrompt);
-            SetUIState("idle", "Ready");
+            assistantMessage.Body.Text = ct.IsCancellationRequested
+                ? "Hermes request cancelled."
+                : BuildHermesTimeoutMessage(hermesPrompt);
+            FinishTurn();
         }
         catch (Exception ex)
         {
             AppLog.Error("Hermes SSH request failed", ex);
             assistantMessage.Body.Text = $"Hermes error: {ex.Message}";
             AddSystemMessage($"Hermes error: {ex.Message}");
-            SetUIState("idle", "Ready");
+            FinishTurn();
+        }
+        finally
+        {
+            EndTurnCancellation(turnCts);
         }
     }
 
@@ -542,7 +549,6 @@ public partial class MainWindow
 
     private async Task SendPiAgentMessageAsync(string userText, string piPrompt, string blockedReason)
     {
-        _chatCts = new CancellationTokenSource();
         AssistantMessageUi? assistantMessage = null;
 
         AddUserMessage(userText, new List<string>());
@@ -556,12 +562,13 @@ public partial class MainWindow
             return;
         }
 
+        var turnCts = BeginTurnCancellation();
         SetUIState("processing", "Asking Pi...");
         AddSystemMessage("Sending read-only request to Pi.");
 
         try
         {
-            var response = await _piAgent.AskAsync(piPrompt, _chatCts.Token);
+            var response = await _piAgent.AskAsync(piPrompt, turnCts.Token);
             var cleaned = CleanDisplayText(response);
             SetAssistantMessageText(assistantMessage, cleaned);
             _history.Add("assistant", $"Pi result:\n{cleaned}");
@@ -570,14 +577,18 @@ public partial class MainWindow
         catch (OperationCanceledException)
         {
             assistantMessage.Body.Text += " [cancelled]";
-            SetUIState("idle", "Ready");
+            FinishTurn();
         }
         catch (Exception ex)
         {
             AppLog.Error("Pi agent request failed", ex);
             assistantMessage.Body.Text = $"Pi error: {ex.Message}";
             AddSystemMessage($"Pi error: {ex.Message}");
-            SetUIState("idle", "Ready");
+            FinishTurn();
+        }
+        finally
+        {
+            EndTurnCancellation(turnCts);
         }
     }
 }

@@ -27,9 +27,12 @@ public partial class MainWindow
     private async Task RunQwenImageCreateAsync(string userText, string prompt)
     {
         if (string.IsNullOrWhiteSpace(prompt))
+        {
+            FinishTurn();
             return;
+        }
 
-        _chatCts = new CancellationTokenSource();
+        var turnCts = BeginTurnCancellation();
         SaveImageSettingsFromUi();
         AddUserMessage(userText);
         _history.Add("user", userText);
@@ -43,7 +46,7 @@ public partial class MainWindow
                 _settings.ImageWidth,
                 _settings.ImageHeight,
                 _settings.QwenCreateSteps,
-                _chatCts.Token);
+                turnCts.Token);
 
             _latestGeneratedImagePath = result.LocalPath;
             assistantMessage.Body.Text = BuildGeneratedImageMessage(result);
@@ -62,14 +65,18 @@ public partial class MainWindow
         }
         finally
         {
-            SetUIState("idle", "Ready");
+            EndTurnCancellation(turnCts);
+            FinishTurn();
         }
     }
 
     private async Task RunQwenImageEditAsync(string userText, string prompt)
     {
         if (string.IsNullOrWhiteSpace(prompt))
+        {
+            FinishTurn();
             return;
+        }
 
         var sourcePaths = GetImageEditSourcePaths();
         if (sourcePaths.Count == 0)
@@ -77,10 +84,11 @@ public partial class MainWindow
             // Keep the request on screen: the input box was already cleared when it was sent.
             AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Edit.");
+            FinishTurn();
             return;
         }
 
-        _chatCts = new CancellationTokenSource();
+        var turnCts = BeginTurnCancellation();
         SaveImageSettingsFromUi();
         AddUserMessage(userText, sourcePaths);
         var sourceNames = string.Join(", ", sourcePaths.Select(Path.GetFileName));
@@ -98,12 +106,12 @@ public partial class MainWindow
                     sourcePaths,
                     prompt,
                     _settings.QwenEditSteps,
-                    _chatCts.Token)
+                    turnCts.Token)
                 : await _comfyImages.EditQwenImageAsync(
                     sourcePaths[0],
                     prompt,
                     _settings.QwenEditSteps,
-                    _chatCts.Token);
+                    turnCts.Token);
 
             _latestGeneratedImagePath = result.LocalPath;
             _pendingImages.Clear();
@@ -124,14 +132,18 @@ public partial class MainWindow
         }
         finally
         {
-            SetUIState("idle", "Ready");
+            EndTurnCancellation(turnCts);
+            FinishTurn();
         }
     }
 
     private async Task RunLtxVideoAsync(string userText, string prompt, int? requestedSeconds = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
+        {
+            FinishTurn();
             return;
+        }
 
         var sourcePath = GetVideoSourceImagePath();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
@@ -139,10 +151,11 @@ public partial class MainWindow
             // Keep the request on screen: the input box was already cleared when it was sent.
             AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Video.");
+            FinishTurn();
             return;
         }
 
-        _chatCts = new CancellationTokenSource();
+        var turnCts = BeginTurnCancellation();
         SaveImageSettingsFromUi();
         var seconds = requestedSeconds.HasValue ? Math.Clamp(requestedSeconds.Value, 1, 30) : _settings.VideoSeconds;
         var audioPath = File.Exists(_pendingVideoAudioPath) ? _pendingVideoAudioPath : null;
@@ -162,7 +175,7 @@ public partial class MainWindow
                 prompt,
                 seconds,
                 _settings.VideoFps,
-                _chatCts.Token);
+                turnCts.Token);
             var syncedVideoPath = await CopyVideoToSyncedDirectoryAsync(result.LocalPath, CancellationToken.None);
 
             _latestGeneratedVideoPath = result.LocalPath;
@@ -186,7 +199,8 @@ public partial class MainWindow
         }
         finally
         {
-            SetUIState("idle", "Ready");
+            EndTurnCancellation(turnCts);
+            FinishTurn();
         }
     }
 

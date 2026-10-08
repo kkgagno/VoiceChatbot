@@ -558,6 +558,16 @@ public partial class MainWindow
     private async void SendMessage(string userText)
     {
         if (string.IsNullOrWhiteSpace(userText)) return;
+
+        // A scheduled prompt is running on the shared history (typed chat is disabled meanwhile).
+        if (_schedulerRunning)
+        {
+            AddSystemMessage("A scheduled task is running. Send your message again when it has finished.");
+            _speech.ReadyForNextSpeech();
+            ResumeAutoListenIfActive();
+            return;
+        }
+
         var modelUserText = IsManualContinuationRequest(userText)
             ? "Continue the previous assistant response from where it left off. Do not restart, do not summarize, and do not ask what to continue. If the previous response was code, SVG, markup, a list, or a long answer, continue that same content directly."
             : userText;
@@ -595,10 +605,12 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(ModelCombo.Text))
         {
             AddSystemMessage("Please select a model first!");
+            FinishTurn();
             return;
         }
 
-        _chatCts = new CancellationTokenSource();
+        var turnCts = BeginTurnCancellation();
+        var ct = turnCts.Token;
         var model = ModelCombo.Text;
         AssistantMessageUi? assistantMessage = null;
         StreamingSpeech? streamingSpeech = null;
@@ -614,7 +626,7 @@ public partial class MainWindow
             {
                 SetUIState("processing", "Capturing camera...");
                 AddSystemMessage("Taking one camera photo for this message.");
-                var photo = await _camera.CapturePhotoAsync(_chatCts.Token);
+                var photo = await _camera.CapturePhotoAsync(ct);
                 imagePaths.Add(photo.Path);
                 imagesBase64.Add(photo.Base64);
             }
@@ -681,7 +693,7 @@ public partial class MainWindow
             {
                 SetUIState("processing", "Fetching YouTube transcript...");
                 AddSystemMessage("Fetching YouTube transcript.");
-                var transcriptResult = await _youtubeTranscripts.FetchTranscriptAsync(youtubeUrl, _chatCts.Token);
+                var transcriptResult = await _youtubeTranscripts.FetchTranscriptAsync(youtubeUrl, ct);
                 if (!string.IsNullOrWhiteSpace(transcriptResult.Transcript))
                 {
                     var titleLine = string.IsNullOrWhiteSpace(transcriptResult.Title)
@@ -706,7 +718,7 @@ public partial class MainWindow
                     transcriptResult = await _youtubeTranscripts.FetchAudioTranscriptAsync(
                         youtubeUrl,
                         (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
-                        _chatCts.Token);
+                        ct);
 
                     if (!string.IsNullOrWhiteSpace(transcriptResult.Transcript))
                     {
@@ -753,7 +765,7 @@ public partial class MainWindow
                 {
                     SetUIState("searching", "Searching web...");
                     var webSearchQuery = RemoveWebSearchTriggerPhrases(modelUserText);
-                    var searchContext = await _tavily.SearchAndBuildContextAsync(webSearchQuery, maxResults: 5, ct: _chatCts.Token);
+                    var searchContext = await _tavily.SearchAndBuildContextAsync(webSearchQuery, maxResults: 5, ct: ct);
                     if (!string.IsNullOrWhiteSpace(searchContext))
                     {
                         RememberWebSearchContext(webSearchQuery, searchContext);
@@ -788,18 +800,18 @@ public partial class MainWindow
                 }
             }
 
-            await AddKnowledgeContextAsync(messagesForModel, userText, _chatCts.Token);
+            await AddKnowledgeContextAsync(messagesForModel, userText, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);
             var maxTokens = GetMaxTokensForRequest(modelUserText, model);
-            var contextTokens = await GetContextTokensForRequestAsync(model, _chatCts.Token);
+            var contextTokens = await GetContextTokensForRequestAsync(model, ct);
             var droppedContextMessages = TrimMessagesToContextBudget(messagesForModel, systemPrompt, contextTokens, maxTokens);
             AddTokenEstimateDiagnostic(userText, messagesForModel, systemPrompt, contextTokens, maxTokens, droppedContextMessages);
 
             if (toolsActive &&
                 await TryAnswerWithToolsAsync(model, modelUserText, messagesForModel, systemPrompt, maxTokens, contextTokens,
-                    assistantMessage, skipWebSearchTool: searchedWebThisTurn, _chatCts.Token))
+                    assistantMessage, skipWebSearchTool: searchedWebThisTurn, ct))
             {
                 return;
             }
@@ -810,6 +822,8 @@ public partial class MainWindow
                 SetUIState("thinking", "Thinking...");
                 var fullText = new StringBuilder();
                 streamingSpeech = BeginStreamingSpeech(modelUserText, assistantMessage);
+                // onComplete starts the async completion; the turn waits for it below.
+                Task? streamCompletion = null;
                 await _ollama.ChatStreamAsync(
                     model,
                     messagesForModel,
@@ -829,67 +843,74 @@ public partial class MainWindow
                             FeedStreamingSpeech(streamingSpeech, token);
                         }, DispatcherPriority.Background);
                     },
-                    onComplete: async full =>
-                    {
-                        try
-                        {
-                            await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
-
-                            var completed = await CompleteCodeArtifactIfNeededAsync(
-                                full,
-                                modelUserText,
-                                messagesForModel,
-                                systemPrompt,
-                                model,
-                                TempSlider.Value,
-                                maxTokens,
-                                contextTokens,
-                                _chatCts.Token);
-
-                            Dispatcher.Invoke(() =>
-                            {
-                                var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
-                                var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
-                                if (!string.IsNullOrWhiteSpace(cleaned))
-                                {
-                                    SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
-                                    _history.Add("assistant", cleaned);
-                                    // With live speech the reply is already being spoken; otherwise speak it now.
-                                    if (!FinishStreamingSpeech(streamingSpeech, full, completed))
-                                        SpeakLastResponse(cleaned, assistantMessage);
-                                }
-                                else
-                                {
-                                    CancelStreamingSpeech(streamingSpeech);
-                                    SetUIState("idle", "Ready");
-                                }
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            AppLog.Error("Code/SVG continuation failed", ex);
-                            Dispatcher.Invoke(() =>
-                            {
-                                CancelStreamingSpeech(streamingSpeech);
-                                assistantMessage.Body.Text = $"Error: {ex.Message}";
-                                AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
-                                SetUIState("idle", "Ready");
-                            });
-                        }
-                    },
+                    onComplete: full => streamCompletion = CompleteStreamedReplyAsync(full),
                     onError: ex =>
                     {
                         AppLog.Error("Chat backend stream failed", ex);
                         Dispatcher.Invoke(() =>
                         {
-                            CancelStreamingSpeech(streamingSpeech);
                             assistantMessage.Body.Text = $"Error: {ex.Message}";
                             AddSystemMessage($"API Error: {ex.Message}");
-                            SetUIState("idle", "Ready");
+                            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
                         });
                     },
-                    ct: _chatCts.Token
+                    ct: ct
                 );
+                if (streamCompletion != null)
+                    await streamCompletion;
+
+                async Task CompleteStreamedReplyAsync(string full)
+                {
+                    try
+                    {
+                        await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
+
+                        var completed = await CompleteCodeArtifactIfNeededAsync(
+                            full,
+                            modelUserText,
+                            messagesForModel,
+                            systemPrompt,
+                            model,
+                            TempSlider.Value,
+                            maxTokens,
+                            contextTokens,
+                            ct);
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
+                            var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
+                            if (!string.IsNullOrWhiteSpace(cleaned))
+                            {
+                                SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
+                                _history.Add("assistant", cleaned);
+                                // With live speech the reply is already being spoken; otherwise speak it now.
+                                if (!FinishStreamingSpeech(streamingSpeech, full, completed))
+                                    SpeakLastResponse(cleaned, assistantMessage);
+                            }
+                            else
+                            {
+                                AddSystemMessage("The model returned an empty answer.");
+                                CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                            }
+                        });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Stop/Esc during the code continuation: the outer catch ends the turn.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Error("Code/SVG continuation failed", ex);
+                        Dispatcher.Invoke(() =>
+                        {
+                            assistantMessage.Body.Text = $"Error: {ex.Message}";
+                            AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
+                            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                        });
+                    }
+                }
             }
             else
             {
@@ -901,7 +922,7 @@ public partial class MainWindow
                     systemPrompt,
                     TempSlider.Value,
                     maxTokens,
-                    _chatCts.Token,
+                    ct,
                     contextTokens
                 );
                 AddBackendFinishDiagnostic("Backend usage", response.Length, maxTokens, contextTokens);
@@ -915,7 +936,7 @@ public partial class MainWindow
                     TempSlider.Value,
                     maxTokens,
                     contextTokens,
-                    _chatCts.Token);
+                    ct);
 
                 var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(response);
                 var cleaned = CleanDisplayText(response, preserveCodeBlocks: isCodeResponse);
@@ -926,19 +947,21 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
-            CancelStreamingSpeech(streamingSpeech);
             if (assistantMessage is not null)
                 assistantMessage.Body.Text += " [cancelled]";
-            SetUIState("idle", "Ready");
+            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
         }
         catch (Exception ex)
         {
             AppLog.Error("Chat request failed", ex);
-            CancelStreamingSpeech(streamingSpeech);
             if (assistantMessage is not null)
                 assistantMessage.Body.Text = $"Error: {ex.Message}";
             AddSystemMessage($"Chat error: {ex.Message}");
-            SetUIState("idle", "Ready");
+            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+        }
+        finally
+        {
+            EndTurnCancellation(turnCts);
         }
     }
 

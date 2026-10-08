@@ -169,6 +169,18 @@ public sealed class SpeechSession
     public void Cancel() => Stop(abandon: false);
 
     /// <summary>
+    /// Like <see cref="Cancel"/>, and returns true when this session raises (or already raised)
+    /// SpeechFinished because it had started playing or was completed; whoever ends the turn on
+    /// SpeechFinished then must not end it a second time.
+    /// </summary>
+    public bool CancelAndCheckFinishReported()
+    {
+        Stop(abandon: false);
+        lock (_gate)
+            return !_abandoned && (_startedPlayback || _completeRequested);
+    }
+
+    /// <summary>
     /// Like <see cref="Cancel"/> but never raises SpeechFinished: use it when something else takes
     /// over the reply's speech (a newer session) or resets the UI itself.
     /// </summary>

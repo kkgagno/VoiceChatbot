@@ -24,9 +24,13 @@ public partial class MainWindow
         {
             Chunker = new SentenceChunker { StopAtFirstCodeBlock = true };
             StreamedText.Clear();
+            FedText = "";
         }
 
         public StringBuilder StreamedText { get; } = new();
+
+        // The part of StreamedText (without reasoning) already given to the chunker.
+        public string FedText { get; set; } = "";
 
         // Set when the streamed text is not fit to speak as-is; the final reply text is spoken instead.
         public bool UseFinalText { get; set; }
@@ -80,7 +84,22 @@ public partial class MainWindow
         try
         {
             speech.StreamedText.Append(token);
-            foreach (var sentence in speech.Chunker.Append(token))
+
+            // Reasoning models write <think>...</think> first; only the answer after it is spoken.
+            var visible = ReasoningText.StripThinking(speech.StreamedText.ToString(), streaming: true);
+            if (!visible.StartsWith(speech.FedText, StringComparison.Ordinal))
+            {
+                // A think block opened mid-reply: speak the cleaned final text instead.
+                speech.UseFinalText = true;
+                return;
+            }
+
+            var newText = visible[speech.FedText.Length..];
+            if (newText.Length == 0)
+                return;
+            speech.FedText = visible;
+
+            foreach (var sentence in speech.Chunker.Append(newText))
             {
                 // The chat shows an explanation instead of leaked model reasoning; speak that at the end.
                 if (LooksLikeLeakedReasoningDump(speech.StreamedText.ToString()))
@@ -166,10 +185,22 @@ public partial class MainWindow
         speech.ResetChunker();
     }
 
-    /// <summary>Stops live speech after a chat error or cancellation.</summary>
-    private static void CancelStreamingSpeech(StreamingSpeech? speech)
+    /// <summary>
+    /// Stops live speech after a chat error or cancellation. Returns true when the stopped session
+    /// reports SpeechFinished (it had started speaking), which then ends the turn.
+    /// </summary>
+    private static bool CancelStreamingSpeech(StreamingSpeech? speech)
     {
-        speech?.Session.Cancel();
+        return speech?.Session.CancelAndCheckFinishReported() == true;
+    }
+
+    /// <summary>Stops live speech and ends the turn exactly once (directly, or through SpeechFinished).</summary>
+    private void CancelStreamingSpeechAndFinishTurn(StreamingSpeech? speech)
+    {
+        if (CancelStreamingSpeech(speech))
+            SetUIState("idle", "Ready");
+        else
+            FinishTurn();
     }
 
     private static void EnqueueSpeechSentence(SpeechSession session, string sentence)

@@ -47,7 +47,12 @@ public partial class SpeechEngine : IDisposable
     private System.Diagnostics.Process? _kokoroServerProcess;
     private readonly object _kokoroServerLock = new();
     private const string KokoroServerUrl = "http://127.0.0.1:8765";
+    // The bundled server only writes WAV files into this folder and only answers requests that
+    // carry this per-launch token, so other local programs and web pages cannot use it.
+    private static readonly string KokoroServerOutputDirectory = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "tts");
+    private readonly string _kokoroServerToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
     private DateTime _remoteKokoroRetryAfterUtc = DateTime.MinValue;
+    private DateTime _kokoroServerRetryAfterUtc = DateTime.MinValue;
     private string _remoteKokoroFailedUrl = "";
     private readonly SemaphoreSlim _whisperLock = new(1, 1);
     private bool _isRecording;
@@ -57,8 +62,8 @@ public partial class SpeechEngine : IDisposable
     private int _silenceThreshold;
     private const int AudioBucketMilliseconds = 100;
     private const int MIN_VOICE_BUCKETS = 1; // ~100ms is enough for a one-word reply
-    private const int SHORT_UTTERANCE_MAX_VOICE_BUCKETS = 8; // up to ~800ms of actual voice
-    private const int SHORT_UTTERANCE_SILENCE_BUCKETS = 5; // ~500ms pause after a one-word response
+    private const int PreRollBytes = 400 * 32;              // ~400 ms of 16 kHz 16-bit mono kept before speech
+    private const int MaxUtteranceBytes = 30 * 1000 * 32;   // one utterance is cut off after ~30 s
     private int _silenceBucketCount;
     private int _voiceBucketCount;
     private bool _voiceDetected; // Only detect silence AFTER hearing voice
@@ -227,15 +232,49 @@ public partial class SpeechEngine : IDisposable
         }
 
         _whisperFactory = WhisperFactory.FromPath(foundModel);
+        _whisperProcessor = BuildWhisperProcessor(_whisperFactory);
+    }
 
-        var langCode = InputLanguage;
+    private WhisperProcessor BuildWhisperProcessor(WhisperFactory factory)
+    {
+        var langCode = InputLanguage ?? "en";
         if (langCode == "en-US" || langCode == "en-GB") langCode = "en";
         if (langCode.Contains('-')) langCode = langCode.Split('-')[0];
 
-        _whisperProcessor = _whisperFactory.CreateBuilder()
+        return factory.CreateBuilder()
             .WithLanguage(langCode)
             .Build();
+    }
 
+    /// <summary>
+    /// Changes the recognition language. The Whisper processor is rebuilt under the transcription
+    /// lock, so the new language is used from the next utterance without restarting the app.
+    /// </summary>
+    public async Task SetInputLanguageAsync(string language)
+    {
+        if (string.IsNullOrWhiteSpace(language) || string.Equals(language, InputLanguage, StringComparison.Ordinal))
+            return;
+
+        InputLanguage = language;
+        await _whisperLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed || _whisperFactory == null)
+                return;
+
+            var rebuilt = BuildWhisperProcessor(_whisperFactory);
+            var old = _whisperProcessor;
+            _whisperProcessor = rebuilt;
+            old?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"Could not switch the recognition language to {language}: {ex.Message}");
+        }
+        finally
+        {
+            _whisperLock.Release();
+        }
     }
 
     /// <summary>
@@ -295,11 +334,21 @@ public partial class SpeechEngine : IDisposable
         fileStream.Close();
         File.Move(partialPath, targetPath, overwrite: true);
 
-        // Re-init with the new model
-        _whisperProcessor?.Dispose();
-        _whisperFactory?.Dispose();
-        WhisperModelPath = targetPath;
-        InitWhisper();
+        // Re-init with the new model. A transcription may be using the processor right now, so wait for it.
+        await _whisperLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _whisperProcessor?.Dispose();
+            _whisperProcessor = null;
+            _whisperFactory?.Dispose();
+            _whisperFactory = null;
+            WhisperModelPath = targetPath;
+            InitWhisper();
+        }
+        finally
+        {
+            _whisperLock.Release();
+        }
     }
 
     // ==================== Recording ====================
@@ -458,6 +507,7 @@ public partial class SpeechEngine : IDisposable
         }
 
         KeepOrDropBargeInAudio();
+        TrimAudioBeforeSpeech();
 
         if (WakeTurnHeardNothing())
         {
@@ -469,17 +519,41 @@ public partial class SpeechEngine : IDisposable
         if (_voiceDetected && _silenceBucketCount >= RequiredSilenceBuckets && _audioBuffer?.Length > 16000)
         {
             StopRecordingAndProcess();
+            return;
         }
+
+        // Someone talking without a pause (or steady noise above the gate) must not record forever.
+        if (_voiceDetected && _audioBuffer?.Length >= MaxUtteranceBytes)
+            StopRecordingAndProcess();
     }
 
-    private int RequiredSilenceBuckets
+    // Always the configured pause: a shorter one after a short opener cut sentences such as
+    // "Hey Hermes ... start gemma" in two.
+    private int RequiredSilenceBuckets =>
+        Math.Clamp((int)Math.Round(SilenceTimeout * 1000 / AudioBucketMilliseconds), 5, 100);
+
+    // Capture thread: until voice is heard keep only the last ~400 ms, so the words are not preceded
+    // by seconds of silence or background noise. Seeded barge-in audio is left to KeepOrDropBargeInAudio.
+    private void TrimAudioBeforeSpeech()
     {
-        get
+        var buffer = _audioBuffer;
+        if (_voiceDetected || _bargeInSeedBytes > 0 || buffer == null)
+            return;
+
+        try
         {
-            var configured = Math.Clamp((int)Math.Round(SilenceTimeout * 1000 / AudioBucketMilliseconds), 5, 100);
-            return _voiceBucketCount <= SHORT_UTTERANCE_MAX_VOICE_BUCKETS
-                ? Math.Min(configured, SHORT_UTTERANCE_SILENCE_BUCKETS)
-                : configured;
+            var length = (int)buffer.Length;
+            if (length <= PreRollBytes)
+                return;
+
+            var data = buffer.GetBuffer();
+            Buffer.BlockCopy(data, length - PreRollBytes, data, 0, PreRollBytes);
+            buffer.SetLength(PreRollBytes);
+            buffer.Position = PreRollBytes;
+        }
+        catch (ObjectDisposedException)
+        {
+            // Listening was stopped meanwhile.
         }
     }
 
@@ -553,7 +627,8 @@ public partial class SpeechEngine : IDisposable
                     // Wake word check (not needed when the wake word detector started this turn)
                     if (!AutoDetect && !wakeWordAlreadyHeard && !string.IsNullOrWhiteSpace(WakeWord))
                     {
-                        if (text.IndexOf(WakeWord, StringComparison.OrdinalIgnoreCase) < 0)
+                        // Whisper writes "Hey, assistant." - match words, not the exact characters.
+                        if (!WakeWordText.TryFind(text, WakeWord, out var afterWakeWord))
                         {
                             // No wake word detected - go back to listening
                             _isProcessing = false;
@@ -563,8 +638,7 @@ public partial class SpeechEngine : IDisposable
                         }
 
                         // Wake word found - strip it from the text
-                        var idx = text.IndexOf(WakeWord, StringComparison.OrdinalIgnoreCase);
-                        text = text.Substring(idx + WakeWord.Length).Trim();
+                        text = afterWakeWord;
                         if (string.IsNullOrWhiteSpace(text))
                         {
                             // Only wake word was spoken, wait for the actual question
@@ -583,6 +657,8 @@ public partial class SpeechEngine : IDisposable
                     }
 
                     Log?.Invoke($"Transcription backend used: {LastTranscriptionBackendUsed}");
+                    // Transcription is done; the chat turn that follows ends with ReadyForNextSpeech.
+                    _isProcessing = false;
                     SpeechRecognized?.Invoke(text);
                 }
                 else
@@ -630,44 +706,20 @@ public partial class SpeechEngine : IDisposable
 
     }
 
+    /// <summary>
+    /// A turn is over: allow the next recording, and leave the Processing state that a voice turn
+    /// stays in after its transcription when nothing was spoken.
+    /// </summary>
     public void ReadyForNextSpeech()
     {
+        // _isProcessing is still set while a transcription runs; that Processing state is left alone.
+        if (!_isProcessing && CurrentState == VoiceState.Processing)
+            SetState(VoiceState.Idle);
         _isProcessing = false;
     }
 
     // ==================== TTS ====================
-
-    public void Speak(string text)
-    {
-
-        if (!TtsEnabled)
-        {
-            SetState(VoiceState.Idle);
-            SpeechFinished?.Invoke();
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            SetState(VoiceState.Idle);
-            SpeechFinished?.Invoke();
-            return;
-        }
-
-        // Stop listening on a separate call to avoid blocking
-        try { _waveIn?.StopRecording(); } catch { }
-        _isRecording = false;
-        _isProcessing = true;
-        SetState(VoiceState.Speaking);
-
-        var clean = text; // MainWindow already prepares speech-safe text.
-
-        var (kokoroVoice, kokoroLang) = ResolveKokoroVoice();
-
-        var thread = new Thread(() => DoKokoroSpeak(clean, kokoroVoice, kokoroLang));
-        thread.IsBackground = true;
-        thread.Start();
-    }
+    // Replies are spoken through SpeechSession (BeginSpeechSession), which Stop cancels.
 
     private (string Voice, string Lang) ResolveKokoroVoice()
     {
@@ -755,11 +807,13 @@ public partial class SpeechEngine : IDisposable
         await _whisperLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Read under the lock: a model download or language change may have replaced it.
+            var processor = _whisperProcessor ?? throw new InvalidOperationException("Whisper is not initialized.");
             if (wavStream.CanSeek)
                 wavStream.Position = 0;
 
             var result = new StringBuilder();
-            await foreach (var segment in _whisperProcessor.ProcessAsync(wavStream, ct).ConfigureAwait(false))
+            await foreach (var segment in processor.ProcessAsync(wavStream, ct).ConfigureAwait(false))
             {
                 var text = CleanWhisperSegment(segment.Text);
                 if (!string.IsNullOrWhiteSpace(text))
@@ -1054,24 +1108,6 @@ public partial class SpeechEngine : IDisposable
                || word.Equals("more", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void DoKokoroSpeak(string text, string voice, string lang)
-    {
-        try
-        {
-            var wavFile = GenerateKokoroAudioSync(text, voice, lang);
-            if (wavFile != null)
-            {
-                PlayWavSync(wavFile);
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-        }
-        SetState(VoiceState.Idle);
-        SpeechFinished?.Invoke();
-    }
-
     private string? GenerateKokoroAudioSync(string text, string voice, string lang = "a")
     {
         var mode = KokoroEndpoint.NormalizeMode(KokoroMode);
@@ -1107,7 +1143,7 @@ public partial class SpeechEngine : IDisposable
 
         // Local Kokoro only knows American and British English pipelines.
         var localLang = lang is "a" or "b" ? lang : "a";
-        var tempWav = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.wav");
+        var tempWav = Path.Combine(KokoroServerOutputDirectory, $"tts_{Guid.NewGuid():N}.wav");
 
         try
         {
@@ -1229,8 +1265,9 @@ public partial class SpeechEngine : IDisposable
 
         var json = System.Text.Json.JsonSerializer.Serialize(payload);
         using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        using var content = new System.Net.Http.StringContent(json, Encoding.UTF8, "application/json");
-        using var response = client.PostAsync(KokoroServerUrl + "/tts", content).GetAwaiter().GetResult();
+        using var request = CreateKokoroServerRequest(System.Net.Http.HttpMethod.Post, "/tts");
+        request.Content = new System.Net.Http.StringContent(json, Encoding.UTF8, "application/json");
+        using var response = client.SendAsync(request).GetAwaiter().GetResult();
         var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
         if (!response.IsSuccessStatusCode || !body.Contains("\"ok\":true"))
@@ -1247,6 +1284,10 @@ public partial class SpeechEngine : IDisposable
         if (IsKokoroServerHealthy(500))
             return true;
 
+        // A server that could not start is not retried for every sentence.
+        if (DateTime.UtcNow < _kokoroServerRetryAfterUtc)
+            return false;
+
         lock (_kokoroServerLock)
         {
             if (_kokoroServerProcess != null && _kokoroServerProcess.HasExited)
@@ -1262,15 +1303,23 @@ public partial class SpeechEngine : IDisposable
                 if (string.IsNullOrWhiteSpace(scriptPath) || string.IsNullOrWhiteSpace(pythonExe))
                     return false;
 
+                Directory.CreateDirectory(KokoroServerOutputDirectory);
                 var psi = new ProcessStartInfo
                 {
                     FileName = pythonExe,
-                    Arguments = $"\"{scriptPath}\" --host 127.0.0.1 --port 8765 --preload a,b",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
+                foreach (var argument in new[]
+                {
+                    scriptPath, "--host", "127.0.0.1", "--port", "8765", "--preload", "a,b",
+                    "--out-dir", KokoroServerOutputDirectory, "--token", _kokoroServerToken
+                })
+                {
+                    psi.ArgumentList.Add(argument);
+                }
 
                 var proc = Process.Start(psi);
                 if (proc == null)
@@ -1295,18 +1344,40 @@ public partial class SpeechEngine : IDisposable
         {
             if (IsKokoroServerHealthy(1000))
                 return true;
+
+            // It could not start, e.g. port 8765 is taken by a server from an earlier run that does
+            // not know this run's token: use the one-shot fallback instead of waiting.
+            Process? server;
+            lock (_kokoroServerLock)
+                server = _kokoroServerProcess;
+            if (server == null || server.HasExited)
+            {
+                if (_kokoroServerRetryAfterUtc == DateTime.MinValue)
+                    Log?.Invoke("[TTS] The local Kokoro server did not start (is port 8765 in use?). Using one-shot Kokoro for now.");
+                _kokoroServerRetryAfterUtc = DateTime.UtcNow.AddMinutes(1);
+                return false;
+            }
             Thread.Sleep(250);
         }
 
         return false;
     }
 
-    private static bool IsKokoroServerHealthy(int timeoutMs)
+    private System.Net.Http.HttpRequestMessage CreateKokoroServerRequest(System.Net.Http.HttpMethod method, string path)
+    {
+        var request = new System.Net.Http.HttpRequestMessage(method, KokoroServerUrl + path);
+        request.Headers.Add("X-Kokoro-Token", _kokoroServerToken);
+        return request;
+    }
+
+    private bool IsKokoroServerHealthy(int timeoutMs)
     {
         try
         {
+            // A server without this run's token (another program, or an earlier run) answers 403.
             using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMilliseconds(timeoutMs) };
-            using var response = client.GetAsync(KokoroServerUrl + "/health").GetAwaiter().GetResult();
+            using var request = CreateKokoroServerRequest(System.Net.Http.HttpMethod.Get, "/health");
+            using var response = client.SendAsync(request).GetAwaiter().GetResult();
             return response.IsSuccessStatusCode;
         }
         catch
@@ -1372,36 +1443,6 @@ public partial class SpeechEngine : IDisposable
             try { File.Delete(tempText); } catch { }
             try { File.Delete(tempWav); } catch { }
             return null;
-        }
-    }
-
-    private void PlayWavSync(string filePath)
-    {
-        try
-        {
-            using var reader = new NAudio.Wave.WaveFileReader(filePath);
-            _waveOut = new NAudio.Wave.WaveOutEvent();
-            _waveOut.Volume = Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
-            var done = new ManualResetEvent(false);
-            _waveOut.PlaybackStopped += (s, e) =>
-            {
-                done.Set();
-            };
-            _waveOut.Init(reader);
-            _waveOut.Play();
-            StartBargeInMonitor();
-            done.WaitOne(TimeSpan.FromMinutes(10));
-        }
-        catch (Exception ex)
-        {
-        }
-        finally
-        {
-            try { File.Delete(filePath); } catch { }
-            try { _waveOut?.Dispose(); } catch { }
-            _waveOut = null;
-            SetState(VoiceState.Idle);
-            SpeechFinished?.Invoke();
         }
     }
 

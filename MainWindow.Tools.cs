@@ -294,9 +294,8 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(cleaned))
             {
                 assistantMessage.Body.Text = "";
-                speech?.Session.Abandon();
                 AddSystemMessage("The model returned an empty answer.");
-                SetUIState("idle", "Ready");
+                CancelStreamingSpeechAndFinishTurn(speech);
                 return true;
             }
 

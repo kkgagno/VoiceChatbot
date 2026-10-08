@@ -223,6 +223,7 @@ public partial class MainWindow : Window
                 ModelCombo.SelectedIndex = 0;
 
             _applyingSettings = false;
+            _schedulerTimer.Start();
             UpdateActiveModelText();
             await InitializeDesktopServiceControlsAsync();
 
@@ -240,6 +241,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _applyingSettings = false;
+            _schedulerTimer?.Start();
             AddSystemMessage($"Startup error: {ex}");
             System.Diagnostics.Debug.WriteLine($"Startup error: {ex}");
         }
@@ -728,9 +730,18 @@ public partial class MainWindow : Window
         };
 
         // Input language change
-        InputLangCombo.SelectionChanged += (s, e) =>
+        InputLangCombo.SelectionChanged += async (s, e) =>
         {
-            _speech.InputLanguage = InputLangCombo.Text;
+            // Text still holds the previous choice while SelectionChanged runs.
+            var language = InputLangCombo.SelectedItem?.ToString() ?? InputLangCombo.Text;
+            try
+            {
+                await _speech.SetInputLanguageAsync(language);
+            }
+            catch (Exception ex)
+            {
+                AddSystemMessage($"Could not change the recognition language: {ex.Message}");
+            }
         };
     }
 
@@ -756,9 +767,19 @@ public partial class MainWindow : Window
         };
         _statusTimer.Start();
 
+        // Started by MainWindow_Loaded once settings and the model list are loaded.
         _schedulerTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _schedulerTimer.Tick += async (_, _) => await RunDueScheduledTasksAsync();
-        _schedulerTimer.Start();
+        _schedulerTimer.Tick += async (_, _) =>
+        {
+            try
+            {
+                await RunDueScheduledTasksAsync();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Scheduler tick failed", ex);
+            }
+        };
 
         // Wire volume level
         _speech.VolumeLevelChanged += (level) =>
@@ -848,6 +869,9 @@ public partial class MainWindow : Window
     private static string CleanDisplayText(string text, bool preserveCodeBlocks = false)
     {
         if (string.IsNullOrEmpty(text)) return text;
+        // Reasoning models: <think>...</think> is neither shown, saved nor spoken.
+        text = ReasoningText.StripThinking(text);
+        if (string.IsNullOrWhiteSpace(text)) return "";
         if (LooksLikeOnlyUnusedTokens(text))
             return "The model returned only special placeholder tokens, such as <unused49>. That usually means the llama.cpp server was launched with the wrong Gemma chat template or an incompatible/missing mmproj projector. Restart the Gemma 4 12B server with the correct Gemma template and matching mmproj, then try the image again.";
         if (LooksLikeLeakedReasoningDump(text))
@@ -888,6 +912,7 @@ public partial class MainWindow : Window
     private static string CleanSpeechText(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
+        text = ReasoningText.StripThinking(text);
 
         var firstCodeBlock = Regex.Match(text, "```[\\s\\S]*?```");
         var cleaned = firstCodeBlock.Success

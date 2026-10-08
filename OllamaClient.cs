@@ -118,6 +118,11 @@ public class OllamaClient : IDisposable
     }
 
     // ---- Chat (streaming) ----
+    /// <summary>
+    /// Streams a reply: tokens go to onToken, the full text to onComplete and backend errors (also
+    /// {"error": ...} objects inside the stream) to onError. Throws OperationCanceledException when
+    /// cancelled, without calling onComplete.
+    /// </summary>
     public async Task ChatStreamAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, int contextTokens, Action<string> onToken, Action<string> onComplete, Action<Exception> onError,
         CancellationToken ct = default)
@@ -148,28 +153,45 @@ public class OllamaClient : IDisposable
                 var line = await reader.ReadLineAsync(ct);
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                try
+                JsonDocument chunk;
+                try { chunk = JsonDocument.Parse(line); }
+                catch (JsonException) { continue; /* skip malformed chunks */ }
+
+                using (chunk)
                 {
-                    using var chunk = JsonDocument.Parse(line);
-                    if (chunk.RootElement.TryGetProperty("message", out var msg) &&
-                        msg.TryGetProperty("content", out var c))
+                    // {"error": ...} after a 200 response (model crashed, out of memory, ...).
+                    if (chunk.RootElement.ValueKind == JsonValueKind.Object)
+                        ThrowIfStreamError(chunk.RootElement, toolsSent: false);
+
+                    try
                     {
-                        var token = c.GetString() ?? "";
-                        fullResponse.Append(token);
-                        onToken(token);
+                        if (chunk.RootElement.TryGetProperty("message", out var msg) &&
+                            msg.TryGetProperty("content", out var c))
+                        {
+                            var token = c.GetString() ?? "";
+                            fullResponse.Append(token);
+                            onToken(token);
+                        }
+                        if (chunk.RootElement.TryGetProperty("done", out var done) && done.GetBoolean())
+                        {
+                            CaptureOllamaResponseMetadata(chunk.RootElement);
+                            break;
+                        }
                     }
-                    if (chunk.RootElement.TryGetProperty("done", out var done) && done.GetBoolean())
-                    {
-                        CaptureOllamaResponseMetadata(chunk.RootElement);
-                        break;
-                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { /* skip chunks with an unexpected shape */ }
                 }
-                catch { /* skip malformed chunks */ }
             }
 
+            // Stop/Esc/Clear Chat: no partial reply is completed (saved or spoken).
+            ct.ThrowIfCancellationRequested();
             onComplete(fullResponse.ToString());
         }
-        catch (OperationCanceledException) { onComplete(""); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // Stop can surface as an aborted stream (IOException); report it as the cancel it is.
+            throw new OperationCanceledException(ct);
+        }
         catch (Exception ex) { onError(ex); }
     }
 
@@ -459,30 +481,47 @@ public class OllamaClient : IDisposable
                 var data = line[5..].Trim();
                 if (data == "[DONE]") break;
 
-                try
-                {
-                    using var chunk = JsonDocument.Parse(data);
-                    if (!chunk.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                        continue;
+                JsonDocument chunk;
+                try { chunk = JsonDocument.Parse(data); }
+                catch (JsonException) { continue; /* skip malformed chunks */ }
 
-                    var choice = choices[0];
-                    CaptureOpenAiChoiceMetadata(choice);
-                    var token = ExtractOpenAiChoiceText(choice);
-                    if (!string.IsNullOrEmpty(token))
-                    {
-                        fullResponse.Append(token);
-                        onToken(token);
-                    }
-                }
-                catch
+                using (chunk)
                 {
-                    // Skip malformed chunks.
+                    // {"error": ...} after a 200 response.
+                    if (chunk.RootElement.ValueKind == JsonValueKind.Object)
+                        ThrowIfStreamError(chunk.RootElement, toolsSent: false);
+
+                    try
+                    {
+                        if (!chunk.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                            continue;
+
+                        var choice = choices[0];
+                        CaptureOpenAiChoiceMetadata(choice);
+                        var token = ExtractOpenAiChoiceText(choice);
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            fullResponse.Append(token);
+                            onToken(token);
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Skip chunks with an unexpected shape.
+                    }
                 }
             }
 
+            // Stop/Esc/Clear Chat: no partial reply is completed (saved or spoken).
+            ct.ThrowIfCancellationRequested();
             onComplete(fullResponse.ToString());
         }
-        catch (OperationCanceledException) { onComplete(""); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // Stop can surface as an aborted stream (IOException); report it as the cancel it is.
+            throw new OperationCanceledException(ct);
+        }
         catch (Exception ex) { onError(ex); }
     }
 

@@ -37,30 +37,64 @@ public partial class MainWindow
 
     private void OnSpeechFinished()
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.Invoke(() => FinishTurn());
+    }
+
+    // ==================== Turn lifecycle ====================
+
+    /// <summary>
+    /// Ends a turn: resets the speech engine, sets the UI idle and, in hands-free mode, starts
+    /// listening for the next utterance. UI thread. Call it for every turn outcome that does not
+    /// start speech (errors, empty or cancelled replies, media commands, notices); a turn that
+    /// speaks ends through SpeechFinished, which calls this once the speech is over.
+    /// </summary>
+    private void FinishTurn()
+    {
+        SetUIState("idle", "Ready");
+        _speech.ReadyForNextSpeech();
+        ResumeAutoListenIfActive();
+    }
+
+    /// <summary>Restarts listening shortly when auto-listen is on (and not paused for typing or by face policy).</summary>
+    private void ResumeAutoListenIfActive()
+    {
+        if (!_autoListening)
+            return;
+
+        Task.Delay(100).ContinueWith(_ =>
         {
-            SetUIState("idle", "Ready");
-            _speech.ReadyForNextSpeech();
-
-            if (_autoListening)
+            Dispatcher.BeginInvoke(() =>
             {
-                // Restart recording for next utterance
-                Task.Delay(100).ContinueWith(_ =>
-                {
-                    Dispatcher.Invoke(() =>
-                    {
-                        if (_autoListening && !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
-                        {
-                            if (_speech.CurrentState == VoiceState.Speaking)
-                                return;
+                if (!_autoListening || _pausedListeningForTextInput || !IsVoiceInputAllowedByFacePolicy())
+                    return;
 
-                            _speech.StartListening();
-                        }
-                    });
-                });
-            }
+                // A newer reply is being spoken; its SpeechFinished resumes listening.
+                if (_speech.CurrentState == VoiceState.Speaking)
+                    return;
+
+                _speech.StartListening();
+            });
         });
     }
+
+    /// <summary>Makes <see cref="_chatCts"/> the cancellation for a new turn (Stop, Esc and Clear Chat cancel it).</summary>
+    private CancellationTokenSource BeginTurnCancellation()
+    {
+        var cts = new CancellationTokenSource();
+        _chatCts = cts;
+        return cts;
+    }
+
+    /// <summary>Clears and disposes a turn's cancellation once the turn is over, so Esc sees the app as idle.</summary>
+    private void EndTurnCancellation(CancellationTokenSource cts)
+    {
+        if (ReferenceEquals(_chatCts, cts))
+            _chatCts = null;
+        cts.Dispose();
+    }
+
+    /// <summary>True while the running turn was stopped (Stop, Esc, Clear Chat): nothing more should be spoken.</summary>
+    private bool IsCurrentTurnCancelled => _chatCts?.IsCancellationRequested == true;
 
     private void OnListenTimedOut()
     {
@@ -169,6 +203,8 @@ public partial class MainWindow
     private void StopAll_Click(object sender, RoutedEventArgs e)
     {
         _chatCts?.Cancel();
+        // Also stops ComfyUI jobs the phone started without a cancellable token. Never throws.
+        _ = _comfyImages.InterruptAsync();
         _speech.StopAll();
         _autoListening = false;
         AlwaysListenToggle.IsChecked = false;
