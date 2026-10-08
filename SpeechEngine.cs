@@ -335,6 +335,7 @@ public partial class SpeechEngine : IDisposable
 
         // Audio buffer to store PCM data
         _audioBuffer = new MemoryStream();
+        SeedRecordingWithBargeInAudio();
 
         try
         {
@@ -452,6 +453,8 @@ public partial class SpeechEngine : IDisposable
         {
             _voiceBucketCount--;
         }
+
+        KeepOrDropBargeInAudio();
 
         // Only process if: we heard voice, then silence, and have enough audio
         if (_voiceDetected && _silenceBucketCount >= RequiredSilenceBuckets && _audioBuffer?.Length > 16000)
@@ -1376,6 +1379,7 @@ public partial class SpeechEngine : IDisposable
             };
             _waveOut.Init(reader);
             _waveOut.Play();
+            StartBargeInMonitor();
             done.WaitOne(TimeSpan.FromMinutes(10));
         }
         catch (Exception ex)
@@ -1519,6 +1523,7 @@ public partial class SpeechEngine : IDisposable
                 };
                 _waveOut.Init(reader);
                 _waveOut.Play();
+                StartBargeInMonitor();
                 done.WaitOne(TimeSpan.FromMinutes(10));
             }
             catch (Exception ex)
@@ -1550,6 +1555,9 @@ public partial class SpeechEngine : IDisposable
         if (this.CurrentState != newState)
         {
             this.CurrentState = newState;
+            // The barge-in microphone only runs while speaking.
+            if (newState != VoiceState.Speaking)
+                StopBargeInMonitor();
             this.StateChanged?.Invoke(newState);
         }
     }
@@ -1602,6 +1610,7 @@ public partial class SpeechEngine : IDisposable
         if (_disposed) return;
         _disposed = true;
         StopAll();
+        StopBargeInMonitor();
         if (_kokoroServerProcess != null && !_kokoroServerProcess.HasExited)
         {
             try { _kokoroServerProcess.Kill(true); } catch { }

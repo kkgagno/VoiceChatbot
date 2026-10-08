@@ -289,6 +289,7 @@ public sealed class SpeechSession
                 return;
 
             output.Play();
+            _engine.StartBargeInMonitor();
             WaitHandle.WaitAny(new[] { done, token.WaitHandle }, TimeSpan.FromMinutes(10));
         }
         catch (Exception ex)

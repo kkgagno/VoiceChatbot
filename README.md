@@ -112,6 +112,14 @@ Replies are spoken sentence by sentence: Kokoro renders the next sentence while 
 
 With **Stream responses** on, the assistant starts talking while the model is still writing. Turn this off with **Start speaking before the reply finishes** under **Voice Output** (saved as `StreamingSpeechEnabled`). Replies to code or script requests still wait until they are complete, and code blocks are never read aloud. **Stop** (or **Esc**) and the microphone button stop speech straight away. The **Replay Audio** and **Download Audio** buttons appear once the whole reply has been spoken.
 
+### Interrupting by speaking
+
+Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut the assistant off by talking. While it speaks, the app also watches the selected microphone. It measures the room (and any echo of its own voice) during the first 0.3 seconds of playback, then stops speaking once your voice stays clearly above that level for about 0.3 seconds. It shows "Interrupted - listening" and listens as if you had pressed **Listen**, keeping the words that interrupted it when you keep talking. Face gating still applies. The reply text keeps appearing in the chat.
+
+- Works best with headphones. Through speakers the assistant's own voice can interrupt it; lower **Interrupt sensitivity** if that happens. Higher sensitivity reacts to quieter speech.
+- Bluetooth headsets may switch to their lower-quality call audio while the microphone is open during speech.
+- Saved as `BargeInEnabled` and `BargeInSensitivity` (0-100, default 50) in `settings.json`.
+
 ## Optional integrations
 
 ### Web search

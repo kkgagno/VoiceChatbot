@@ -51,6 +51,10 @@ public class AppSettings
     public bool TtsEnabled { get; set; } = true;
     // Speak each sentence of a streamed reply as soon as it is written.
     public bool StreamingSpeechEnabled { get; set; } = true;
+    // Stop speaking when the user starts talking over the assistant (barge-in), then listen.
+    public bool BargeInEnabled { get; set; } = false;
+    // 0 = needs loud, clear speech to interrupt; 100 = quiet speech is enough.
+    public int BargeInSensitivity { get; set; } = 50;
 
     // Kokoro text-to-speech. Leave the remote URL blank to use only the bundled local server.
     // Accepts "192.168.1.50", "192.168.1.50:8880" or "http://host:8880/v1".

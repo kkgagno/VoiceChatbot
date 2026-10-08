@@ -387,6 +387,26 @@
                                     <TextBlock Text="Wake word" Style="{StaticResource SectionLabel}"/>
                                     <TextBox x:Name="WakeWordBox" Text="hey assistant" IsEnabled="False"/>
                                 </StackPanel>
+
+                                <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
+
+                                <ToggleButton x:Name="BargeInToggle" Content="Interrupt by speaking" Margin="0,0,0,2"
+                                              Style="{StaticResource SwitchToggle}" Click="BargeInToggle_Click"
+                                              ToolTip="The microphone stays open while the assistant speaks. When you start talking, it stops and listens to you. Bluetooth headsets may switch to their lower-quality call audio while it listens."/>
+                                <TextBlock Text="Works best with headphones; speakers can trigger it"
+                                           Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Interrupt sensitivity" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="BargeInSensitivityValue" Grid.Column="1" Text="50" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="BargeInSensitivitySlider" Minimum="0" Maximum="100" Value="50"
+                                        SmallChange="5" LargeChange="10" IsEnabled="False"
+                                        ToolTip="Higher reacts to quieter speech. Lower it if room noise or the assistant's own voice interrupts it."/>
                             </StackPanel>
                         </Expander>
 

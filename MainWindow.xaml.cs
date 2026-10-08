@@ -267,6 +267,7 @@ public partial class MainWindow : Window
         VolumeSlider.Value = _settings.Volume;
         TtsToggle.IsChecked = _settings.TtsEnabled;
         ApplyStreamingSpeechSettings();
+        ApplyBargeInSettings();
         KokoroHostBox.Text = _settings.KokoroRemoteUrl;
         SelectKokoroModeCombo(_settings.KokoroMode);
         UpdateKokoroHint();
@@ -382,6 +383,7 @@ public partial class MainWindow : Window
         _settings.Volume = (int)VolumeSlider.Value;
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
         SaveStreamingSpeechSettings();
+        SaveBargeInSettings();
         _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
