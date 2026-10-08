@@ -948,6 +948,8 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(text)) return text;
         // Reasoning models: <think>...</think> is neither shown, saved nor spoken.
         text = ReasoningText.StripThinking(text);
+        // Roleplay narration such as "(The AI responds warmly.)" is neither shown nor spoken.
+        text = StageDirections.Strip(text);
         if (string.IsNullOrWhiteSpace(text)) return "";
         if (LooksLikeOnlyUnusedTokens(text))
             return "The model returned only special placeholder tokens, such as <unused49>. That usually means the llama.cpp server was launched with the wrong Gemma chat template or an incompatible/missing mmproj projector. Restart the Gemma 4 12B server with the correct Gemma template and matching mmproj, then try the image again.";
@@ -978,7 +980,7 @@ public partial class MainWindow : Window
     private static string CleanSpeechText(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
-        text = ReasoningText.StripThinking(text);
+        text = StageDirections.Strip(ReasoningText.StripThinking(text));
 
         var firstCodeBlock = Regex.Match(text, "```[\\s\\S]*?```");
         var cleaned = firstCodeBlock.Success

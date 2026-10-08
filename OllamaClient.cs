@@ -496,6 +496,8 @@ public class OllamaClient : IDisposable
 
                     try
                     {
+                        // With stream_options.include_usage the last chunk carries usage and no choices.
+                        CaptureOpenAiUsage(chunk.RootElement);
                         if (!chunk.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                             continue;
 
@@ -783,6 +785,8 @@ public class OllamaClient : IDisposable
             ["stream"] = stream,
             ["temperature"] = temperature
         };
+        if (stream)
+            body["stream_options"] = new { include_usage = true };
         if (maxTokens != 0)
             body["max_tokens"] = maxTokens;
         if (isGemma412B)

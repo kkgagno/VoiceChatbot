@@ -130,7 +130,10 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            AddSystemMessage($"{message}");
+            if (message.StartsWith("Transcription backend used", StringComparison.OrdinalIgnoreCase))
+                AddDiagnosticMessage(message);
+            else
+                AddSystemMessage($"{message}");
         });
     }
 

@@ -32,7 +32,9 @@ public partial class MainWindow
     /// </summary>
     private string GetEffectiveSystemPrompt(string? currentUserText = null, string? memoryQueryText = null)
     {
-        var basePrompt = SystemPromptBox.Text;
+        var basePrompt = SystemPromptBox.Text +
+            "\n\nReply only with what you would say. Do not describe your own tone, actions or feelings, " +
+            "for example in parentheses or asterisks.";
         if (IsCodeOrScriptRequest(currentUserText))
         {
             basePrompt += "\n\n" + GetCodeArtifactSystemInstruction(currentUserText);
@@ -213,7 +215,7 @@ public partial class MainWindow
         else
             message.Length--;
 
-        AddSystemMessage(message.ToString());
+        AddDiagnosticMessage(message.ToString());
     }
 
     private static string GetLastUserMessageContent(List<ChatMessage> messages)
@@ -410,7 +412,7 @@ public partial class MainWindow
             message.AppendLine($"Stop reason: {_ollama.LastStopReason}");
 
         var text = message.ToString().Trim();
-        AddSystemMessage(!hasUsage
+        AddDiagnosticMessage(!hasUsage
             ? "Tokens: backend did not return usage metadata."
             : text);
     }

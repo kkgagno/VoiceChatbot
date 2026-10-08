@@ -872,6 +872,9 @@
                                         ToolTip="Show today's log file in Explorer"/>
                                 <TextBlock Text="One file per day, kept for 7 days. Attach it when reporting a problem; saved keys and passwords are masked."
                                            Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
+                                <ToggleButton x:Name="ShowDiagnosticsToggle" Content="Show diagnostics in chat" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}" Click="ShowDiagnosticsToggle_Click" Margin="0,10,0,2"
+                                              ToolTip="Show token counts and the transcription backend after each message. They are always written to the log."/>
 
                                 <!-- Tray icon and global listen hotkey, see MainWindow.Tray.cs -->
                                 <Border Style="{StaticResource Divider}" Margin="0,12,0,12"/>

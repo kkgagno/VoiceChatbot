@@ -1,4 +1,5 @@
 using System;
+using System.Windows;
 using System.Windows.Controls;
 
 namespace VoiceChatbot;
@@ -9,9 +10,28 @@ public partial class MainWindow
 {
     private bool _loadingThemeChoices;
 
+    /// <summary>
+    /// Token counts and the transcription backend are debug details: they go to the log, and into
+    /// the chat only when "Show diagnostics in chat" is on.
+    /// </summary>
+    private void AddDiagnosticMessage(string text)
+    {
+        if (_settings?.ShowDiagnostics == true)
+            AddSystemMessage(text);
+        else
+            AppLog.Info(text);
+    }
+
+    private void ShowDiagnosticsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowDiagnostics = ShowDiagnosticsToggle.IsChecked == true;
+        SaveSettings();
+    }
+
     /// <summary>Called once from ApplySettings: fills the Theme combo.</summary>
     private void ApplyThemeSetting()
     {
+        ShowDiagnosticsToggle.IsChecked = _settings.ShowDiagnostics;
         _settings.Theme = ThemePalette.Normalize(_settings.Theme);
         _loadingThemeChoices = true;
         try
