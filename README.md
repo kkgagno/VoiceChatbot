@@ -54,6 +54,16 @@ Tools need a model and server with function calling: in Ollama, a model tagged *
 
 Finished replies are shown formatted: headings, bold, italic and strikethrough text, inline code, bullet, numbered and task lists, quotes, rules, tables and links (links open in your browser; only `http`, `https` and `mailto`). Code blocks keep their **Copy** button. While a reply streams it shows as plain text, and formatting is never read aloud. The phone remote and the scheduler window show plain text. Turn off **Format replies (Markdown)** in Chat Backend to get plain text in the chat too. The default system prompt now allows light Markdown; an unchanged old default is updated automatically, but if you wrote your own prompt, remove any "no Markdown" instruction from it to get formatted replies.
 
+### Hide model thinking
+
+**Hide model thinking** (Chat Backend, on by default, saved as `DisableModelThinking`) asks the server to skip the model's thinking phase, so replies start sooner:
+
+- llama.cpp and other OpenAI-compatible servers get `"chat_template_kwargs": {"enable_thinking": false}` and `"reasoning_format": "deepseek"`; thinking a model still writes then arrives separately and is ignored. These fields are not sent to `api.openai.com`.
+- Ollama gets `"think": false`.
+- A server that answers HTTP 400 to these fields gets the request again without them, and is then sent requests without them until the app restarts.
+
+Some local models write plain-text planning notes before (or instead of) their answer, such as `The user said "hi". Wait, they might want more. Let's try: "Hi!"`. These are never shown, saved or spoken, whether the switch is on or off: while the reply streams the bubble shows "Thinking...", and the finished bubble keeps only the answer (the text after the notes, after "Final answer:", "Response:" or "Reply:", or the quoted reply after "Let's try:"). When there is no answer at all, the bubble says so and nothing is spoken. The hidden notes are written to the app log. `<think>...</think>` blocks are removed as before.
+
 ## Voice requirements
 
 ### Speech input
@@ -119,19 +129,11 @@ Click **Test** to check the connection. If the server lists its voices, the voic
 
 Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
 
-### Speaking before the reply finishes
+### Speaking replies
 
-Replies are spoken sentence by sentence: Kokoro renders the next sentence while the current one plays, so speech starts after the first sentence instead of after the whole reply.
+A finished reply is spoken in one go: the whole reply goes to Kokoro in one request and then plays, which sounds the most natural. The **Replay Audio** and **Download Audio** buttons appear when it starts playing. **Stop** (or **Esc**) and the microphone button stop speech straight away, also while the audio is still being prepared; a reply that was stopped or cancelled is not spoken. After the reply, hands-free listening and the wake word resume as usual. Code blocks are never read aloud. (The **Interrupt by speaking** option has been removed; its old settings are ignored.)
 
-With **Stream responses** on, the assistant starts talking while the model is still writing. Turn this off with **Start speaking before the reply finishes** under **Voice Output** (saved as `StreamingSpeechEnabled`). Replies to code or script requests still wait until they are complete, and code blocks are never read aloud. **Stop** (or **Esc**) and the microphone button stop speech straight away. The **Replay Audio** and **Download Audio** buttons appear once the whole reply has been spoken.
-
-### Interrupting by speaking
-
-Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut the assistant off by talking. While it speaks, the app also watches the selected microphone. It measures the room (and any echo of its own voice) during the first 0.3 seconds of playback, then stops speaking once your voice stays clearly above that level for about 0.3 seconds. It shows "Interrupted - listening" and listens as if you had pressed **Listen**, keeping the words that interrupted it when you keep talking. Face gating still applies. The reply text keeps appearing in the chat.
-
-- Works best with headphones. Through speakers the assistant's own voice can interrupt it; lower **Interrupt sensitivity** if that happens. Higher sensitivity reacts to quieter speech.
-- Bluetooth headsets may switch to their lower-quality call audio while the microphone is open during speech.
-- Saved as `BargeInEnabled` and `BargeInSensitivity` (0-100, default 50) in `settings.json`.
+To have the assistant start talking while the model is still writing, turn on **Start speaking before the reply finishes** under **Voice Output** (off by default, needs **Stream responses**, saved as `StreamingSpeechEnabled`). The reply is then spoken in parts of at least about 120 characters, so Kokoro never gets a single word or short sentence on its own, and the next part is rendered while the current one plays. Replies to code or script requests still wait until they are complete. With this switch on, the Replay/Download buttons appear once the whole reply has been spoken. Updating turns the switch off once, because the earlier sentence-by-sentence speech sounded garbled; turn it back on if you prefer it.
 
 ### Wake word ("Hey Onyx")
 
@@ -140,7 +142,7 @@ Turn on **Only respond after the wake word** under **Voice Input** to have the a
 - Say the wake word and your request together: "Hey Onyx, what's the weather?" sends "what's the weather?".
 - Or say just "Hey Onyx", wait for the Windows "Asterisk" sound, then ask within about 8 seconds. That one request needs no wake word.
 - Everything else is ignored: no chat message and no reply (it is written to the log), and the app keeps listening. After each reply it waits for the wake word again.
-- **Listen**, **Mic**, the global hotkey and the tray's Listen item start a turn that does not need the wake word. A turn that interrupts the assistant (**Interrupt by speaking**) does need it.
+- **Listen**, **Mic**, the global hotkey and the tray's Listen item start a turn that does not need the wake word.
 - Change the phrase in the **Wake word** box (default `hey onyx`). It is matched in the Whisper transcript, ignoring case and punctuation, with the usual spellings of "hey" (hay, hi, hei, a) and small spelling differences in the name ("Hey, Onix.", "Hey Annex", "Hey on X"), but not other names such as "Hey Annie".
 - Saved as `AutoDetectVoice` (false when the switch is on) and `WakeWord` in `settings.json`. The old default "hey assistant" becomes "hey onyx"; a phrase you typed is kept. The openWakeWord detector ("Hey Jarvis") from 1.0.16 has been removed.
 

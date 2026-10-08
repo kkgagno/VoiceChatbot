@@ -407,41 +407,89 @@ public partial class MainWindow
         UpdateDocumentButtonLabel();
     }
 
-    // Speak the last assistant response
-    private void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
+    // Replies whose speech is being rendered right now; Esc treats the app as busy meanwhile.
+    private int _renderingReplySpeech;
+
+    /// <summary>
+    /// Speaks a finished reply in one go: the whole cleaned reply goes to Kokoro in one request, then
+    /// plays, and the bubble gets Replay/Download buttons for that file. One clip sounds natural, where
+    /// sentence-sized clips came out garbled. When it plays, SpeechFinished ends the turn once playback
+    /// is over or stopped; otherwise the turn ends here, so it always ends exactly once.
+    /// </summary>
+    private async void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
     {
-        // Stop/Esc/Clear Chat during the turn: the reply may still arrive, but it is not spoken.
-        if (!string.IsNullOrWhiteSpace(text) && TtsToggle.IsChecked == true && !IsCurrentTurnCancelled)
+        try
         {
-            SpeechSession? session = null;
-            try
-            {
-                var speechText = CleanSpeechText(text);
-                if (!string.IsNullOrWhiteSpace(speechText))
-                {
-                    // Speak sentence by sentence so playback starts after the first sentence is rendered.
-                    // The Replay/Download buttons appear once the whole reply has been spoken and saved.
-                    // Split first: an exception after BeginSpeechSession would leave a session that never completes.
-                    var sentences = SentenceChunker.Split(speechText);
-                    session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
-                    AddAudioButtonsWhenSpoken(session, assistantMessage);
-                    foreach (var sentence in sentences)
-                        session.Enqueue(sentence);
-                    session.Complete();
-                    // SpeechFinished ends the turn and restarts auto-listen.
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                // Never leave a half-started session playing behind the idle UI.
-                session?.Abandon();
-                AddSystemMessage($"Speech error: {ex.Message}");
-            }
+            if (await TrySpeakWholeReplyAsync(text, assistantMessage))
+                return; // SpeechFinished ends the turn and restarts auto-listen.
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Speech error: {ex.Message}");
         }
 
-        // Nothing to speak (TTS off, empty text, cancelled turn or a speech error).
-        FinishTurn();
+        // Nothing plays (TTS off, empty text, cancelled turn, stopped while rendering or a speech error).
+        if (!_shutdownStarted)
+            FinishTurn();
+    }
+
+    /// <summary>Returns true once the reply plays.</summary>
+    private async Task<bool> TrySpeakWholeReplyAsync(string text, AssistantMessageUi? assistantMessage)
+    {
+        // Stop/Esc/Clear Chat during the turn: the reply may still arrive, but it is not spoken.
+        if (string.IsNullOrWhiteSpace(text) || TtsToggle.IsChecked != true || IsCurrentTurnCancelled)
+            return false;
+
+        var speechText = CleanSpeechText(text);
+        if (string.IsNullOrWhiteSpace(speechText))
+            return false;
+
+        // Rendering takes a moment and the chat turn is already over meanwhile. Stop, Esc, the mic
+        // button and a replay call StopSpeaking, which ends the wait at once; Clear Chat and opening
+        // another conversation change the epoch.
+        var stopToken = _speech.SpeechStopToken;
+        var epoch = _conversationEpoch;
+        var render = _speech.CreateSpeechAudioFileAsync(speechText, GetAssistantAudioDirectory());
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _renderingReplySpeech++;
+        try
+        {
+            StateLabel.Text = "Preparing speech...";
+            using (stopToken.Register(() => stopped.TrySetResult()))
+                await Task.WhenAny(render, stopped.Task);
+        }
+        finally
+        {
+            _renderingReplySpeech--;
+        }
+
+        if (!render.IsCompleted || stopToken.IsCancellationRequested || _conversationEpoch != epoch || _shutdownStarted)
+        {
+            // Not wanted any more: delete the audio once Kokoro is done with it.
+            _ = render.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    _ = t.Exception;
+                else if (t.IsCompletedSuccessfully && !string.IsNullOrWhiteSpace(t.Result))
+                {
+                    try { File.Delete(t.Result); } catch { }
+                }
+            }, TaskScheduler.Default);
+            return false;
+        }
+
+        var audioPath = await render;
+        if (string.IsNullOrWhiteSpace(audioPath))
+        {
+            if (TtsToggle.IsChecked == true)
+                AppLog.Warn("The reply could not be spoken: Kokoro returned no audio.");
+            return false;
+        }
+
+        if (assistantMessage != null)
+            AddAudioButtons(assistantMessage, audioPath);
+        _speech.PlayAudioFile(audioPath);
+        return true;
     }
 
     private static string GetAssistantAudioDirectory()

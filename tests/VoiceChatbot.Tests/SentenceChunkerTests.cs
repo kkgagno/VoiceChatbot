@@ -339,6 +339,83 @@ public class SentenceChunkerTests
         Assert.DoesNotContain(expected, s => s.Contains("npm"));
         Assert.Equal("Sure!", expected[0]);
     }
+
+    // ---- EveryPieceAtLeastMinLength (live speech: no short clips) ----
+
+    private static SentenceChunker LongPieces(int minLength = 120) =>
+        new() { MinLength = minLength, EveryPieceAtLeastMinLength = true, StopAtFirstCodeBlock = true };
+
+    private const string LongReply =
+        "Sure! Here is a quick plan for your weekend trip to the mountains, starting on Saturday morning. " +
+        "Pack warm layers, because it gets cold at night. Bring a map too. " +
+        "On Sunday you can hike the lake trail, which takes about three hours and has great views at the top. " +
+        "Enjoy!";
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(1000)]
+    public void EveryPieceIsAtLeastTheMinimumLength(int pieceSize)
+    {
+        var pieces = Stream(LongReply, pieceSize, LongPieces());
+
+        Assert.True(pieces.Count >= 2);
+        Assert.All(pieces, p => Assert.True(p.Length >= 120, $"Too short: \"{p}\""));
+        Assert.Equal(Normalize(LongReply), Normalize(string.Join(" ", pieces)));
+    }
+
+    [Fact]
+    public void FirstSentenceIsMergedWithTheNextOnes()
+    {
+        var pieces = Stream(LongReply, 3, LongPieces());
+
+        Assert.StartsWith("Sure! Here is a quick plan", pieces[0]);
+        Assert.DoesNotContain("Sure!", pieces);
+    }
+
+    [Fact]
+    public void ShortLastSentenceIsJoinedToThePieceBeforeIt()
+    {
+        var pieces = Stream(LongReply, 4, LongPieces());
+
+        Assert.EndsWith("great views at the top. Enjoy!", pieces[^1]);
+        Assert.DoesNotContain("Enjoy!", pieces);
+    }
+
+    [Fact]
+    public void APieceWaitsUntilEnoughTextFollowsIt()
+    {
+        var chunker = LongPieces(minLength: 40);
+        var first = "This opening sentence is long enough to stand. ";
+
+        Assert.Empty(chunker.Append(first));
+        Assert.Empty(chunker.Append("Short one. "));     // only 11 characters follow the first piece
+        Assert.Equal(new[] { first.Trim() }, chunker.Append("And now enough text follows it here."));
+        Assert.Equal(new[] { "Short one. And now enough text follows it here." }, chunker.Flush());
+    }
+
+    [Fact]
+    public void AShortReplyIsOnePiece()
+    {
+        var pieces = Stream("Hi! What can I help you with?", 2, LongPieces());
+
+        Assert.Equal(new[] { "Hi! What can I help you with?" }, pieces);
+    }
+
+    [Fact]
+    public void PreambleOfAToolRoundIsSpokenWithTheAnswer()
+    {
+        var chunker = LongPieces();
+        var pieces = new List<string>(chunker.Append("Let me look that up."));
+        pieces.AddRange(chunker.Append("\n\n"));       // the tool round ends; the answer streams next
+        pieces.AddRange(chunker.Append(LongReply));
+        pieces.AddRange(chunker.Flush());
+
+        Assert.StartsWith("Let me look that up.\n\nSure!", pieces[0]);
+        Assert.All(pieces, p => Assert.True(p.Length >= 120));
+    }
+
+    private static string Normalize(string text) => string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }
 
 public class SpeechMarkdownTests

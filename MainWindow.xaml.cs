@@ -266,6 +266,7 @@ public partial class MainWindow : Window
         ContextWindowBox.Text = _settings.ContextWindow.ToString();
         ApplyToolSettings();
         ApplyMarkdownSettings();
+        HideThinkingToggle.IsChecked = _settings.DisableModelThinking;
         SilenceSlider.Value = _settings.SilenceTimeout;
         NoiseSlider.Value = _settings.NoiseSuppression;
         SelectTranscriptionBackendCombo(_settings.TranscriptionBackend);
@@ -274,7 +275,6 @@ public partial class MainWindow : Window
         VolumeSlider.Value = _settings.Volume;
         TtsToggle.IsChecked = _settings.TtsEnabled;
         ApplyStreamingSpeechSettings();
-        ApplyBargeInSettings();
         ApplyWhisperGpuSettings();
         ApplyWakeWordSettings();
         KokoroHostBox.Text = _settings.KokoroRemoteUrl;
@@ -360,6 +360,13 @@ public partial class MainWindow : Window
                 _settings.WakeWord = WakeWordText.DefaultPhrase;
         }
 
+        if (_settings.SettingsVersion < 3)
+        {
+            // Sentence-by-sentence speech was on by default and sounded garbled with Kokoro; whole
+            // replies are spoken in one go again. The switch can still be turned back on.
+            _settings.StreamingSpeechEnabled = false;
+        }
+
         _settings.SettingsVersion = AppSettings.CurrentSettingsVersion;
     }
 
@@ -442,6 +449,7 @@ public partial class MainWindow : Window
         ReadTokenBudgetFields();
         SaveToolSettings();
         SaveMarkdownSettings();
+        _settings.DisableModelThinking = HideThinkingToggle.IsChecked == true;
         _settings.InputLanguage = InputLangCombo.Text;
         _settings.SilenceTimeout = SilenceSlider.Value;
         _settings.NoiseSuppression = (int)NoiseSlider.Value;
@@ -456,7 +464,6 @@ public partial class MainWindow : Window
         _settings.Volume = (int)VolumeSlider.Value;
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
         SaveStreamingSpeechSettings();
-        SaveBargeInSettings();
         SaveWhisperGpuSettings();
         SaveWakeWordSettings();
         _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
@@ -516,6 +523,7 @@ public partial class MainWindow : Window
         _ollama.BaseUrl = _settings.OllamaUrl;
         _ollama.OpenAiBaseUrl = _settings.OpenAiCompatibleUrl;
         _ollama.OpenAiApiKey = _settings.OpenAiCompatibleApiKey;
+        _ollama.DisableThinking = _settings.DisableModelThinking;
         _hermesSsh.Host = _settings.HermesSshHost;
         _hermesSsh.Port = _settings.HermesSshPort;
         _hermesSsh.User = _settings.HermesSshUser;
@@ -960,16 +968,30 @@ public partial class MainWindow : Window
         HideToTrayIfMinimized();
     }
 
+    /// <summary>Shown instead of a reply that held nothing but the model's planning notes. Never spoken.</summary>
+    private const string PlanningNotesOnlyNotice =
+        "The model only sent its planning notes. Try again, or keep Hide model thinking on.";
+
     /// <summary>
     /// Removes noise (emojis, hashtags, citation artifacts, stray tags such as &lt;unused49&gt;) from a
     /// reply while keeping its Markdown: replies are rendered as Markdown on screen, and CleanSpeechText
-    /// strips the syntax before speaking. Code is left as written.
+    /// strips the syntax before speaking. Code is left as written. With <paramref name="hidePlanningNotes"/>
+    /// (off for summaries, which talk about "the user" on purpose) plain-text planning notes are removed.
     /// </summary>
-    private static string CleanDisplayText(string text, bool preserveCodeBlocks = false)
+    private static string CleanDisplayText(string text, bool preserveCodeBlocks = false, bool hidePlanningNotes = true)
     {
         if (string.IsNullOrEmpty(text)) return text;
         // Reasoning models: <think>...</think> is neither shown, saved nor spoken.
         text = ReasoningText.StripThinking(text);
+        // Plain-text planning notes ("The user said hi. Wait, ... Let's try: "Hi!"") are neither shown,
+        // saved nor spoken; they go to the app log instead.
+        if (hidePlanningNotes && PlanningNotes.TryExtractAnswer(text, out var answer, out var notes))
+        {
+            AppLog.Info($"Hid the model's planning notes ({notes.Length} characters):\n{TrimForLog(notes)}");
+            if (string.IsNullOrWhiteSpace(answer))
+                return PlanningNotesOnlyNotice;
+            text = answer;
+        }
         // Roleplay narration such as "(The AI responds warmly.)" is neither shown nor spoken.
         text = StageDirections.Strip(text);
         if (string.IsNullOrWhiteSpace(text)) return "";
@@ -983,6 +1005,18 @@ public partial class MainWindow : Window
 
         return MarkdownText.CleanForDisplay(RemoveCitationArtifacts(text));
     }
+
+    private void HideThinkingToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DisableModelThinking = HideThinkingToggle.IsChecked == true;
+        _ollama.DisableThinking = _settings.DisableModelThinking;
+        SaveSettings();
+    }
+
+    private static bool IsPlanningNotesOnlyNotice(string? text) =>
+        string.Equals(text?.Trim(), PlanningNotesOnlyNotice, StringComparison.Ordinal);
+
+    private static string TrimForLog(string text) => text.Length <= 4000 ? text : text[..4000] + "...";
 
     private static bool LooksLikeOnlyUnusedTokens(string text)
     {
@@ -1002,7 +1036,12 @@ public partial class MainWindow : Window
     private static string CleanSpeechText(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
-        text = StageDirections.Strip(ReasoningText.StripThinking(text));
+        if (IsPlanningNotesOnlyNotice(text)) return "";
+        text = ReasoningText.StripThinking(text);
+        // Planning notes are never spoken; only the answer found in them (CleanDisplayText logs them).
+        if (PlanningNotes.TryExtractAnswer(text, out var answer, out _))
+            text = answer;
+        text = StageDirections.Strip(text);
 
         var firstCodeBlock = Regex.Match(text, "```[\\s\\S]*?```");
         var cleaned = firstCodeBlock.Success

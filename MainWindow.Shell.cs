@@ -359,7 +359,7 @@ public partial class MainWindow
         }
         else if (e.Key == Key.Escape && !IsInsideOpenDropDown(e.OriginalSource as DependencyObject))
         {
-            var busy = _chatCts != null || _speech.CurrentState != VoiceState.Idle || _autoListening;
+            var busy = _chatCts != null || _renderingReplySpeech > 0 || _speech.CurrentState != VoiceState.Idle || _autoListening;
             if (busy)
             {
                 StopAll_Click(StopBtn, new RoutedEventArgs());

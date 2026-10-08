@@ -192,6 +192,11 @@
                                               Style="{StaticResource SwitchToggle}" Click="RenderMarkdownToggle_Click" Margin="0,12,0,2"/>
                                 <TextBlock Style="{StaticResource FieldHint}"
                                            Text="Shows headings, lists, tables, links and code blocks in finished replies. Formatting is never read aloud. Turn off for plain text."/>
+
+                                <ToggleButton x:Name="HideThinkingToggle" Content="Hide model thinking" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="HideThinkingToggle_Click" Margin="0,12,0,2"/>
+                                <TextBlock Style="{StaticResource FieldHint}"
+                                           Text="Asks the server to skip the model's thinking phase, so replies start sooner. Planning notes a model still writes (&quot;The user said hi... Let's try...&quot;) are never shown, saved or spoken."/>
                                 <!-- Personas: see MainWindow.Personas.cs -->
                                 <Border Style="{StaticResource Divider}" Margin="0,14,0,12"/>
                                 <TextBlock Text="PERSONAS" Style="{StaticResource SubHeading}"/>
@@ -313,12 +318,12 @@
                             <StackPanel>
                                 <ToggleButton x:Name="TtsToggle" Content="Speak responses" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="TtsToggle_Click"/>
-                                <ToggleButton x:Name="StreamingSpeechToggle" IsChecked="True" Margin="0,2,0,2"
+                                <ToggleButton x:Name="StreamingSpeechToggle" IsChecked="False" Margin="0,2,0,2"
                                               Style="{StaticResource SwitchToggle}" Click="StreamingSpeechToggle_Click"
-                                              ToolTip="Speak each sentence as soon as the model writes it instead of waiting for the whole reply.">
+                                              ToolTip="Speak the reply in parts of a few sentences while the model is still writing it, instead of waiting for the whole reply.">
                                     <TextBlock Text="Start speaking before the reply finishes" TextWrapping="Wrap"/>
                                 </ToggleButton>
-                                <TextBlock Text="Needs Stream responses. Code and script requests still wait for the full reply."
+                                <TextBlock Text="Off: the whole reply is spoken in one go, which sounds most natural. On needs Stream responses; code and script requests still wait for the full reply."
                                            Style="{StaticResource FieldHint}" Margin="0,0,0,8"/>
 
                                 <TextBlock Text="KOKORO SERVER" Style="{StaticResource SubHeading}"/>
@@ -481,26 +486,6 @@
                                     <TextBox x:Name="WakeWordBox" Text="hey onyx"
                                              ToolTip="Recognized however Whisper spells it: &quot;Hey, Onyx.&quot;, &quot;hi onix&quot; and similar all count."/>
                                 </StackPanel>
-
-                                <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
-
-                                <ToggleButton x:Name="BargeInToggle" Content="Interrupt by speaking" Margin="0,0,0,2"
-                                              Style="{StaticResource SwitchToggle}" Click="BargeInToggle_Click"
-                                              ToolTip="The microphone stays open while the assistant speaks. When you start talking, it stops and listens to you. Bluetooth headsets may switch to their lower-quality call audio while it listens."/>
-                                <TextBlock Text="Works best with headphones; speakers can trigger it"
-                                           Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Interrupt sensitivity" Style="{StaticResource SectionLabel}"/>
-                                    <TextBlock x:Name="BargeInSensitivityValue" Grid.Column="1" Text="50" Style="{StaticResource SliderValue}"/>
-                                </Grid>
-                                <Slider x:Name="BargeInSensitivitySlider" Minimum="0" Maximum="100" Value="50"
-                                        SmallChange="5" LargeChange="10" IsEnabled="False"
-                                        ToolTip="Higher reacts to quieter speech. Lower it if room noise or the assistant's own voice interrupts it."/>
                             </StackPanel>
                         </Expander>
 

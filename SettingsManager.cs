@@ -12,7 +12,7 @@ namespace VoiceChatbot;
 public class AppSettings
 {
     /// <summary>Version of the one-time fixes MainWindow applied to these settings (0 = none yet).</summary>
-    public const int CurrentSettingsVersion = 2;
+    public const int CurrentSettingsVersion = 3;
     public int SettingsVersion { get; set; }
 
     public const int DefaultImageWidth = 1080;
@@ -43,6 +43,9 @@ public class AppSettings
     public bool UseTools { get; set; } = true;
     // Show assistant replies as formatted Markdown (headings, lists, tables, links). Off shows plain text.
     public bool RenderMarkdown { get; set; } = true;
+    // "Hide model thinking": ask the server to skip the model's thinking phase (OllamaClient). Planning
+    // notes a model still writes are kept out of the chat, the history and speech either way (PlanningNotes).
+    public bool DisableModelThinking { get; set; } = true;
 
     // Voice Input
     public string InputLanguage { get; set; } = "en-US";
@@ -64,12 +67,9 @@ public class AppSettings
     // Run Whisper.net on the GPU through Vulkan when one is available. Off (the default) uses the CPU:
     // on some AMD integrated GPUs the Vulkan build repeats or drops words.
     public bool WhisperUseGpu { get; set; } = false;
-    // Speak each sentence of a streamed reply as soon as it is written.
-    public bool StreamingSpeechEnabled { get; set; } = true;
-    // Stop speaking when the user starts talking over the assistant (barge-in), then listen.
-    public bool BargeInEnabled { get; set; } = false;
-    // 0 = needs loud, clear speech to interrupt; 100 = quiet speech is enough.
-    public int BargeInSensitivity { get; set; } = 50;
+    // Speak a streamed reply in pieces of a few sentences while it is written. Off (the default) speaks
+    // the whole reply in one go once it is finished, which sounds more natural with Kokoro.
+    public bool StreamingSpeechEnabled { get; set; } = false;
 
     // Kokoro text-to-speech. Leave the remote URL blank to use only the bundled local server.
     // Accepts "192.168.1.50", "192.168.1.50:8880" or "http://host:8880/v1".

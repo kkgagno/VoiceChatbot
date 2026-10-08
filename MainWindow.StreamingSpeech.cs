@@ -8,7 +8,12 @@ namespace VoiceChatbot;
 public partial class MainWindow
 {
     // ==================== Streaming speech ====================
-    // Speaks a streamed reply sentence by sentence while the model is still writing it.
+    // "Start speaking before the reply finishes" (off by default): speaks a streamed reply in pieces of
+    // a few sentences while the model is still writing it. With the switch off, the whole reply is
+    // spoken in one go once it is finished (SpeakLastResponse).
+
+    // Kokoro garbles very short clips ("Sure!"), so every piece holds at least this many characters.
+    private const int StreamingSpeechMinPieceLength = 120;
 
     private sealed class StreamingSpeech
     {
@@ -17,12 +22,25 @@ public partial class MainWindow
         public SpeechSession Session { get; }
 
         // Like CleanSpeechText, only the text before the first code block is spoken.
-        public SentenceChunker Chunker { get; private set; } = new() { StopAtFirstCodeBlock = true };
+        public SentenceChunker Chunker { get; private set; } = NewChunker();
+
+        private static SentenceChunker NewChunker() => new()
+        {
+            StopAtFirstCodeBlock = true,
+            MinLength = StreamingSpeechMinPieceLength,
+            EveryPieceAtLeastMinLength = true
+        };
 
         /// <summary>Starts a fresh reply segment (used between tool-call rounds).</summary>
         public void ResetChunker()
         {
-            Chunker = new SentenceChunker { StopAtFirstCodeBlock = true };
+            Chunker = NewChunker();
+            ResetRoundText();
+        }
+
+        /// <summary>Forgets the streamed text of a tool-call round; the chunker keeps any unspoken text.</summary>
+        public void ResetRoundText()
+        {
             StreamedText.Clear();
             FedText = "";
         }
@@ -87,6 +105,14 @@ public partial class MainWindow
 
             // Reasoning models write <think>...</think> first; only the answer after it is spoken.
             var visible = ReasoningText.StripThinking(speech.StreamedText.ToString(), streaming: true);
+            // Plain-text planning notes ("The user said hi. Wait, ...") are never spoken; the answer
+            // taken out of them is spoken in one go once the reply is finished.
+            if (PlanningNotes.LooksLikeStart(visible))
+            {
+                speech.UseFinalText = true;
+                return;
+            }
+
             if (!visible.StartsWith(speech.FedText, StringComparison.Ordinal))
             {
                 // A think block opened mid-reply: speak the cleaned final text instead.
@@ -129,7 +155,7 @@ public partial class MainWindow
 
         if (speech.Session.IsCancelled)
         {
-            // Stop, the mic button, a replay or barge-in cut this reply's speech short: stay quiet,
+            // Stop, the mic button or a replay cut this reply's speech short: stay quiet,
             // even when the reply was going to be spoken from its final text.
             SetUIState("idle", "Ready");
             _speech.ReadyForNextSpeech();
@@ -142,7 +168,8 @@ public partial class MainWindow
         if (speech.UseFinalText ||
             !string.Equals(streamedText, finalText, StringComparison.Ordinal) ||
             LooksLikeOnlyUnusedTokens(streamedText) ||
-            LooksLikeLeakedReasoningDump(streamedText))
+            LooksLikeLeakedReasoningDump(streamedText) ||
+            PlanningNotes.LooksLikeStart(ReasoningText.StripThinking(streamedText)))
         {
             speech.Session.Abandon();
             return false;
@@ -164,8 +191,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// A tool-call round ended: speak any unfinished preamble sentence ("Let me look that up.")
-    /// and start the answer that follows the tool results as a new segment of the same session.
+    /// A tool-call round ended. A short preamble ("Let me look that up.") is kept and spoken together
+    /// with the answer that follows the tool results, so it never becomes a short clip on its own.
     /// </summary>
     private void EndStreamingSpeechRound(StreamingSpeech? speech)
     {
@@ -174,7 +201,17 @@ public partial class MainWindow
 
         try
         {
-            foreach (var sentence in speech.Chunker.Flush())
+            if (speech.Chunker.SawCodeBlock)
+            {
+                // Text after a code block is ignored by this chunker; the answer needs a fresh one.
+                foreach (var sentence in speech.Chunker.Flush())
+                    EnqueueSpeechSentence(speech.Session, sentence);
+                speech.ResetChunker();
+                return;
+            }
+
+            // A paragraph break between the preamble and the answer.
+            foreach (var sentence in speech.Chunker.Append("\n\n"))
                 EnqueueSpeechSentence(speech.Session, sentence);
         }
         catch (Exception ex)
@@ -182,7 +219,7 @@ public partial class MainWindow
             AddSystemMessage($"Speech error: {ex.Message}");
         }
 
-        speech.ResetChunker();
+        speech.ResetRoundText();
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -18,8 +19,19 @@ public class OllamaClient : IDisposable
     private string _baseUrl = "http://localhost:11434";
     private string _openAiBaseUrl = "http://localhost:8080/v1";
     private string _openAiApiKey = "";
+    // Base URLs whose server rejected the skip-thinking fields with HTTP 400 in this session.
+    private readonly HashSet<string> _thinkingFieldsRejected = new(StringComparer.OrdinalIgnoreCase);
 
     public string Provider { get; set; } = "Ollama";
+
+    /// <summary>
+    /// "Hide model thinking": ask the server to skip the model's thinking phase. OpenAI-compatible servers
+    /// such as llama.cpp (not api.openai.com) get chat_template_kwargs.enable_thinking = false and
+    /// reasoning_format = deepseek, so thinking that is still written arrives in reasoning_content, which
+    /// is ignored; Ollama gets think = false.
+    /// </summary>
+    public bool DisableThinking { get; set; } = true;
+
     public string LastFinishReason { get; private set; } = "";
     public string LastStopReason { get; private set; } = "";
     public int? LastPromptTokens { get; private set; }
@@ -104,9 +116,9 @@ public class OllamaClient : IDisposable
         if (IsOpenAiCompatible)
             return await ChatOpenAiCompatibleAsync(model, messages, systemPrompt, temperature, maxTokens, ct);
 
-        var body = BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: false);
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync($"{_baseUrl}/api/chat", content, ct);
+        using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
+            BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: false, skipThinking: skipThinking)),
+            HttpCompletionOption.ResponseContentRead, ct);
         await EnsureSuccessWithBodyAsync(resp, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(json);
@@ -137,11 +149,9 @@ public class OllamaClient : IDisposable
 
         try
         {
-            var body = BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true);
-            var reqContent = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-            var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat") { Content = reqContent };
-
-            using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
+                BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, skipThinking: skipThinking)),
+                HttpCompletionOption.ResponseHeadersRead, ct);
             await EnsureSuccessWithBodyAsync(resp, ct);
 
             var fullResponse = new StringBuilder();
@@ -225,12 +235,9 @@ public class OllamaClient : IDisposable
         double temperature, int maxTokens, int contextTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken,
         CancellationToken ct)
     {
-        var body = BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, tools);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat")
-        {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
+            BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, tools, skipThinking)),
+            HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
 
         var content = new StringBuilder();
@@ -283,10 +290,9 @@ public class OllamaClient : IDisposable
     private async Task<ChatTurnResult> StreamOpenAiTurnAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken, CancellationToken ct)
     {
-        var body = BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, tools);
-        using var request = CreateOpenAiRequest(HttpMethod.Post, $"{_openAiBaseUrl}/chat/completions");
-        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
+            BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, tools, skipThinking)),
+            HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
 
         var content = new StringBuilder();
@@ -444,10 +450,9 @@ public class OllamaClient : IDisposable
     private async Task<string> ChatOpenAiCompatibleAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, CancellationToken ct)
     {
-        var body = BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: false);
-        using var request = CreateOpenAiRequest(HttpMethod.Post, $"{_openAiBaseUrl}/chat/completions");
-        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var resp = await _http.SendAsync(request, ct);
+        using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
+            BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: false, skipThinking: skipThinking)),
+            HttpCompletionOption.ResponseContentRead, ct);
         await EnsureSuccessWithBodyAsync(resp, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(json);
@@ -464,11 +469,9 @@ public class OllamaClient : IDisposable
     {
         try
         {
-            var body = BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true);
-            using var request = CreateOpenAiRequest(HttpMethod.Post, $"{_openAiBaseUrl}/chat/completions");
-            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-
-            using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
+                BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, skipThinking: skipThinking)),
+                HttpCompletionOption.ResponseHeadersRead, ct);
             await EnsureSuccessWithBodyAsync(resp, ct);
 
             var fullResponse = new StringBuilder();
@@ -674,6 +677,70 @@ public class OllamaClient : IDisposable
         return null;
     }
 
+    private HttpRequestMessage CreateOllamaChatRequest(object body) =>
+        new(HttpMethod.Post, $"{_baseUrl}/api/chat")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+
+    private HttpRequestMessage CreateOpenAiChatRequest(object body)
+    {
+        var request = CreateOpenAiRequest(HttpMethod.Post, $"{_openAiBaseUrl}/chat/completions");
+        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        return request;
+    }
+
+    /// <summary>
+    /// Sends a chat request made by <paramref name="createRequest"/> (true = with the fields that skip
+    /// the model's thinking, see <see cref="DisableThinking"/>). When the server answers HTTP 400 to a
+    /// request with those fields, it is sent once more without them; when that works, they are left out
+    /// for that server for the rest of the session.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendChatRequestAsync(string baseUrl, Func<bool, HttpRequestMessage> createRequest,
+        HttpCompletionOption completion, CancellationToken ct)
+    {
+        var skipThinking = ShouldSendSkipThinkingFields(baseUrl);
+        var response = await SendAsync(createRequest(skipThinking)).ConfigureAwait(false);
+        if (!skipThinking || response.StatusCode != HttpStatusCode.BadRequest)
+            return response;
+
+        string problem;
+        try { problem = (await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)).Trim(); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { problem = ""; }
+        finally { response.Dispose(); }
+        if (problem.Length > 300)
+            problem = problem[..300] + "...";
+
+        var retry = await SendAsync(createRequest(false)).ConfigureAwait(false);
+        if (retry.IsSuccessStatusCode)
+        {
+            lock (_thinkingFieldsRejected)
+                _thinkingFieldsRejected.Add(baseUrl);
+            AppLog.Info($"The chat server at {baseUrl} rejected the request to skip model thinking (HTTP 400: {problem}). " +
+                        "Requests to it are sent without it for the rest of this session.");
+        }
+        return retry;
+
+        async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+        {
+            using (request)
+                return await _http.SendAsync(request, completion, ct).ConfigureAwait(false);
+        }
+    }
+
+    private bool ShouldSendSkipThinkingFields(string baseUrl)
+    {
+        if (!DisableThinking)
+            return false;
+        // OpenAI's own API rejects fields it does not know.
+        if (IsOpenAiCompatible && Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) &&
+            uri.Host.Equals("api.openai.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        lock (_thinkingFieldsRejected)
+            return !_thinkingFieldsRejected.Contains(baseUrl);
+    }
+
     private HttpRequestMessage CreateOpenAiRequest(HttpMethod method, string url)
     {
         var request = new HttpRequestMessage(method, url);
@@ -702,7 +769,8 @@ public class OllamaClient : IDisposable
     }
 
     private static object BuildChatBody(string model, List<ChatMessage> messages, string systemPrompt,
-        double temperature, int maxTokens, int contextTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null)
+        double temperature, int maxTokens, int contextTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null,
+        bool skipThinking = false)
     {
         var msgList = new List<object>();
         if (!string.IsNullOrWhiteSpace(systemPrompt))
@@ -728,29 +796,24 @@ public class OllamaClient : IDisposable
         if (contextTokens != 0)
             optionsDict["num_ctx"] = contextTokens;
 
-        if (tools is { Count: > 0 })
+        var body = new Dictionary<string, object>
         {
-            return new
-            {
-                model,
-                messages = msgList,
-                stream,
-                options = optionsDict,
-                tools = ChatToolWire.ToolsPayload(tools)
-            };
-        }
-
-        return new
-        {
-            model,
-            messages = msgList,
-            stream,
-            options = optionsDict
+            ["model"] = model,
+            ["messages"] = msgList,
+            ["stream"] = stream,
+            ["options"] = optionsDict
         };
+        if (tools is { Count: > 0 })
+            body["tools"] = ChatToolWire.ToolsPayload(tools);
+        // Thinking models (Qwen3, DeepSeek R1, gpt-oss...) answer without their thinking phase.
+        if (skipThinking)
+            body["think"] = false;
+
+        return body;
     }
 
     private static object BuildOpenAiChatBody(string model, List<ChatMessage> messages, string systemPrompt,
-        double temperature, int maxTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null)
+        double temperature, int maxTokens, bool stream, IReadOnlyList<ToolSpec>? tools = null, bool skipThinking = false)
     {
         var msgList = new List<object>();
         var isGemma412B = IsGemma412BModel(model);
@@ -796,6 +859,13 @@ public class OllamaClient : IDisposable
         }
         if (tools is { Count: > 0 })
             body["tools"] = ChatToolWire.ToolsPayload(tools);
+        if (skipThinking)
+        {
+            // llama.cpp: the chat template skips the thinking phase, and thinking the model still writes
+            // is moved to reasoning_content, which ExtractOpenAiChoiceText ignores.
+            body["chat_template_kwargs"] = new Dictionary<string, object> { ["enable_thinking"] = false };
+            body["reasoning_format"] = "deepseek";
+        }
 
         return body;
     }

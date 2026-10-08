@@ -43,6 +43,7 @@ public partial class SpeechEngine : IDisposable
     private MemoryStream? _audioBuffer;
     private NAudio.Wave.WaveOutEvent? _waveOut;
     private ManualResetEvent? _playbackStopSignal;
+    private CancellationTokenSource _speechStopCts = new();
     private System.Diagnostics.Process? _kokoroProcess;
     private System.Diagnostics.Process? _kokoroServerProcess;
     private readonly object _kokoroServerLock = new();
@@ -391,7 +392,6 @@ public partial class SpeechEngine : IDisposable
 
         // Audio buffer to store PCM data
         _audioBuffer = new MemoryStream();
-        SeedRecordingWithBargeInAudio();
 
         try
         {
@@ -512,7 +512,6 @@ public partial class SpeechEngine : IDisposable
             _voiceBucketCount--;
         }
 
-        KeepOrDropBargeInAudio();
         TrimAudioBeforeSpeech();
 
         if (WakeTurnHeardNothing())
@@ -539,11 +538,11 @@ public partial class SpeechEngine : IDisposable
         Math.Clamp((int)Math.Round(SilenceTimeout * 1000 / AudioBucketMilliseconds), 5, 100);
 
     // Capture thread: until voice is heard keep only the last ~400 ms, so the words are not preceded
-    // by seconds of silence or background noise. Seeded barge-in audio is left to KeepOrDropBargeInAudio.
+    // by seconds of silence or background noise.
     private void TrimAudioBeforeSpeech()
     {
         var buffer = _audioBuffer;
-        if (_voiceDetected || _bargeInSeedBytes > 0 || buffer == null)
+        if (_voiceDetected || buffer == null)
             return;
 
         try
@@ -709,7 +708,15 @@ public partial class SpeechEngine : IDisposable
     }
 
     // ==================== TTS ====================
-    // Replies are spoken through SpeechSession (BeginSpeechSession), which Stop cancels.
+    // A finished reply is rendered in one Kokoro request (CreateSpeechAudioFileAsync) and played with
+    // PlayAudioFile. "Start speaking before the reply finishes" speaks it in pieces through
+    // SpeechSession (BeginSpeechSession). StopSpeaking stops both.
+
+    /// <summary>
+    /// Cancelled by the next StopSpeaking (Stop, Esc, the mic button, a replay). A reply that is still
+    /// being rendered watches it, so it is dropped instead of played.
+    /// </summary>
+    public CancellationToken SpeechStopToken => Volatile.Read(ref _speechStopCts).Token;
 
     private (string Voice, string Lang) ResolveKokoroVoice()
     {
@@ -742,6 +749,11 @@ public partial class SpeechEngine : IDisposable
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return;
 
+        // A clip that is still playing (a replay) is replaced without raising SpeechFinished;
+        // this playback raises it once when it ends.
+        var previous = _playbackStopSignal;
+        if (previous != null)
+            _supersededPlaybackSignal = previous;
         StopSpeaking();
         try { _waveIn?.StopRecording(); } catch { }
         _isRecording = false;
@@ -1531,39 +1543,48 @@ public partial class SpeechEngine : IDisposable
 
     private void PlayWavOnThread(string filePath, bool deleteAfterPlayback = true)
     {
+        // Published before the thread starts, so StopSpeaking right after PlayAudioFile stops this clip too.
+        var done = new ManualResetEvent(false);
+        _playbackStopSignal = done;
         var thread = new Thread(() =>
         {
-            ManualResetEvent? done = null;
+            NAudio.Wave.WaveFileReader? reader = null;
+            NAudio.Wave.WaveOutEvent? output = null;
             try
             {
-                using var reader = new NAudio.Wave.WaveFileReader(filePath);
-                done = new ManualResetEvent(false);
-                _playbackStopSignal = done;
-                _waveOut = new NAudio.Wave.WaveOutEvent();
-                _waveOut.Volume = Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
-                _waveOut.PlaybackStopped += (s, e) =>
+                reader = new NAudio.Wave.WaveFileReader(filePath);
+                output = new NAudio.Wave.WaveOutEvent();
+                output.Volume = Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
+                output.PlaybackStopped += (s, e) =>
                 {
-                    done.Set();
+                    try { done.Set(); } catch { }
                 };
-                _waveOut.Init(reader);
-                _waveOut.Play();
-                StartBargeInMonitor();
-                done.WaitOne(TimeSpan.FromMinutes(10));
+                output.Init(reader);
+                _waveOut = output;
+                if (!done.WaitOne(0))
+                {
+                    output.Play();
+                    done.WaitOne(TimeSpan.FromMinutes(10));
+                }
             }
             catch (Exception ex)
             {
+                Log?.Invoke($"[TTS] Could not play speech: {ex.Message}");
             }
             finally
             {
+                // Only clear the fields while they still belong to this clip; a newer one may own them.
+                Interlocked.CompareExchange(ref _waveOut, null, output);
+                try { output?.Stop(); } catch { }
+                try { output?.Dispose(); } catch { }
+                try { reader?.Dispose(); } catch { }
                 if (deleteAfterPlayback)
                 {
                     try { File.Delete(filePath); } catch { }
                 }
-                try { _waveOut?.Dispose(); } catch { }
-                _waveOut = null;
-                _playbackStopSignal = null;
-                // A speech session that took over playback raises SpeechFinished itself.
-                if (done == null || !ReferenceEquals(done, _supersededPlaybackSignal))
+                Interlocked.CompareExchange(ref _playbackStopSignal, null, done);
+                // A newer clip or a speech session that took over playback raises SpeechFinished itself.
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _supersededPlaybackSignal, null, done), done))
                 {
                     SetState(VoiceState.Idle);
                     SpeechFinished?.Invoke();
@@ -1579,9 +1600,6 @@ public partial class SpeechEngine : IDisposable
         if (this.CurrentState != newState)
         {
             this.CurrentState = newState;
-            // The barge-in microphone only runs while speaking.
-            if (newState != VoiceState.Speaking)
-                StopBargeInMonitor();
             this.StateChanged?.Invoke(newState);
         }
     }
@@ -1608,6 +1626,8 @@ public partial class SpeechEngine : IDisposable
 
     public void StopSpeaking()
     {
+        // A reply that is still being rendered is not played.
+        try { Interlocked.Exchange(ref _speechStopCts, new CancellationTokenSource()).Cancel(); } catch { }
         // Cancel a sentence-by-sentence speech session: drops its queue and stops its clip.
         CancelSpeechSession();
         // Stop audio playback
@@ -1634,7 +1654,6 @@ public partial class SpeechEngine : IDisposable
         if (_disposed) return;
         _disposed = true;
         StopAll();
-        StopBargeInMonitor();
         if (_kokoroServerProcess != null && !_kokoroServerProcess.HasExited)
         {
             try { _kokoroServerProcess.Kill(true); } catch { }

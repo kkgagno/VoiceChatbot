@@ -52,6 +52,11 @@ public partial class MainWindow
     /// </summary>
     private static string GetStreamingDisplayText(string text, bool preserveCodeBlocks)
     {
+        // Planning notes ("The user said hi. Wait, ..."): the answer taken out of them replaces this
+        // when the reply is complete.
+        if (PlanningNotes.LooksLikeStart(ReasoningText.StripThinking(text)))
+            return "Thinking...";
+
         var cleaned = CleanDisplayText(text, preserveCodeBlocks);
         return preserveCodeBlocks ? cleaned : MarkdownText.ToPlainText(cleaned);
     }

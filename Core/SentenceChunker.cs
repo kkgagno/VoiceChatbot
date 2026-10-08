@@ -38,9 +38,17 @@ public sealed class SentenceChunker
     private bool _inCode;
     private bool _stopped;
     private bool _returnedAny;
+    private int _heldEnd;                          // EveryPieceAtLeastMinLength: end of a piece waiting for text after it
 
     /// <summary>Sentences shorter than this are merged into the next one (except the first sentence).</summary>
     public int MinLength { get; init; } = DefaultMinLength;
+
+    /// <summary>
+    /// When true, no piece is shorter than <see cref="MinLength"/> unless the whole text is: the first
+    /// sentences are merged too, and a piece is only returned once at least MinLength characters follow it,
+    /// so a short last sentence is joined to the piece before it instead of being returned on its own.
+    /// </summary>
+    public bool EveryPieceAtLeastMinLength { get; init; }
 
     /// <summary>A sentence longer than this may also end at a comma, semicolon or colon.</summary>
     public int MaxLength { get; init; } = DefaultMaxLength;
@@ -90,6 +98,7 @@ public sealed class SentenceChunker
         _inCode = false;
         _stopped = false;
         _returnedAny = false;
+        _heldEnd = 0;
         return sentences;
     }
 
@@ -148,8 +157,13 @@ public sealed class SentenceChunker
 
     private void Scan(List<string> sentences, bool final)
     {
-        while (_scan < _text.Length)
+        while (true)
         {
+            if (ReleaseHeldPiece(sentences))
+                continue;
+            if (_scan >= _text.Length)
+                return;
+
             var c = _text[_scan];
             Decision decision;
             int end;
@@ -177,12 +191,32 @@ public sealed class SentenceChunker
             if (decision == Decision.NeedMore)
                 return;
 
-            if (decision == Decision.Split && Emit(sentences, end, force: false))
-                continue;
+            if (decision == Decision.Split)
+            {
+                if (EveryPieceAtLeastMinLength)
+                    HoldPiece(end);
+                else if (Emit(sentences, end, force: false))
+                    continue;
+            }
 
             _scan = Math.Max(end, _scan + 1);
         }
     }
+
+    // EveryPieceAtLeastMinLength: remembers the first place where a long enough piece could end.
+    private void HoldPiece(int end)
+    {
+        if (_heldEnd > 0)
+            return;
+
+        var piece = _text.ToString(0, end).Trim();
+        if (piece.Length >= MinLength && piece.Any(char.IsLetterOrDigit))
+            _heldEnd = end;
+    }
+
+    // Returns the held piece once enough text follows it that the next piece cannot be too short.
+    private bool ReleaseHeldPiece(List<string> sentences) =>
+        _heldEnd > 0 && _text.Length - _heldEnd >= MinLength && Emit(sentences, _heldEnd, force: true);
 
     // Returns the sentence text[0..end) when it is long enough (or forced) and removes it from the buffer.
     private bool Emit(List<string> sentences, int end, bool force)
@@ -201,6 +235,7 @@ public sealed class SentenceChunker
         RememberLinePrefix(end);
         _text.Remove(0, end);
         _scan = 0;
+        _heldEnd = 0;
         return true;
     }
 

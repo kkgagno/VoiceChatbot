@@ -291,6 +291,14 @@ public partial class MainWindow
 
             var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(answer);
             var cleaned = CleanDisplayText(answer, preserveCodeBlocks: isCodeResponse);
+            if (IsPlanningNotesOnlyNotice(cleaned))
+            {
+                // Only planning notes: show the note, but do not save or speak it.
+                assistantMessage.Body.Text = cleaned;
+                CancelStreamingSpeechAndFinishTurn(speech);
+                return true;
+            }
+
             if (string.IsNullOrWhiteSpace(cleaned))
             {
                 assistantMessage.Body.Text = "";

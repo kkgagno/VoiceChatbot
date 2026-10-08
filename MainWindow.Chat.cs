@@ -886,7 +886,13 @@ public partial class MainWindow
                         {
                             var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
                             var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
-                            if (!string.IsNullOrWhiteSpace(cleaned))
+                            if (IsPlanningNotesOnlyNotice(cleaned))
+                            {
+                                // Only planning notes: show the note, but do not save or speak it.
+                                assistantMessage.Body.Text = cleaned;
+                                CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                            }
+                            else if (!string.IsNullOrWhiteSpace(cleaned))
                             {
                                 SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
                                 _history.Add("assistant", cleaned);
@@ -946,6 +952,14 @@ public partial class MainWindow
 
                 var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(response);
                 var cleaned = CleanDisplayText(response, preserveCodeBlocks: isCodeResponse);
+                if (IsPlanningNotesOnlyNotice(cleaned))
+                {
+                    // Only planning notes: show the note, but do not save or speak it.
+                    assistantMessage.Body.Text = cleaned;
+                    FinishTurn();
+                    return;
+                }
+
                 SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
                 _history.Add("assistant", cleaned);
                 SpeakLastResponse(cleaned, assistantMessage);

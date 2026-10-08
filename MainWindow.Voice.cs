@@ -52,7 +52,12 @@ public partial class MainWindow
     {
         // A phone request that took the busy state meanwhile gives it back when it is done.
         if (!_phoneOwnsBusyState)
+        {
             SetUIState("idle", "Ready");
+            // The mic button can start listening before the stopped reply's turn ends.
+            if (_speech.CurrentState == VoiceState.Listening)
+                ShowListeningStatus();
+        }
         _speech.ReadyForNextSpeech();
         ResumeAutoListenIfActive();
     }
