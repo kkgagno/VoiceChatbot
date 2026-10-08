@@ -932,7 +932,25 @@ public partial class SpeechEngine : IDisposable
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await process.WaitForExitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Stop the NPU command as well, so the caller's lock is only released once the NPU is free again.
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    using var exitWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await process.WaitForExitAsync(exitWait.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Already exited, or could not be stopped.
+                }
+                throw;
+            }
 
             if (process.ExitCode != 0)
             {

@@ -177,6 +177,7 @@ const MIN_FONT = 12, MAX_FONT = 40, DEFAULT_FONT = 18;
 const MIN_SPLIT = 15, MAX_SPLIT = 85, DEFAULT_SPLIT = 60;
 const STATUS_MESSAGE_MS = 6000;
 const CHUNK_TIMEOUT_MS = 120000;
+const UNREACHABLE_RETRY_MAX_MS = 10000; // while the PC cannot be reached, a chunk is retried at most this far apart
 const NO_AUDIO_SHARED = 'No audio was shared. Press Start again, choose the tab (or Entire screen) and turn on "Share tab audio" (or "Share system audio") before you press Share.';
 
 // ==================== Text helpers (same rules as Core/LiveTranscriptText) ====================
@@ -548,10 +549,12 @@ const state = {
   liveNotesFailed: false
 };
 const settings = { fontSize: DEFAULT_FONT, liveNotes: false, intervalMinutes: CFG.defaultInterval, style: CFG.defaultStyle, source: 'mic', split: DEFAULT_SPLIT };
-const queue = [];          // recorded chunks waiting to be transcribed, oldest first
+const queue = [];          // recorded chunks waiting to be transcribed, oldest first (and Clear's mark, see clearSession)
 const queueWaiters = [];
 let pinValue = '';
 let authBlocked = false;   // a request was refused for the PIN: chunks wait until it is accepted
+let unreachable = false;   // the PC could not be reached: chunks wait and are retried until it answers
+let clearPending = false;  // Clear was pressed: it runs once the chunks recorded before it are transcribed
 let capture = null, chunker = null, timelineOriginMs = 0, peakLevel = 0;
 let pumping = false, summaryJob = null, liveJob = null, stopPromise = null;
 let liveTimer = 0, statusUntil = 0, persistTimer = 0, persistWarned = false, wordsTimer = 0;
@@ -828,7 +831,7 @@ function updateUi() {
   el.transcript.readOnly = rec || fin;
   el.editHint.textContent = rec || fin ? 'Read-only while recording' : 'Editable';
   el.source.disabled = rec || fin || state.starting;
-  el.clear.disabled = fin;
+  el.clear.disabled = fin || clearPending;
 }
 
 function updateSummaryUi() {
@@ -861,9 +864,10 @@ function tick() {
   el.meterFill.style.width = (state.recording ? levelPercent(level) : 0).toFixed(0) + '%';
   if (Date.now() < statusUntil || (!state.recording && !state.finishing)) return;
 
-  const pending = queue.length;
+  const pending = pendingChunks();
   let status;
   if (authBlocked && pending > 0) status = 'PIN needed: ' + chunksText(pending) + ' waiting. Enter the PIN above to send them.';
+  else if (unreachable && pending > 0) status = 'PC unreachable: ' + chunksText(pending) + ' waiting. They are sent once the PC answers again.';
   else if (!state.recording) status = pending > 0 ? 'Finishing... ' + chunksText(pending) + ' left to transcribe.' : 'Finishing...';
   else status = 'Listening to ' + state.sourceLabel + (pending > 0 ? ' · transcribing ' + chunksText(pending) + '...' : '');
   if (el.status.textContent !== status) el.status.textContent = status;
@@ -993,6 +997,8 @@ function enqueue(chunk) {
   pumpQueue();
 }
 
+function pendingChunks() { return queue.filter(item => !item.clear).length; }
+
 function waitForQueue() {
   return queue.length === 0 && !pumping ? Promise.resolve() : new Promise(resolve => queueWaiters.push(resolve));
 }
@@ -1006,8 +1012,14 @@ async function pumpQueue() {
   if (pumping) return;
   pumping = true;
   try {
-    while (queue.length > 0 && !authBlocked) {
+    while (queue.length > 0 && (!authBlocked || queue[0].clear)) {
       const item = queue[0];
+      if (item.clear) {
+        // Every chunk recorded before Clear is in the transcript now.
+        queue.shift();
+        await finishClear(item);
+        continue;
+      }
       const outcome = await transcribeChunk(item);
       if (outcome.auth) break; // kept, and sent once the PIN is accepted
       const index = queue.indexOf(item);
@@ -1023,7 +1035,8 @@ async function pumpQueue() {
 }
 
 async function transcribeChunk(item) {
-  for (let attempt = 1; ; attempt++) {
+  let attempt = 0, offline = 0;
+  for (;;) {
     if (item.gen !== state.sessionGen) return {};
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS);
@@ -1031,11 +1044,21 @@ async function transcribeChunk(item) {
       const form = new FormData();
       form.append('audio', item.blob, 'chunk.wav');
       const data = await api(API + '/chunk', { method: 'POST', form, signal: controller.signal });
+      unreachable = false;
       return { text: String(data.text || '').trim() };
     } catch (e) {
       if (e.status === 401 || e.status === 429) return { auth: true };
+      if (e.status === 0) {
+        // The PC cannot be reached (a Wi-Fi drop, the PC asleep): the chunk is kept and tried again until it can.
+        unreachable = true;
+        offline++;
+        await sleep(Math.min(offline * 2000, UNREACHABLE_RETRY_MAX_MS));
+        continue;
+      }
+      unreachable = false;
+      attempt++;
       const timedOut = e.name === 'AbortError';
-      const transient = timedOut || e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504;
+      const transient = timedOut || e.status === 502 || e.status === 503 || e.status === 504;
       if (!transient || attempt >= 3) return { error: timedOut ? 'the PC took too long to answer.' : e.message };
       await sleep(attempt * 2000);
     } finally {
@@ -1184,13 +1207,15 @@ function releaseWakeLock() {
 // ---------- Saving on the PC ----------
 
 // One save at a time, so the first save of a session gets its file before the next one uses it.
-function saveOnPc() {
-  const run = saveChain.then(saveOnPcNow, saveOnPcNow);
+// elapsedMs: the session's length, when it is not the clock's (Clear while recording).
+function saveOnPc(elapsedMs) {
+  const save = () => saveOnPcNow(elapsedMs);
+  const run = saveChain.then(save, save);
   saveChain = run.catch(() => {});
   return run;
 }
 
-async function saveOnPcNow() {
+async function saveOnPcNow(elapsedMs) {
   if (!state.startedAt) state.startedAt = Date.now();
   const version = state.changeVersion, gen = state.sessionGen;
   const data = await api(API + '/save', {
@@ -1200,7 +1225,7 @@ async function saveOnPcNow() {
       notes: el.notes.value,
       notesStyle: state.notesStyle,
       startedAt: state.startedAt,
-      elapsedMs: Math.round(sessionElapsedMs()),
+      elapsedMs: Math.round(typeof elapsedMs === 'number' ? elapsedMs : sessionElapsedMs()),
       saveId: state.saveId
     }
   });
@@ -1494,48 +1519,72 @@ async function sendToChat() {
   }
 }
 
-async function clearSession() {
-  if (state.finishing) return;
-  // Nothing is lost: the session so far is saved on the PC first.
-  let saved = null;
-  if (hasUnsaved() && el.transcript.value.trim()) {
-    el.clear.disabled = true;
-    try {
-      saved = await saveOnPc();
-    } catch (e) {
-      if (!confirm('The transcript could not be saved on the PC (' + e.message + '). Clear it anyway?')) {
-        updateUi();
-        return;
+function clearSession() {
+  if (state.finishing || clearPending) return;
+  // Nothing is lost: the words already spoken are transcribed first (the queue runs in order), then the session
+  // is saved on the PC and cleared (finishClear). What is said from now on starts the new session at 00:00.
+  if (chunker) {
+    const rest = chunker.flush();
+    if (rest) enqueue(rest);
+  }
+  clearPending = true;
+  updateUi();
+  queue.push({
+    clear: true,
+    shiftMs: chunker ? timelineOriginMs + chunker.positionMs : sessionElapsedMs(), // the click on the chunks' timeline
+    elapsedMs: sessionElapsedMs(),
+    startedAt: Date.now()
+  });
+  if (pendingChunks() > 0) setStatus('Clearing once the words already spoken are transcribed...');
+  pumpQueue();
+}
+
+// Runs from the queue, after the chunks recorded before Clear (mark: the item clearSession queued).
+async function finishClear(mark) {
+  try {
+    let saved = null;
+    if (hasUnsaved() && el.transcript.value.trim()) {
+      try {
+        saved = await saveOnPc(mark.elapsedMs);
+      } catch (e) {
+        if (!confirm('The transcript could not be saved on the PC (' + e.message + '). Clear it anyway?')) {
+          setStatus('Not cleared: the transcript could not be saved on the PC.', !state.recording);
+          return;
+        }
       }
     }
-    updateUi();
-    if (state.finishing) return;
-  }
 
-  state.sessionGen++;
-  cancelSummary();
-  cancelLiveNotes();
-  policy.reset(Date.now());
-  queue.length = 0;
-  notifyQueueWaiters();
-  el.transcript.value = '';
-  el.notes.value = '';
-  state.notesStyle = CFG.defaultStyle;
-  state.notesUpdatedAt = null;
-  state.liveNotesFailed = false;
-  state.saveId = '';
-  state.changeVersion = 0;
-  state.savedVersion = 0;
-  // A new session starts at 00:00.
-  state.startedAt = state.recording ? Date.now() : 0;
-  state.elapsedBaseMs = 0;
-  state.runStart = performance.now();
-  timelineOriginMs = chunker ? -chunker.positionMs : 0;
-  updateWords();
-  updateNotesHeader();
-  updateUi();
-  removeKey(SESSION_KEY);
-  setStatus('Cleared.' + (saved ? ' The previous transcript was saved on the PC as ' + saved + '.' : ''), !state.recording);
+    state.sessionGen++;
+    cancelSummary();
+    cancelLiveNotes();
+    policy.reset(Date.now());
+    // Chunks recorded after the click belong to the new session, whose clock started at the click.
+    for (const item of queue) {
+      item.gen = state.sessionGen;
+      item.atMs = Math.max(0, item.atMs - mark.shiftMs);
+    }
+    timelineOriginMs -= mark.shiftMs;
+    el.transcript.value = '';
+    el.notes.value = '';
+    state.notesStyle = CFG.defaultStyle;
+    state.notesUpdatedAt = null;
+    state.liveNotesFailed = false;
+    state.saveId = '';
+    state.changeVersion = 0;
+    state.savedVersion = 0;
+    // A new session starts at 00:00 (at the click).
+    const elapsed = Math.max(0, sessionElapsedMs() - mark.elapsedMs);
+    state.startedAt = state.recording || state.finishing ? mark.startedAt : 0;
+    state.elapsedBaseMs = elapsed;
+    state.runStart = performance.now();
+    updateWords();
+    updateNotesHeader();
+    removeKey(SESSION_KEY);
+    setStatus('Cleared.' + (saved ? ' The previous transcript was saved on the PC as ' + saved + '.' : ''), !state.recording);
+  } finally {
+    clearPending = false;
+    updateUi();
+  }
 }
 
 // ---------- Resizing the panes ----------

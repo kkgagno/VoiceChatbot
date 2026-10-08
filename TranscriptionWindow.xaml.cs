@@ -36,7 +36,9 @@ public partial class TranscriptionWindow : Window
     public static string TranscriptsFolder { get; } = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceChatbot", "transcripts");
 
-    private sealed record PendingChunk(SpeechChunk Chunk, TimeSpan At);
+    // Chunk == null marks where Clear was pressed while recording (see Clear_Click).
+    private sealed record PendingChunk(SpeechChunk? Chunk, TimeSpan At);
+    private static readonly PendingChunk ClearMark = new(null, TimeSpan.Zero);
 
     private readonly SpeechEngine _speech;
     private readonly TranscriberSettings _settings;
@@ -80,6 +82,10 @@ public partial class TranscriptionWindow : Window
     private string _summaryStyleUsed = TranscriptSummaryStyles.Summary;
     private CancellationTokenSource? _summaryCts;
     private int _clearCount;
+    // Clear pressed while recording: the old session is saved and cleared once its last chunks are transcribed.
+    private bool _clearPending;
+    private TimeSpan _clearedLength; // the old session's length at the click
+    private DateTime _clearedAt;     // when the new session started
     private double _fontSize = DefaultFontSize;
     private bool _closeAllowed;
     private bool _closeRequested;
@@ -596,6 +602,13 @@ public partial class TranscriptionWindow : Window
             {
                 while (reader.TryRead(out var item))
                 {
+                    if (item.Chunk == null)
+                    {
+                        // Every chunk of the old session is in the transcript now.
+                        await Dispatcher.InvokeAsync(FinishPendingClear);
+                        continue;
+                    }
+
                     try
                     {
                         await TranscribeChunkAsync(item, ct).ConfigureAwait(false);
@@ -620,7 +633,7 @@ public partial class TranscriptionWindow : Window
         await _chunkLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            using var wav = BuildWavStream(item.Chunk.Pcm);
+            using var wav = BuildWavStream(item.Chunk!.Pcm);
             text = await _speech.TranscribeWavAsync(wav, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -781,11 +794,65 @@ public partial class TranscriptionWindow : Window
 
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
-        if (_isFinishing)
+        if (_isFinishing || _clearPending)
+            return;
+
+        if (!_isRecording)
+        {
+            ClearSession(null, null);
+            return;
+        }
+
+        // The words already spoken belong to the old session: they are transcribed first (the queue runs in
+        // order) and saved with it, while what is said from now on starts the new session at 00:00.
+        var length = _elapsed.Elapsed;
+        bool marked;
+        lock (_audioSync)
+        {
+            if (_chunker?.Flush() is { } rest)
+                EnqueueLocked(rest);
+            marked = _queue?.Writer.TryWrite(ClearMark) == true;
+            _timelineOrigin = _chunker != null ? TimeSpan.Zero - _chunker.Position : TimeSpan.Zero;
+        }
+        _elapsed.Restart();
+        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(TimeSpan.Zero);
+
+        if (!marked)
+        {
+            ClearSession(length, DateTime.Now);
+            return;
+        }
+
+        _clearPending = true;
+        _clearedLength = length;
+        _clearedAt = DateTime.Now;
+        if (Volatile.Read(ref _pendingChunks) > 0)
+            ShowStatus("Clearing once the words already spoken are transcribed...");
+    }
+
+    // UI thread: the queue reached the point where Clear was pressed while recording.
+    private void FinishPendingClear()
+    {
+        if (!_clearPending)
+            return;
+
+        _clearPending = false;
+        ClearSession(_clearedLength, _clearedAt);
+    }
+
+    /// <summary>
+    /// Saves the session and starts a new one. While recording, <paramref name="length"/> is the old session's
+    /// length and <paramref name="newSessionStarted"/> the click (the clock was already restarted then).
+    /// </summary>
+    private void ClearSession(TimeSpan? length, DateTime? newSessionStarted)
+    {
+        if (_closed)
             return;
 
         // Nothing is lost: the session so far goes to the transcripts folder first.
-        var savedPath = AutoSave();
+        var savedPath = AutoSave(length);
+        if (_unsavedChanges && !string.IsNullOrWhiteSpace(TranscriptBox.Text))
+            return; // the save failed: keep the text, and the error stays in the status line
 
         // A summary or live-notes update of the old transcript is no longer wanted.
         _clearCount++;
@@ -800,15 +867,14 @@ public partial class TranscriptionWindow : Window
         _summaryStyleUsed = TranscriptSummaryStyles.Summary;
         UpdateSummaryHeader();
         _unsavedChanges = false;
-        _sessionStarted = _isRecording ? DateTime.Now : null;
+        _sessionStarted = newSessionStarted;
 
         // A new session starts at 00:00.
-        _elapsed.Reset();
-        if (_isRecording)
-            _elapsed.Start();
-        lock (_audioSync)
-            _timelineOrigin = _chunker != null ? TimeSpan.Zero - _chunker.Position : TimeSpan.Zero;
-        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(TimeSpan.Zero);
+        if (newSessionStarted == null)
+        {
+            _elapsed.Reset();
+            ElapsedText.Text = LiveTranscriptText.FormatTimestamp(TimeSpan.Zero);
+        }
 
         _contextUpdated("", "");
         var saved = savedPath != null ? $" The previous transcript was saved to {System.IO.Path.GetFileName(savedPath)}." : "";
@@ -1107,7 +1173,7 @@ public partial class TranscriptionWindow : Window
     /// Saves the session to %APPDATA%\VoiceChatbot\transcripts\transcript_yyyyMMdd_HHmmss.md (one file per
     /// session, rewritten as it grows). Returns the path, or null when there was nothing new to save.
     /// </summary>
-    private string? AutoSave()
+    private string? AutoSave(TimeSpan? length = null)
     {
         if (!_unsavedChanges || string.IsNullOrWhiteSpace(TranscriptBox.Text))
             return null;
@@ -1117,7 +1183,7 @@ public partial class TranscriptionWindow : Window
             Directory.CreateDirectory(TranscriptsFolder);
             var started = _sessionStarted ??= DateTime.Now;
             var path = System.IO.Path.Combine(TranscriptsFolder, LiveTranscriptText.AutoSaveFileName(started));
-            File.WriteAllText(path, BuildDocument(started, markdown: true));
+            File.WriteAllText(path, BuildDocument(started, markdown: true, length));
             _unsavedChanges = false;
             AppLog.Info($"Live transcript saved to {path}.");
             return path;
@@ -1131,11 +1197,11 @@ public partial class TranscriptionWindow : Window
         }
     }
 
-    private string BuildDocument(DateTime started, bool markdown) =>
+    private string BuildDocument(DateTime started, bool markdown, TimeSpan? length = null) =>
         LiveTranscriptText.BuildDocument(
             LiveTranscriptText.DocumentTitle,
             started,
-            _elapsed.Elapsed,
+            length ?? _elapsed.Elapsed,
             TranscriptBox.Text,
             SummaryBox.Text,
             _summaryStyleUsed,
