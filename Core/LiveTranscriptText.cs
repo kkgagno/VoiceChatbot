@@ -37,8 +37,23 @@ public static class LiveTranscriptText
     /// <summary>Spoken words in the transcript; the "[mm:ss]" prefixes are not counted.</summary>
     public static int CountWords(string? transcript) => Word.Matches(StripTimestamps(transcript)).Count;
 
+    /// <summary>Title of the saved document.</summary>
+    public const string DocumentTitle = "Live transcript";
+
     /// <summary>File name for an automatically saved session, e.g. transcript_20261008_143005.md.</summary>
     public static string AutoSaveFileName(DateTime sessionStart) => $"transcript_{sessionStart:yyyyMMdd_HHmmss}.md";
+
+    /// <summary>Suggested name for "Save..." (or a browser download), e.g. transcript_20261008_1430.md or .txt.</summary>
+    public static string ExportFileName(DateTime sessionStart, bool markdown = true) =>
+        $"transcript_{sessionStart:yyyyMMdd_HHmm}{(markdown ? ".md" : ".txt")}";
+
+    /// <summary>True unless the file name ends in .txt: Save writes Markdown for every other extension.</summary>
+    public static bool IsMarkdownFileName(string? fileName) =>
+        !(fileName ?? "").Trim().EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Content type for serving the saved document (web download).</summary>
+    public static string ExportContentType(bool markdown) =>
+        markdown ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8";
 
     /// <summary>
     /// The saved document: title, date (and length), the summary when there is one, then the transcript.
@@ -94,37 +109,4 @@ public static class LiveTranscriptText
 
     private static string CollapseWhitespace(string? text) =>
         Regex.Replace(text ?? "", @"\s+", " ").Trim();
-}
-
-/// <summary>What the transcriber's Summarize button asks the chat model for.</summary>
-public static class TranscriptSummaryStyles
-{
-    public const string Summary = "Summary";
-    public const string ActionItems = "Action items";
-    public const string MeetingNotes = "Meeting notes";
-    public const string KeyPoints = "Key points";
-
-    public static IReadOnlyList<string> Names { get; } = new[] { Summary, ActionItems, MeetingNotes, KeyPoints };
-
-    /// <summary>The known style with this name (ignoring case), or <see cref="Summary"/>.</summary>
-    public static string Normalize(string? name) =>
-        Names.FirstOrDefault(n => string.Equals(n, name?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? Summary;
-
-    /// <summary>The request sent with the transcript for this style.</summary>
-    public static string GetInstruction(string? name) => Normalize(name) switch
-    {
-        ActionItems =>
-            "List the action items in this live transcript as a checklist. For each one give the task, who owns it and any " +
-            "due date when the transcript says so. Then list open questions. If there are no action items, say so. Do not invent details.",
-        MeetingNotes =>
-            "Write meeting notes for this live transcript with these sections: Overview (two or three sentences), " +
-            "Discussion (the main topics), Decisions, Action items (with owners and dates when stated) and Open questions. " +
-            "Leave out a section that has nothing in it. Do not invent details.",
-        KeyPoints =>
-            "List the key points of this live transcript as short bullet points, most important first, " +
-            "keeping names, dates and numbers exact. Do not invent details.",
-        _ =>
-            "Summarize this live transcript. Include important facts, decisions, action items, questions, names, dates, and numbers. " +
-            "Keep it concise but useful for the main assistant to reference later.",
-    };
 }

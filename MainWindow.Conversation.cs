@@ -92,36 +92,35 @@ public partial class MainWindow
         AddSystemMessage("Live transcription window opened. Main chat will use its transcript and summary as context.");
     }
 
-    /// <param name="instruction">What to write (summary, action items, meeting notes, key points); see TranscriptSummaryStyles.</param>
-    private async Task<string> SummarizeLiveTranscriptAsync(string transcript, string systemPrompt, string instruction, CancellationToken ct)
+    /// <summary>
+    /// Sends one transcriber request (a summary, a part of a long transcript, combining parts, or a live-notes
+    /// update; see TranscriptSummaryPrompts) to the chat model and returns the reply as plain text. Runs on the
+    /// UI thread. Only a finished manual summary is announced in the chat, not every live-notes update.
+    /// </summary>
+    private async Task<string> SummarizeLiveTranscriptAsync(TranscriptSummaryRequest request, string systemPrompt, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ModelCombo.Text))
             throw new InvalidOperationException("Select a model first.");
-
-        if (string.IsNullOrWhiteSpace(instruction))
-            instruction = TranscriptSummaryStyles.GetInstruction(TranscriptSummaryStyles.Summary);
 
         var messages = new List<ChatMessage>
         {
             new()
             {
                 Role = "user",
-                Content = instruction.Trim() + "\n\nTRANSCRIPT:\n" + transcript
+                Content = request.UserMessage
             }
         };
 
         var summary = await _ollama.ChatAsync(
             ModelCombo.Text,
             messages,
-            string.IsNullOrWhiteSpace(systemPrompt)
-                ? "You are a live transcript summarizer. Preserve important context and do not invent details."
-                : systemPrompt,
+            string.IsNullOrWhiteSpace(systemPrompt) ? TranscriptSummaryPrompts.DefaultSystemPrompt : systemPrompt,
             0.2,
             _settings.MaxTokens,
             ct);
 
         var cleaned = MarkdownText.ToPlainText(CleanDisplayText(summary, hidePlanningNotes: false));
-        if (!string.IsNullOrWhiteSpace(cleaned))
+        if (!string.IsNullOrWhiteSpace(cleaned) && request.IsFinal && request.Kind != TranscriptSummaryKind.LiveNotes)
             AddSystemMessage("Live transcript summary updated. Main chat has the latest transcription context.");
 
         return cleaned;

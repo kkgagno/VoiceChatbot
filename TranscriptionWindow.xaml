@@ -189,19 +189,30 @@
                 </Grid.RowDefinitions>
                 <DockPanel Margin="0,0,0,8">
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <ToggleButton x:Name="LiveNotesToggle" Content="Live notes" local:Ui.Icon="&#xE70B;"
+                                      Style="{StaticResource ToggleFlatButton}" Padding="10,7" Margin="0,0,6,0"
+                                      VerticalAlignment="Center" Click="LiveNotesToggle_Click"
+                                      ToolTip="While recording, keep the notes below up to date: every few minutes the chat model merges what was said since the last update into them, in the chosen style."/>
+                        <ComboBox x:Name="LiveNotesIntervalCombo" Width="84" Margin="0,0,14,0" VerticalAlignment="Center"
+                                  SelectionChanged="LiveNotesIntervalCombo_SelectionChanged"
+                                  ToolTip="How often live notes are updated while recording"/>
                         <ComboBox x:Name="SummaryStyleCombo" Width="150" Margin="0,0,8,0" VerticalAlignment="Center"
-                                  ToolTip="What Summarize writes"/>
+                                  ToolTip="What Summarize and Live notes write"/>
                         <Button x:Name="SummarizeBtn" Content="Summarize" local:Ui.Icon="&#xE9D5;"
                                 Style="{StaticResource SecondaryButton}" MinWidth="112" Click="Summarize_Click"
-                                ToolTip="Ask the chat model for this kind of summary. Works while recording too."/>
+                                ToolTip="Ask the chat model for this kind of summary of the whole transcript. Works while recording too; a long transcript is summarized in parts."/>
                         <Button Content="Copy" local:Ui.Icon="&#xE8C8;" Style="{StaticResource GhostButton}" Margin="6,0,0,0"
                                 Click="CopySummary_Click" ToolTip="Copy the summary"/>
                     </StackPanel>
-                    <TextBlock x:Name="SummaryHeaderText" Text="SUMMARY" Style="{StaticResource SectionLabel}" Margin="0"
-                               VerticalAlignment="Center"/>
+                    <DockPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                        <TextBlock x:Name="SummaryHeaderText" DockPanel.Dock="Left" Text="SUMMARY" Style="{StaticResource SectionLabel}"
+                                   Margin="0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="NotesUpdatedText" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
                 </DockPanel>
                 <TextBox x:Name="SummaryBox" Grid.Row="1" Style="{StaticResource PaneTextBox}"
-                         local:Ui.Placeholder="Pick a style and press Summarize."
+                         local:Ui.Placeholder="Pick a style and press Summarize, or turn on Live notes to have notes written while you record."
                          TextChanged="SummaryBox_TextChanged"/>
             </Grid>
         </Border>

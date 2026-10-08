@@ -50,6 +50,28 @@ public class LiveTranscriptTextTests
     }
 
     [Fact]
+    public void ExportNamesAndTypesFollowTheFormat()
+    {
+        var started = new DateTime(2026, 10, 8, 14, 3, 5);
+        Assert.Equal("transcript_20261008_1403.md", LiveTranscriptText.ExportFileName(started));
+        Assert.Equal("transcript_20261008_1403.txt", LiveTranscriptText.ExportFileName(started, markdown: false));
+        Assert.Equal("text/markdown; charset=utf-8", LiveTranscriptText.ExportContentType(markdown: true));
+        Assert.Equal("text/plain; charset=utf-8", LiveTranscriptText.ExportContentType(markdown: false));
+    }
+
+    [Theory]
+    [InlineData(@"C:\notes\meeting.txt", false)]
+    [InlineData("MEETING.TXT ", false)]
+    [InlineData("meeting.md", true)]
+    [InlineData("meeting", true)]
+    [InlineData("meeting.markdown", true)]
+    [InlineData(null, true)]
+    public void SaveWritesMarkdownUnlessTheNameEndsInTxt(string? fileName, bool markdown)
+    {
+        Assert.Equal(markdown, LiveTranscriptText.IsMarkdownFileName(fileName));
+    }
+
+    [Fact]
     public void MarkdownDocumentHasTitleDateSummaryAndTranscript()
     {
         var doc = LiveTranscriptText.BuildDocument(
