@@ -214,11 +214,42 @@
                                     <TextBlock Text="User" Style="{StaticResource SectionLabel}"/>
                                     <TextBox x:Name="HermesSshUserBox"/>
                                 </StackPanel>
-                                <StackPanel>
+                                <StackPanel Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Password" Style="{StaticResource SectionLabel}"/>
                                     <PasswordBox x:Name="HermesSshPasswordBox"/>
                                     <TextBlock Text="Saved encrypted for your Windows account." Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
                                 </StackPanel>
+
+                                <!-- Pinned host key (trust on first use), see MainWindow.SshHostKey.cs -->
+                                <TextBlock Text="Host key" Style="{StaticResource SectionLabel}"/>
+                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="SshHostKeyIcon" Text="&#xE72E;" Style="{StaticResource IconText}" FontSize="12"
+                                                   Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Top" Margin="0,1,0,0"/>
+                                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                            <TextBlock x:Name="SshHostKeyTargetText" Text="127.0.0.1:2222" FontSize="11"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                            <TextBlock x:Name="SshHostKeyText" Text="Not pinned yet" FontSize="11" Margin="0,2,0,0"
+                                                       FontFamily="{StaticResource CodeFont}" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextMutedBrush}"/>
+                                            <TextBlock x:Name="SshHostKeyRejectedText" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource ErrorBrush}" Visibility="Collapsed"/>
+                                        </StackPanel>
+                                        <Button x:Name="CopySshHostKeyBtn" Grid.Column="2" Style="{StaticResource IconButton}"
+                                                local:Ui.Icon="&#xE8C8;" Width="26" Height="26" Margin="6,-2,-4,0" VerticalAlignment="Top"
+                                                Click="CopySshHostKey_Click" ToolTip="Copy the fingerprint" IsEnabled="False"/>
+                                    </Grid>
+                                </Border>
+                                <Button x:Name="ForgetSshHostKeyBtn" Content="Forget host key" local:Ui.Icon="&#xE74D;"
+                                        Style="{StaticResource SecondaryButton}" Click="ForgetSshHostKey_Click" Margin="0,8,0,0"
+                                        IsEnabled="False" ToolTip="Trust the key the server sends on the next connection"/>
+                                <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0"
+                                           Text="Trusted on the first connection and checked on every connection after that. Forget it only after you reinstall or reconfigure the SSH server."/>
                             </StackPanel>
                         </Expander>
 

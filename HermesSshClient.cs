@@ -18,6 +18,18 @@ public sealed class HermesSshClient
     private SshClient? _terminalClient;
     private ShellStream? _terminalStream;
 
+    /// <summary>
+    /// Pinned server host keys (trust on first use). Every connection checks the key the server sends
+    /// against the pin for Host:Port and is refused with <see cref="SshHostKeyMismatchException"/> when it differs.
+    /// </summary>
+    public SshHostKeyPins HostKeys { get; } = new();
+
+    /// <summary>Raised on an SSH thread after a server's key was pinned on its first connection.</summary>
+    public event Action<SshHostKeyCheck>? HostKeyTrusted;
+
+    /// <summary>Raised on an SSH thread when a server sent a key that differs from its pin.</summary>
+    public event Action<SshHostKeyCheck>? HostKeyRejected;
+
     public Task<HermesSshResult> RunAsync(string command, TimeSpan timeout, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -33,13 +45,7 @@ public sealed class HermesSshClient
 
             ct.ThrowIfCancellationRequested();
 
-            var connection = new PasswordConnectionInfo(Host, Port, User, Password)
-            {
-                Timeout = TimeSpan.FromSeconds(12)
-            };
-
-            using var client = new SshClient(connection);
-            client.Connect();
+            using var client = ConnectClient();
             try
             {
                 using var cmd = client.CreateCommand(command);
@@ -104,13 +110,7 @@ public sealed class HermesSshClient
             if (string.IsNullOrWhiteSpace(Password))
                 throw new InvalidOperationException("Hermes SSH password is not set.");
 
-            var connection = new PasswordConnectionInfo(Host, Port, User, Password)
-            {
-                Timeout = TimeSpan.FromSeconds(12)
-            };
-
-            _terminalClient = new SshClient(connection);
-            _terminalClient.Connect();
+            _terminalClient = ConnectClient();
             _terminalStream = _terminalClient.CreateShellStream("xterm", 120, 40, 1200, 800, 65536);
             DrainShell(_terminalStream, TimeSpan.FromMilliseconds(500), ct);
             _terminalStream.Write("TERM=xterm NO_COLOR=1 ~/.local/bin/hermes chat --accept-hooks --yolo --source tool");
@@ -122,6 +122,58 @@ public sealed class HermesSshClient
 
             return _terminalStream;
         }, ct);
+    }
+
+    /// <summary>
+    /// Connects a new client for the current Host/Port/User/Password after checking the server's host key
+    /// against <see cref="HostKeys"/>. The caller owns the returned client.
+    /// </summary>
+    private SshClient ConnectClient()
+    {
+        var host = Host;
+        var port = Port;
+        var connection = new PasswordConnectionInfo(host, port, User, Password)
+        {
+            Timeout = TimeSpan.FromSeconds(12)
+        };
+
+        SshHostKeyCheck? refused = null;
+        var client = new SshClient(connection);
+        // Raised during key exchange (and again on any later re-key) after SSH.NET has verified that the
+        // server holds the private key; CanTrust = false makes Connect fail.
+        client.HostKeyReceived += (_, e) =>
+        {
+            var check = HostKeys.Verify(host, port, e.HostKeyName, e.FingerPrintSHA256);
+            e.CanTrust = check.Verdict != SshHostKeyVerdict.Mismatch;
+            if (check.Verdict == SshHostKeyVerdict.Mismatch)
+            {
+                refused = check;
+                RaiseHostKeyEvent(HostKeyRejected, check);
+            }
+            else if (check.Verdict == SshHostKeyVerdict.TrustedOnFirstUse)
+            {
+                RaiseHostKeyEvent(HostKeyTrusted, check);
+            }
+        };
+
+        try
+        {
+            client.Connect();
+            return client;
+        }
+        catch (Exception ex)
+        {
+            client.Dispose();
+            if (refused != null)
+                throw new SshHostKeyMismatchException(refused, ex);
+            throw;
+        }
+    }
+
+    private static void RaiseHostKeyEvent(Action<SshHostKeyCheck>? handler, SshHostKeyCheck check)
+    {
+        // Never let a listener break the key exchange it is called from.
+        try { handler?.Invoke(check); } catch { }
     }
 
     private void ResetHermesTerminal()
@@ -218,13 +270,7 @@ public sealed class HermesSshClient
             ct.ThrowIfCancellationRequested();
 
             var marker = "__VOICECHATBOT_HERMES_DONE_" + Guid.NewGuid().ToString("N");
-            var connection = new PasswordConnectionInfo(Host, Port, User, Password)
-            {
-                Timeout = TimeSpan.FromSeconds(12)
-            };
-
-            using var client = new SshClient(connection);
-            client.Connect();
+            using var client = ConnectClient();
             try
             {
                 using var stream = client.CreateShellStream("xterm", 120, 40, 1200, 800, 8192);

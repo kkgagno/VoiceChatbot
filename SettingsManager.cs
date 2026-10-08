@@ -85,6 +85,9 @@ public class AppSettings
     public bool WindowMaximized { get; set; } = false;
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = 340;
+    // Pinned SSH host keys for Model Server Control: "host:port" -> "SHA256:<base64>" as OpenSSH prints it.
+    // Filled on the first connection to each server (trust on first use); a different key is then refused.
+    public Dictionary<string, string> HermesSshHostKeyFingerprints { get; set; } = new();
 
     // Face presence / local identity. Disabled by default to preserve current behavior.
     public FaceFeatureSettings FaceFeatures { get; set; } = new();
