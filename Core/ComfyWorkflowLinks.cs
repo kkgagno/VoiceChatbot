@@ -65,6 +65,29 @@ public static class ComfyWorkflowLinks
     }
 
     /// <summary>
+    /// Ids of frontend-only nodes (notes, reroutes, the legacy PrimitiveNode). They never reach the
+    /// prompt, and the frontend copies a PrimitiveNode's value into the widget it drives, so a link
+    /// from one of them into a widget input is not kept and the widget's saved value is sent instead.
+    /// Muted nodes are not included: like the frontend, inputs fed by them are removed
+    /// (<see cref="RemoveDanglingLinks"/>).
+    /// </summary>
+    public static HashSet<string> GetFrontendOnlyNodeIds(JsonArray? nodes, Func<string, bool> isFrontendOnlyType)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        if (nodes is null)
+            return ids;
+
+        foreach (var node in nodes.OfType<JsonObject>())
+        {
+            var nodeId = GetNodeId(node);
+            if (!string.IsNullOrWhiteSpace(nodeId) && isFrontendOnlyType(GetString(node["type"])))
+                ids.Add(nodeId);
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// Removes inputs that link to a node missing from the prompt (a muted node, or a reroute or
     /// bypass with nothing connected), as the ComfyUI frontend does. Returns how many were removed.
     /// </summary>

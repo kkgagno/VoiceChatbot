@@ -45,7 +45,13 @@ public static class MediaIntentParser
 
     private static readonly Regex CreateVideoRegex = new(
         Please + @"(?:create|generate|make)\s+" + Article + @"(?:" + Duration + @"\s+)?" + VideoNoun +
-        @"(?:" + VideoJoiner + @"(?<p>.+)|\s+(?<p>from\s+" + Determiners + @"(?:image|picture|photo)\b.*))$",
+        @"(?:" + VideoJoiner + @"(?<p>.+)|\s+(?<p>from\s+" + Determiners + @"(?:image|picture|photo)\b.*)|\s+from\s+(?:it|this|that)\s*[.!?]?)$",
+        Options);
+
+    // "Make a 5 second video" (about an attached image): the length makes it a generation request
+    // even without a description, as it was before the stricter parser.
+    private static readonly Regex TimedVideoOnlyRegex = new(
+        Please + @"(?:create|generate|make)\s+" + Article + Duration + @"\s+" + VideoNoun + @"\s*[.!?]?$",
         Options);
 
     private static readonly Regex ImageToVideoRegex = new(
@@ -64,9 +70,13 @@ public static class MediaIntentParser
         Options);
 
     // Requests for code, markup or diagrams that happen to say "image" or "picture" belong to the chat model.
+    // Words that are also ordinary picture subjects (a mermaid, a pillow, rust) only count in their
+    // tool sense, so "Create an image of a mermaid" or "...covered in rust" still makes an image.
     private static readonly Regex CodeRequestRegex = new(
-        @"\b(?:svg|html|css|ascii|matplotlib|pillow|opencv|tikz|mermaid|graphviz|plantuml|dockerfile|docker)\b|" +
-        @"\b(?:in|using|with)\s+(?:python|javascript|typescript|java|c#|c\+\+|rust|golang|powershell|bash|js|react)(?![\w#+])",
+        @"\b(?:svg|html|css|ascii|matplotlib|opencv|tikz|graphviz|plantuml|dockerfile|docker)\b|" +
+        @"\bmermaid\s+(?:diagram|chart|graph|flowchart|code|syntax|markdown)s?\b|" +
+        @"\b(?:in|using)\s+mermaid\b|" +
+        @"\b(?:in|using|with)\s+(?:python|javascript|typescript|java|c#|c\+\+|golang|powershell|bash|js|react|pillow|pil)(?![\w#+])",
         Options);
 
     public static bool TryGetImageCreatePrompt(string? text, out string prompt)
@@ -95,7 +105,7 @@ public static class MediaIntentParser
             return false;
 
         var trimmed = text!.Trim();
-        foreach (var regex in new[] { CreateVideoRegex, ImageToVideoRegex, DurationVideoRegex })
+        foreach (var regex in new[] { CreateVideoRegex, TimedVideoOnlyRegex, ImageToVideoRegex, DurationVideoRegex })
         {
             var match = regex.Match(trimmed);
             if (!match.Success)
@@ -127,7 +137,7 @@ public static class MediaIntentParser
     {
         var cleaned = Regex.Replace(text, @"^(?:please\s+)?(?:create|generate|make|turn)\s+", "", RegexOptions.IgnoreCase).Trim();
         cleaned = Regex.Replace(cleaned, @"\b(?:an?\s+)?\d*\s*(?:second|seconds|sec|s)?\s*(?:video|movie|clip)\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ");
+        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ").Trim(' ', '.', ',', '!', '?', '-');
         return string.IsNullOrWhiteSpace(cleaned) ? text.Trim() : cleaned;
     }
 

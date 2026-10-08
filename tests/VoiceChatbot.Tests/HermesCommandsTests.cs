@@ -41,6 +41,11 @@ public class HermesCommandParserTests
     [InlineData("Could you please start the mistral medium 3.5 model", "/mnt/c/llama.cpp/start-mistral-medium-3.5.bat", 8082)]
     [InlineData("switch from qwen to gemma", "/mnt/c/llama.cpp/start-gemma4.bat", 8080)]
     [InlineData("go ahead and load qwen3.6 27b q8 on llama.cpp", "/mnt/c/llama.cpp/start-qwen3.6-27b-q8.bat", 8081)]
+    [InlineData("start gemma 26b with speculative decoding", "/mnt/c/llama.cpp/start-gemma4-26b-a4b-speculative.bat", 8080)]
+    [InlineData("load gemma using the gpu", "/mnt/c/llama.cpp/start-gemma4-gpu.bat", 8080)]
+    [InlineData("start gemma in draft mode", "/mnt/c/llama.cpp/start-gemma4-speculative.bat", 8080)]
+    [InlineData("I want you to start gemma", "/mnt/c/llama.cpp/start-gemma4.bat", 8080)]
+    [InlineData("I'd like you to switch to qwen", "/mnt/c/llama.cpp/start-qwen3.6-27b-q8.bat", 8081)]
     public void StartModelCommands(string prompt, string batch, int port)
     {
         Assert.True(HermesCommandParser.TryMatchModelControl(prompt, out var target));
@@ -59,6 +64,7 @@ public class HermesCommandParserTests
     [InlineData("I want to switch to qwen tomorrow, what do you think?")]
     [InlineData("stop the model and start comfyui")]
     [InlineData("start gemma and then summarize the logs")]
+    [InlineData("start gemma with the logs from yesterday")]
     // "run <shell command>" is staged for approval, never matched as a model plan.
     [InlineData("run nvidia-smi")]
     [InlineData("run pkill -f comfy")]

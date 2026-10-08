@@ -726,6 +726,7 @@ public sealed class ComfyUiImageClient : IDisposable
         var objectInfo = await _http.GetFromJsonAsync<JsonObject>($"{NormalizeBaseUrl()}/object_info", ct)
             ?? new JsonObject();
         var linksById = ComfyWorkflowLinks.BuildLinkMap(workflow["links"] as JsonArray, nodes);
+        var frontendOnlyNodeIds = ComfyWorkflowLinks.GetFrontendOnlyNodeIds(nodes, IsNonExecutableWorkflowNode);
         var subgraphsById = GetSubgraphsById(workflow);
         var prompt = new Dictionary<string, object>();
 
@@ -767,8 +768,12 @@ public sealed class ComfyUiImageClient : IDisposable
                     if (string.IsNullOrWhiteSpace(inputName))
                         continue;
 
+                    // A link from a frontend-only node (a legacy PrimitiveNode, an unconnected reroute)
+                    // is skipped so the widget value below is used, as the ComfyUI frontend does.
                     var linkId = TryGetInt(inputSlot["link"]);
-                    if (linkId.HasValue && linksById.TryGetValue(linkId.Value, out var link))
+                    if (linkId.HasValue
+                        && linksById.TryGetValue(linkId.Value, out var link)
+                        && !frontendOnlyNodeIds.Contains(link.OriginNodeId))
                         inputs[inputName] = Link(link.OriginNodeId, link.OriginSlot);
                 }
             }

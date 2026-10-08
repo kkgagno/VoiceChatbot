@@ -195,6 +195,25 @@ public class ComfyWorkflowLinksTests
     }
 
     [Fact]
+    public void FrontendOnlyNodesAreListedButMutedNodesAreNot()
+    {
+        var nodes = JsonNode.Parse("""
+            [
+              { "id": 1, "type": "PrimitiveNode", "mode": 0 },
+              { "id": 2, "type": "Reroute", "mode": 0 },
+              { "id": 3, "type": "KSampler", "mode": 2 },
+              { "id": 4, "type": "KSampler", "mode": 0 }
+            ]
+            """)!.AsArray();
+
+        var ids = ComfyWorkflowLinks.GetFrontendOnlyNodeIds(
+            nodes,
+            type => type is "PrimitiveNode" or "Reroute");
+
+        Assert.Equal(new[] { "1", "2" }, ids.OrderBy(id => id).ToArray());
+    }
+
+    [Fact]
     public void InputsFromMissingNodesAreRemoved()
     {
         var prompt = new Dictionary<string, object>

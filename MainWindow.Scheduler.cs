@@ -84,7 +84,18 @@ public partial class MainWindow
         try
         {
             foreach (var task in due)
-                await ExecuteAndStoreScheduledTaskAsync(task, CancellationToken.None);
+            {
+                try
+                {
+                    await ExecuteAndStoreScheduledTaskAsync(task, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    // This runs from the timer tick (async void). A failure to save scheduler.json or
+                    // to post to the chat is reported here, and the other due tasks still run.
+                    AddSystemMessage($"Scheduler: '{task.Name}' ran into a problem: {ex.Message}");
+                }
+            }
         }
         finally
         {
@@ -134,7 +145,15 @@ public partial class MainWindow
         };
 
         task.LastStatus = "Running";
-        _schedulerStore.Save();
+        try
+        {
+            // Only records the "Running" status; the result is saved below either way.
+            _schedulerStore.Save();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Scheduler save before run failed: {ex.Message}");
+        }
         _schedulerWindow?.RefreshTasks();
 
         var succeeded = false;

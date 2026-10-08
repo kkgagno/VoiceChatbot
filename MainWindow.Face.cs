@@ -547,6 +547,15 @@ public partial class MainWindow
             return;
         }
 
+        // The snapshot outlives its scan. Saving it after the scan expired would mark whoever is at the
+        // PC now as the saved person, with nothing left to expire that identity.
+        ExpireFaceScanIfStale();
+        if (_lastFaceScanUtc == DateTime.MinValue)
+        {
+            AddSystemMessage("The last face scan has expired. Click Scan Face Once again, then Save Face.");
+            return;
+        }
+
         var selected = GetSelectedFaceProfileName();
 
         // Copy now: a new scan can replace and dispose the snapshot while this handler awaits.
@@ -592,12 +601,19 @@ public partial class MainWindow
 
             var identity = FaceProfileRoles.ToPolicyIdentity(role.Value);
             var roleName = FaceProfileRoles.Describe(role.Value);
-            _recognizedFaceIdentity = identity;
-            _recognizedFaceName = selected;
-            _lastIdentifiedFaceIdentity = identity;
-            _lastIdentifiedFaceName = selected;
-            _lastIdentifiedFaceUtc = DateTime.UtcNow;
-            _lastRecognizedFaceUtc = DateTime.UtcNow;
+            // Only the scan this sample came from vouches for the person: not one that expired, or was
+            // replaced by a newer scan, while the role dialog was open.
+            ExpireFaceScanIfStale();
+            if (ReferenceEquals(_latestFaceSnapshot, snapshot) && _lastFaceScanUtc != DateTime.MinValue)
+            {
+                _recognizedFaceIdentity = identity;
+                _recognizedFaceName = selected;
+                _lastIdentifiedFaceIdentity = identity;
+                _lastIdentifiedFaceName = selected;
+                _lastIdentifiedFaceUtc = DateTime.UtcNow;
+                _lastRecognizedFaceUtc = DateTime.UtcNow;
+            }
+
             FaceIdentityText.Text = $"Saved this face as {selected} ({roleName}). Samples: {sampleCount}";
             AddSystemMessage(
                 $"Saved local face sample {sampleCount} for {selected} ({roleName})"
@@ -843,8 +859,18 @@ public partial class MainWindow
             FaceSnapshotBtn.Content = "Scan Face Once";
         }
 
-        if (scanned)
+        if (!scanned)
+            return;
+
+        // Gate-started scans are fire-and-forget: an exception here must not go unobserved.
+        try
+        {
             ResumeVoiceAfterFaceScan(automatic, quiet);
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not resume voice input after the face scan: {ex.Message}");
+        }
     }
 
     private static (StillCameraCaptureResult Capture, FaceDetectionResult Result) CaptureAndDetectFace(

@@ -18,6 +18,12 @@ public class MediaIntentParserTests
     [InlineData("Create another image of the same cat", "the same cat")]
     [InlineData("Create an image of a QR code poster", "a QR code poster")]
     [InlineData("  Create an image of a fox.  ", "a fox.")]
+    // Picture subjects that share a word with a code tool still make an image.
+    [InlineData("Create an image of a mermaid on a rock", "a mermaid on a rock")]
+    [InlineData("Draw a picture of my daughter as a mermaid", "my daughter as a mermaid")]
+    [InlineData("Generate an image of a cat asleep on a pillow", "a cat asleep on a pillow")]
+    [InlineData("Create an image of an old robot covered in rust", "an old robot covered in rust")]
+    [InlineData("Create a picture of a sofa with pillows", "a sofa with pillows")]
     public void ImageCreate_ExplicitPhrasing(string text, string expectedPrompt)
     {
         Assert.True(MediaIntentParser.TryGetImageCreatePrompt(text, out var prompt));
@@ -34,6 +40,8 @@ public class MediaIntentParserTests
     [InlineData("Draw a picture of a cat in SVG")]
     [InlineData("Generate an image with Python PIL that shows a bar chart")]
     [InlineData("Make an image of the architecture as a mermaid diagram")]
+    [InlineData("Draw a picture of the login flow in Mermaid")]
+    [InlineData("Generate an image with Pillow that shows a gradient")]
     [InlineData("Create a photo album app")]
     [InlineData("What makes an image look professional?")]
     [InlineData("Create an image")]
@@ -105,6 +113,7 @@ public class MediaIntentParserTests
     [InlineData("5 second video of a cat dancing", "a cat dancing", 5)]
     [InlineData("Can you make me a 5 second video of my cat jumping?", "my cat jumping?", 5)]
     [InlineData("Generate a 45 second video of rain", "rain", 30)]
+    [InlineData("Create a video of a mermaid swimming", "a mermaid swimming", null)]
     public void Video_ExplicitPhrasing(string text, string expectedPrompt, int? expectedSeconds)
     {
         Assert.True(MediaIntentParser.TryGetVideoPrompt(text, out var prompt, out var seconds));
@@ -125,6 +134,21 @@ public class MediaIntentParserTests
     }
 
     [Theory]
+    // Worked before the stricter parser (with an attached image) and must keep working.
+    [InlineData("Make a 5 second video", 5)]
+    [InlineData("generate a 10-second clip.", 10)]
+    [InlineData("Create a 6s video", 6)]
+    [InlineData("Make a video from this", null)]
+    [InlineData("Create a 5 second video from it.", 5)]
+    public void Video_LengthOrSourceWithoutDescription(string text, int? expectedSeconds)
+    {
+        Assert.True(MediaIntentParser.TryGetVideoPrompt(text, out var prompt, out var seconds));
+        Assert.Equal(expectedSeconds, seconds);
+        Assert.False(string.IsNullOrWhiteSpace(prompt));
+        Assert.NotEqual(".", prompt);
+    }
+
+    [Theory]
     [InlineData("Summarize Veritasium's video https://www.youtube.com/watch?v=dQw4w9WgXcQ")]
     [InlineData("Summarize this video https://youtu.be/dQw4w9WgXcQ")]
     [InlineData("Make a 5 second video summary of https://m.youtube.com/watch?v=dQw4w9WgXcQ")]
@@ -142,6 +166,8 @@ public class MediaIntentParserTests
     [InlineData("Generate a 90s style video of a diner")]
     [InlineData("Make this image into a video game")]
     [InlineData("Turn this picture into a movie poster")]
+    [InlineData("Create a video from this article")]
+    [InlineData("Make a 5 second video summary")]
     public void Video_IgnoresOrdinaryRequests(string text)
     {
         Assert.False(MediaIntentParser.TryGetVideoPrompt(text, out var prompt, out var seconds));

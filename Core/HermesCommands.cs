@@ -38,7 +38,8 @@ public static class HermesCommandParser
     {
         "the", "a", "an", "to", "from", "on", "up", "down", "over", "back", "now", "again", "instead", "please",
         "for", "me", "us", "my", "it", "this", "that", "all", "current", "currently", "running", "model", "models",
-        "server", "servers", "llama", "llama.cpp", "cpp", "local", "version", "thanks", "thank", "you"
+        "server", "servers", "llama", "llama.cpp", "cpp", "local", "version", "thanks", "thank", "you",
+        "with", "using", "via", "in", "mode", "decoding"
     };
 
     private static readonly HashSet<string> ModelModifiers = new(StringComparer.Ordinal)
@@ -172,7 +173,7 @@ public static class HermesCommandParser
         || ModelFamilyToken.IsMatch(token)
         || SizeOrVersionToken.IsMatch(token);
 
-    // "please", "can you", "could you please", "go ahead and" before the verb.
+    // "please", "can you", "could you please", "go ahead and", "I want you to" before the verb.
     private static int SkipPoliteLead(IReadOnlyList<string> tokens)
     {
         var i = 0;
@@ -182,13 +183,31 @@ public static class HermesCommandParser
                 i++;
             else if (tokens[i] is "can" or "could" or "would" or "will" && i + 1 < tokens.Count && tokens[i + 1] == "you")
                 i += 2;
-            else if (tokens[i] == "go" && i + 2 < tokens.Count && tokens[i + 1] == "ahead" && tokens[i + 2] == "and")
+            else if (StartsWith(tokens, i, "go", "ahead", "and"))
                 i += 3;
+            else if (StartsWith(tokens, i, "i", "want", "you", "to") || StartsWith(tokens, i, "i", "need", "you", "to"))
+                i += 4;
+            else if (StartsWith(tokens, i, "i", "d", "like", "you", "to") || StartsWith(tokens, i, "i", "would", "like", "you", "to"))
+                i += 5;
             else
                 break;
         }
 
         return i;
+    }
+
+    private static bool StartsWith(IReadOnlyList<string> tokens, int index, params string[] words)
+    {
+        if (index + words.Length > tokens.Count)
+            return false;
+
+        for (var k = 0; k < words.Length; k++)
+        {
+            if (tokens[index + k] != words[k])
+                return false;
+        }
+
+        return true;
     }
 }
 
