@@ -25,6 +25,10 @@ public partial class MainWindow
         };
         AppLogFolderText.Text = AppLog.LogDirectory;
 
+        var recoveryNotice = SettingsManager.TakeRecoveryNotice();
+        if (!string.IsNullOrEmpty(recoveryNotice))
+            AddSystemMessage(recoveryNotice);
+
         var warning = SettingsManager.TakeLoadWarning();
         if (!string.IsNullOrEmpty(warning))
         {

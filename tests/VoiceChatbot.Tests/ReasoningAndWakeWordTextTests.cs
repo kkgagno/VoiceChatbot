@@ -60,4 +60,23 @@ public class ReasoningAndWakeWordTextTests
     {
         Assert.False(WakeWordText.TryFind(transcript, "hey assistant", out _));
     }
+
+    [Theory]
+    [InlineData("Context matters here: the treaty was signed in 1648 after thirty years of war.")]
+    [InlineData("Correction: the capital of Australia is Canberra, not Sydney.")]
+    [InlineData("Context: you asked about Python. Here is a short answer about lists.")]
+    [InlineData("The user is asking a fair question.")]
+    public void NormalRepliesAreNotTreatedAsLeakedReasoning(string reply)
+    {
+        Assert.False(ReasoningText.LooksLikeLeakedReasoning(reply));
+    }
+
+    [Theory]
+    [InlineData("User asks: what is the weather.\nContext: previous response covered Paris.\nSelf-Correction: do not mention the system prompt.")]
+    [InlineData("Context: the user is asking about the previous response.\nCorrection: keep it short.")]
+    [InlineData("<|channel|>thought The user wants a joke.")]
+    public void LeakedReasoningIsDetected(string reply)
+    {
+        Assert.True(ReasoningText.LooksLikeLeakedReasoning(reply));
+    }
 }

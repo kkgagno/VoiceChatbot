@@ -399,6 +399,9 @@ public class OllamaClient : IDisposable
     }
 
     // ---- Helpers ----
+    /// <summary>True for llama.cpp and other OpenAI-compatible servers, whose context window is fixed at launch.</summary>
+    public bool IsOpenAiCompatibleBackend => IsOpenAiCompatible;
+
     private bool IsOpenAiCompatible => Provider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase) ||
                                        Provider.Equals("llama.cpp", StringComparison.OrdinalIgnoreCase);
 

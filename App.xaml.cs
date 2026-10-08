@@ -16,8 +16,10 @@ public partial class App : Application
         DispatcherUnhandledException += (s, args) =>
         {
             AppLog.Error("Unhandled UI exception", args.Exception);
+            // The full stack trace is in the log; the dialog stays short.
             MessageBox.Show(
-                $"UI Error:\n\n{args.Exception}\n\nInner: {args.Exception.InnerException?.Message ?? "none"}",
+                $"Something went wrong: {FriendlyErrors.Describe(args.Exception)}\n\n" +
+                $"The details were written to the log in:\n{AppLog.LogDirectory}",
                 "Voice Chatbot Error", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
@@ -34,12 +36,11 @@ public partial class App : Application
         };
 
         // Catch async unhandled exceptions
+        // Runs on the finalizer thread, where a dialog could block or deadlock: log it and move on.
         TaskScheduler.UnobservedTaskException += (s, args) =>
         {
-            AppLog.Error("Unobserved task exception", args.Exception);
-            MessageBox.Show(
-                $"Task Error:\n\n{args.Exception}\n\nInner: {args.Exception?.InnerException?.Message ?? "none"}",
-                "Voice Chatbot Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            try { AppLog.Error("Unobserved task exception", args.Exception); }
+            catch { }
             args.SetObserved();
         };
     }

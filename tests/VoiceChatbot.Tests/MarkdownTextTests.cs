@@ -169,4 +169,14 @@ public class MarkdownTextTests
         Assert.True(MarkdownText.TryGetSafeLinkUri("www.example.com/page", out var uri));
         Assert.Equal("https://www.example.com/page", uri!.AbsoluteUri);
     }
+
+    // ---------- MapProseOutsideCode ----------
+
+    [Fact]
+    public void MapProseOutsideCode_LeavesCodeBlocksAndSpansAlone()
+    {
+        var text = "See [1] and `items[0]`.\n\n```python\nx = items[1]\n```\nDone [2].";
+        var result = MarkdownText.MapProseOutsideCode(text, prose => prose.Replace("[1]", "").Replace("[2]", "").Replace("[0]", ""));
+        Assert.Equal("See  and `items[0]`.\n\n```python\nx = items[1]\n```\nDone .", result);
+    }
 }

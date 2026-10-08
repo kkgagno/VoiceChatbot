@@ -225,10 +225,13 @@ public partial class MainWindow
 
     // ==================== Chat surface ====================
 
+    // How far above the end the user can be and still have streamed text keep the chat at the bottom.
+    private const double ChatFollowDistance = 160;
+
     private void ChatScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         var distanceFromBottom = ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset;
-        ScrollToBottomBtn.Visibility = distanceFromBottom > 160 ? Visibility.Visible : Visibility.Collapsed;
+        ScrollToBottomBtn.Visibility = distanceFromBottom > ChatFollowDistance ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ScrollToBottom_Click(object sender, RoutedEventArgs e) => ChatScroll.ScrollToEnd();

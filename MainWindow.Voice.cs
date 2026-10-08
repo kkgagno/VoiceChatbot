@@ -50,7 +50,9 @@ public partial class MainWindow
     /// </summary>
     private void FinishTurn()
     {
-        SetUIState("idle", "Ready");
+        // A phone request that took the busy state meanwhile gives it back when it is done.
+        if (!_phoneOwnsBusyState)
+            SetUIState("idle", "Ready");
         _speech.ReadyForNextSpeech();
         ResumeAutoListenIfActive();
     }

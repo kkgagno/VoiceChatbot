@@ -117,7 +117,16 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
         var app = builder.Build();
         MapRoutes(app);
-        await app.StartAsync(ct);
+        try
+        {
+            await app.StartAsync(ct);
+        }
+        catch
+        {
+            // A half-started host (for example the port is in use) would keep its resources otherwise.
+            try { await app.DisposeAsync(); } catch { }
+            throw;
+        }
         _app = app;
     }
 
@@ -354,7 +363,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                     var result = await _extractDocumentAsync(tempPath, ct);
                     if (!string.IsNullOrWhiteSpace(result.Text))
                     {
-                        documents.Add(new PhoneRemoteDocument(fileName, new DocumentTextResult(fileName, result.Text, "")));
+                        documents.Add(new PhoneRemoteDocument(fileName, result with { Path = fileName, Error = "" }));
                         notes.Add($"Attached document: {fileName}");
                     }
                     else
@@ -397,7 +406,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
             return true;
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
-        return ext is ".pdf" or ".docx" or ".txt" or ".md" or ".csv" or ".json" or ".xml" or ".log";
+        return ext is ".pdf" or ".docx" || DocumentFileTypes.IsTextExtension(ext);
     }
 
     private async Task<object> BuildResponseAsync(PhoneRemoteUserInput input, CancellationToken ct)

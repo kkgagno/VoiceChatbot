@@ -89,22 +89,21 @@ public partial class MainWindow
                "keep writing";
     }
 
-    private static bool IsGemma412BModel(string? model)
-    {
-        var normalized = (model ?? "").ToLowerInvariant();
-        return normalized.Contains("gemma", StringComparison.Ordinal) &&
-               (normalized.Contains("12b", StringComparison.Ordinal) ||
-                Regex.IsMatch(normalized, @"\b12\s*b\b"));
-    }
+    /// <summary>
+    /// Output tokens for this reply: the MaxTokens setting, or the larger code/SVG budget for artifact
+    /// requests, capped at half of the context window.
+    /// </summary>
+    private int GetMaxTokensForRequest(string? text, int contextTokens) =>
+        TokenBudget.ResolveMaxTokens(_settings.MaxTokens, IsCodeOrScriptRequest(text), contextTokens);
 
-    private int GetMaxTokensForRequest(string? text, string? model = null)
-    {
-        return IsGemma412BModel(model) ? 512 : CodeResponseMaxTokens;
-    }
-
+    /// <summary>
+    /// The context window for this request: the server's window on llama.cpp/OpenAI-compatible servers,
+    /// and on Ollama the model's window capped by the ContextWindow setting (sent as num_ctx).
+    /// </summary>
     private async Task<int> GetContextTokensForRequestAsync(string model, CancellationToken ct)
     {
-        return await _ollama.GetModelContextTokensAsync(model, ct) ?? CodeContextTokens;
+        var detected = await _ollama.GetModelContextTokensAsync(model, ct);
+        return TokenBudget.ResolveContextWindow(detected, _settings.ContextWindow, _ollama.IsOpenAiCompatibleBackend, CodeContextTokens);
     }
 
     private List<ChatMessage> BuildMessagesForModel(string currentUserText, IEnumerable<string> currentImagesBase64)
@@ -305,9 +304,9 @@ public partial class MainWindow
         if (!shouldHandleArtifact)
             return response;
 
-        maxTokens = Math.Max(maxTokens, CodeResponseMaxTokens);
         if (contextTokens <= 0)
             contextTokens = CodeContextTokens;
+        maxTokens = Math.Max(maxTokens, TokenBudget.ResolveMaxTokens(_settings.MaxTokens, isArtifactRequest: true, contextTokens));
 
         var completed = response;
         var needsContinuation = IsIncompleteCodeArtifact(completed, userText) || WasLastResponseTokenLimited();
@@ -528,10 +527,12 @@ public partial class MainWindow
     {
         return _recognizedFaceIdentity switch
         {
-            FaceIdentity.Keith => "Local face identity says Keith is present. Use full assistant mode.",
+            FaceIdentity.Keith => string.IsNullOrWhiteSpace(_recognizedFaceName)
+                ? "Local face identity says the owner is present. Use full assistant mode."
+                : $"Local face identity says the owner ({_recognizedFaceName}) is present. Use full assistant mode.",
             FaceIdentity.Child1 or FaceIdentity.Child2 => "Local face identity says a child profile is present. Use kid-safe mode: keep content age-appropriate, avoid adult topics, avoid dangerous instructions, and ask for an adult for sensitive actions.",
-            _ when _facePresenceState == FacePresenceState.MultipleFacesDetected => "Local face presence sees multiple people. Use guest/private mode: avoid exposing personal memory or private details unless Keith is recognized.",
-            _ => "Local face identity is unknown or no face is present. Use guest/private mode: avoid exposing personal memory or private details unless Keith is recognized."
+            _ when _facePresenceState == FacePresenceState.MultipleFacesDetected => "Local face presence sees multiple people. Use guest/private mode: avoid exposing personal memory or private details unless the owner is recognized.",
+            _ => "Local face identity is unknown or no face is present. Use guest/private mode: avoid exposing personal memory or private details unless the owner is recognized."
         };
     }
 
@@ -547,9 +548,9 @@ public partial class MainWindow
         return _lastIdentifiedFaceIdentity switch
         {
             FaceIdentity.Keith =>
-                $"Local face identity context: the last identified user in this app session is Keith, identified {identifiedWhen}. When replying directly to the user, you may address him as Keith and should treat the conversation as being with Keith unless the user says otherwise.",
+                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. When replying directly to the user, you may address them as {_lastIdentifiedFaceName} and should treat the conversation as being with them unless the user says otherwise.",
             FaceIdentity.Child1 or FaceIdentity.Child2 =>
-                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. Keep replies age-appropriate and avoid adult or dangerous content unless Keith is identified again.",
+                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. Keep replies age-appropriate and avoid adult or dangerous content unless the owner is identified again.",
             _ =>
                 $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. When replying directly to the user, you may address them by that name unless the user says otherwise."
         };
@@ -795,7 +796,10 @@ public partial class MainWindow
                     }
                     else
                     {
-                        AddSystemMessage("Web search did not return usable results. Answering from model knowledge.");
+                        // A Tavily error is already shown by ShowWebSearchFailure; do not contradict it.
+                        AddSystemMessage(string.IsNullOrWhiteSpace(_tavily.LastError)
+                            ? "Web search did not return usable results. Answering from model knowledge."
+                            : "Answering from model knowledge.");
                     }
                 }
             }
@@ -804,8 +808,8 @@ public partial class MainWindow
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);
-            var maxTokens = GetMaxTokensForRequest(modelUserText, model);
             var contextTokens = await GetContextTokensForRequestAsync(model, ct);
+            var maxTokens = GetMaxTokensForRequest(modelUserText, contextTokens);
             var droppedContextMessages = TrimMessagesToContextBudget(messagesForModel, systemPrompt, contextTokens, maxTokens);
             AddTokenEstimateDiagnostic(userText, messagesForModel, systemPrompt, contextTokens, maxTokens, droppedContextMessages);
 
@@ -839,7 +843,7 @@ public partial class MainWindow
                             var streamingText = fullText.ToString();
                             var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
                             assistantMessage.Body.Text = GetStreamingDisplayText(streamingText, shouldPreserveCode);
-                            ScrollChat();
+                            ScrollChat(onlyIfFollowing: true);
                             FeedStreamingSpeech(streamingSpeech, token);
                         }, DispatcherPriority.Background);
                     },

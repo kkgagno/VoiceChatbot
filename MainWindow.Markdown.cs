@@ -89,7 +89,7 @@ public partial class MainWindow
             ShowPlainReply(assistantMessage, text);
         }
 
-        ScrollChat();
+        ScrollChat(onlyIfFollowing: true);
     }
 
     private void ShowMarkdownReply(AssistantMessageUi assistantMessage, string text)

@@ -224,7 +224,6 @@ public partial class MainWindow
             model = ModelCombo.Text;
             systemPrompt = GetEffectiveSystemPrompt(prompt);
             temperature = TempSlider.Value;
-            maxTokens = GetMaxTokensForRequest(prompt, model);
             makeAudio = TtsToggle.IsChecked == true;
             webSearchEnabled = WebSearchToggle.IsChecked == true;
             tavilyApiKey = TavilyApiKeyBox.Password.Trim();
@@ -262,6 +261,7 @@ public partial class MainWindow
         }
 
         var contextTokens = await GetContextTokensForRequestAsync(model, ct);
+        maxTokens = GetMaxTokensForRequest(prompt, contextTokens);
         TrimMessagesToContextBudget(messages, systemPrompt, contextTokens, maxTokens);
         var response = await _ollama.ChatAsync(model, messages, systemPrompt, temperature, maxTokens, ct, contextTokens);
         response = await CompleteCodeArtifactIfNeededAsync(

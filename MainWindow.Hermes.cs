@@ -287,51 +287,18 @@ public partial class MainWindow
         return "Hermes timed out before returning final text. I stopped waiting in the app.";
     }
 
-    // Set for the whole async flow of a phone chat request (it survives awaits, even when a
-    // continuation resumes on the UI thread), so Hermes approvals know which device they came from.
-    private static readonly AsyncLocal<bool> ServingPhoneRequest = new();
-
-    private static HermesCommandSource CurrentHermesSource =>
-        ServingPhoneRequest.Value ? HermesCommandSource.Phone : HermesCommandSource.Desktop;
-
-    // The phone remote's chat callback (see the constructor): marks the request as coming from the phone.
-    private async Task<PhoneRemoteAssistantResult> HandlePhoneRemoteChatFromPhoneAsync(PhoneRemoteUserInput input, CancellationToken ct)
-    {
-        ServingPhoneRequest.Value = true;
-        return await HandlePhoneRemoteChatAsync(input, ct);
-    }
-
-    // MainWindow.PhoneRemote.cs reads and writes these two names directly. They are views of
-    // _hermesApprovals, so the phone path gets the same two-minute expiry and per-device rules.
-    private string _pendingHermesControlCommand
-    {
-        get => _hermesApprovals.StagedRequest;
-        set
-        {
-            _pendingHermesRequestDraft = value ?? "";
-            if (string.IsNullOrWhiteSpace(value))
-                _hermesApprovals.Clear();
-        }
-    }
-
-    private string _pendingHermesSshCommand
-    {
-        get => _hermesApprovals.GetLiveCommand(DateTime.UtcNow);
-        set
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                _hermesApprovals.Clear();
-            else
-                _hermesApprovals.Stage(_pendingHermesRequestDraft, value, CurrentHermesSource, DateTime.UtcNow);
-        }
-    }
-
     /// <summary>
-    /// True when this prompt may run the staged SSH command now: it has not expired, and a casual
-    /// "ok/yes" only counts from the device that staged it ("approve" works from either).
+    /// The reply when a staged Hermes SSH command was not run: it expired, or a casual "ok/yes" came
+    /// from the other device than the one that staged it (<paramref name="source"/> is where it came from).
     /// </summary>
-    private bool IsHermesApproval(string prompt) =>
-        _hermesApprovals.Evaluate(prompt, CurrentHermesSource, DateTime.UtcNow) == HermesApprovalDecision.Approved;
+    private static string BuildHermesApprovalNotice(HermesApprovalDecision decision, string stagedCommand, HermesCommandSource source)
+    {
+        if (decision == HermesApprovalDecision.Expired)
+            return $"The staged Hermes SSH command expired after {HermesApprovalGate.Lifetime.TotalMinutes:0} minutes, so nothing was run. Stage it again with 'Hermes run ...'.\n\nCommand: {stagedCommand}";
+
+        var stagedOn = source == HermesCommandSource.Phone ? "on the desktop" : "from the iPhone";
+        return $"That Hermes SSH command was staged {stagedOn}, so it needs an explicit approval here. Say 'Hermes approve' to run it, or 'Hermes cancel' to clear it.\n\nCommand: {stagedCommand}";
+    }
 
     private static bool IsHermesCancel(string prompt) => HermesApprovalGate.IsCancelWord(prompt);
 
@@ -434,9 +401,7 @@ public partial class MainWindow
             var approval = _hermesApprovals.TryApprove(hermesPrompt, HermesCommandSource.Desktop, DateTime.UtcNow, out var command);
             if (approval is HermesApprovalDecision.Expired or HermesApprovalDecision.NeedsExplicitApproval)
             {
-                var notice = approval == HermesApprovalDecision.Expired
-                    ? $"The staged Hermes SSH command expired after {HermesApprovalGate.Lifetime.TotalMinutes:0} minutes, so nothing was run. Stage it again with 'Hermes run ...'.\n\nCommand: {stagedCommand}"
-                    : $"That Hermes SSH command was staged from the iPhone, so it needs an explicit approval here. Say 'Hermes approve' to run it, or 'Hermes cancel' to clear it.\n\nCommand: {stagedCommand}";
+                var notice = BuildHermesApprovalNotice(approval, stagedCommand, HermesCommandSource.Desktop);
                 assistantMessage.Body.Text = notice;
                 _history.Add("assistant", notice);
                 SpeakLastResponse(notice, assistantMessage);

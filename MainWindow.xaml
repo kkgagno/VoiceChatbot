@@ -163,6 +163,26 @@
                                 </Grid>
                                 <Slider x:Name="TempSlider" Minimum="0" Maximum="2" Value="0.7" SmallChange="0.1" LargeChange="0.2"/>
 
+                                <Grid Margin="0,12,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Max reply tokens" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="MaxTokensBox" Text="2048" LostFocus="TokenBudgetBox_LostFocus"
+                                                 ToolTip="Longest normal reply. Code and SVG requests get a larger budget, never more than half of the context window."/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Context window" Style="{StaticResource SectionLabel}"/>
+                                        <TextBox x:Name="ContextWindowBox" Text="16384" LostFocus="TokenBudgetBox_LostFocus"
+                                                 ToolTip="Largest context to use, sent to Ollama as num_ctx. llama.cpp servers use the window they were started with."/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Style="{StaticResource FieldHint}"
+                                           Text="Context window 0 = model default (its full window). A larger window uses more GPU memory."/>
+
                                 <ToggleButton x:Name="UseToolsToggle" Content="Let the model use tools" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="UseToolsToggle_Click" Margin="0,12,0,2"/>
                                 <TextBlock Style="{StaticResource FieldHint}"
@@ -801,7 +821,7 @@
                                     </Grid>
                                 </Border>
                                 <TextBlock x:Name="FaceIdentityText" Text="Identity: Unknown" FontSize="12" Margin="0,0,0,4" TextWrapping="Wrap"/>
-                                <TextBlock x:Name="FaceDebugText" Text="Samples: 0 | Model: SFace ONNX" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="FaceDebugText" Text="Samples: 0" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
                                 <Button x:Name="FaceSnapshotBtn" Content="Scan Face Once" local:Ui.Icon="&#xE722;"
                                         Style="{StaticResource SecondaryButton}" Click="FaceSnapshot_Click" Margin="0,0,0,8"/>
                                 <Grid Margin="0,0,0,8">

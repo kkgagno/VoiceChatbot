@@ -29,28 +29,38 @@ public partial class MainWindow
         var enabled = PhoneRemoteToggle.IsChecked == true;
         SaveSettings();
 
-        if (enabled)
-            await StartPhoneRemoteIfEnabledAsync();
-        else
-            await StopPhoneRemoteAsync();
+        try
+        {
+            if (enabled)
+                await StartPhoneRemoteIfEnabledAsync();
+            else
+                await StopPhoneRemoteAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Phone remote start/stop failed.", ex);
+            UpdatePhoneRemoteUi();
+            AddSystemMessage($"Phone remote: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
+    // Start/Stop only starts or stops the server; "Start with app" is a separate choice it never changes.
     private async void PhoneRemoteStartStop_Click(object sender, RoutedEventArgs e)
     {
-        SaveSettings();
-        if (_phoneRemoteServer.IsRunning)
+        try
         {
-            PhoneRemoteToggle.IsChecked = false;
-            _settings.PhoneRemote.Enabled = false;
             SaveSettings();
-            await StopPhoneRemoteAsync();
-            return;
+            if (_phoneRemoteServer.IsRunning)
+                await StopPhoneRemoteAsync();
+            else
+                await StartPhoneRemoteAsync();
         }
-
-        PhoneRemoteToggle.IsChecked = true;
-        _settings.PhoneRemote.Enabled = true;
-        SaveSettings();
-        await StartPhoneRemoteIfEnabledAsync();
+        catch (Exception ex)
+        {
+            AppLog.Warn("Phone remote start/stop failed.", ex);
+            UpdatePhoneRemoteUi();
+            AddSystemMessage($"Phone remote: {FriendlyErrors.Describe(ex)}");
+        }
     }
 
     private void PhoneRemoteAudioToggle_Click(object sender, RoutedEventArgs e)
@@ -61,7 +71,15 @@ public partial class MainWindow
     private void PhoneRemoteCopyUrl_Click(object sender, RoutedEventArgs e)
     {
         var url = _phoneRemoteServer.IsRunning ? _phoneRemoteServer.Url : $"https://{PhoneRemoteServerPreviewIp()}:{_settings.PhoneRemote.Port}/";
-        Clipboard.SetText(url);
+        try
+        {
+            Clipboard.SetText(url);
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not copy the phone remote URL ({url}): {FriendlyErrors.Describe(ex)}");
+            return;
+        }
         AddSystemMessage($"Phone remote URL copied: {url}");
     }
 
@@ -91,13 +109,35 @@ public partial class MainWindow
             return;
         }
 
-        Process.Start(new ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not open the certificate folder: {FriendlyErrors.Describe(ex)}");
+        }
         AddSystemMessage($"Install this certificate on the iPhone and fully trust it: {certPath}");
     }
 
     private async Task StartPhoneRemoteIfEnabledAsync()
     {
         if (_settings.PhoneRemote.Enabled != true)
+        {
+            UpdatePhoneRemoteUi();
+            return;
+        }
+
+        await StartPhoneRemoteAsync();
+    }
+
+    /// <summary>
+    /// Starts the phone remote server. A failure is reported but leaves "Start with app" as it is, so a
+    /// launch before Wi-Fi is up does not turn the remote off for the next start.
+    /// </summary>
+    private async Task StartPhoneRemoteAsync()
+    {
+        if (_phoneRemoteServer.IsRunning)
         {
             UpdatePhoneRemoteUi();
             return;
@@ -140,9 +180,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            PhoneRemoteToggle.IsChecked = false;
-            _settings.PhoneRemote.Enabled = false;
-            SaveSettings();
+            AppLog.Warn("Phone remote failed to start.", ex);
             UpdatePhoneRemoteUi();
             AddSystemMessage($"Phone remote failed to start: {ex.Message}");
         }
@@ -220,7 +258,7 @@ public partial class MainWindow
             AddUserMessage($"[iPhone] {userText}");
             _history.Add("user", userText);
             assistantMessage = AddAssistantMessage("Creating image with Qwen Image on ComfyUI...");
-            SetUIState("processing", "Phone image...");
+            SetPhoneUIState("processing", "Phone image...");
         });
 
         try
@@ -241,7 +279,7 @@ public partial class MainWindow
                     AddGeneratedImageToAssistantMessage(assistantMessage, result.LocalPath);
                 }
                 _history.Add("assistant", BuildGeneratedImageHistoryText(result));
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
 
             return new PhoneRemoteAssistantResult(BuildGeneratedImageMessage(result), null, result.LocalPath);
@@ -254,7 +292,7 @@ public partial class MainWindow
                 if (assistantMessage is not null)
                     assistantMessage.Body.Text = error;
                 AddSystemMessage(error);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
@@ -283,7 +321,7 @@ public partial class MainWindow
             assistantMessage = AddAssistantMessage(isTwoImageEdit
                 ? "Mixing images with Qwen Image Edit two-image workflow on ComfyUI..."
                 : "Editing image with Qwen Image Edit on ComfyUI...");
-            SetUIState("processing", "Phone edit...");
+            SetPhoneUIState("processing", "Phone edit...");
         });
 
         try
@@ -309,7 +347,7 @@ public partial class MainWindow
                     AddGeneratedImageToAssistantMessage(assistantMessage, result.LocalPath);
                 }
                 _history.Add("assistant", BuildGeneratedImageHistoryText(result));
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
 
             return new PhoneRemoteAssistantResult(BuildGeneratedImageMessage(result), null, result.LocalPath);
@@ -322,7 +360,7 @@ public partial class MainWindow
                 if (assistantMessage is not null)
                     assistantMessage.Body.Text = error;
                 AddSystemMessage(error);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
@@ -348,7 +386,7 @@ public partial class MainWindow
             assistantMessage = AddAssistantMessage(string.IsNullOrWhiteSpace(audioPath)
                 ? "Creating video with video_ltx2_3_i2v on ComfyUI..."
                 : "Creating video with video_ltx2_3_ia2v on ComfyUI...");
-            SetUIState("processing", "Phone video...");
+            SetPhoneUIState("processing", "Phone video...");
         });
 
         try
@@ -371,7 +409,7 @@ public partial class MainWindow
                     AddGeneratedVideoToAssistantMessage(assistantMessage, result.LocalPath);
                 }
                 _history.Add("assistant", BuildGeneratedVideoHistoryText(result, syncedVideoPath));
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
 
             return new PhoneRemoteAssistantResult(BuildGeneratedVideoMessage(result, syncedVideoPath), null, null, result.LocalPath);
@@ -384,7 +422,7 @@ public partial class MainWindow
                 if (assistantMessage is not null)
                     assistantMessage.Body.Text = error;
                 AddSystemMessage(error);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
@@ -406,32 +444,44 @@ public partial class MainWindow
             _history.Add("user", userText);
             assistantMessage = AddAssistantMessage("");
             makePhoneAudio = _settings.PhoneRemote.PlayAudioOnPhone && TtsToggle.IsChecked == true;
-            SetUIState("processing", "Phone Hermes...");
+            SetPhoneUIState("processing", "Phone Hermes...");
             AddSystemMessage("Phone remote running Hermes CLI over SSH.");
         });
 
         try
         {
-            if (IsHermesCancel(hermesPrompt) && !string.IsNullOrWhiteSpace(_pendingHermesControlCommand))
+            if (IsHermesCancel(hermesPrompt) && _hermesApprovals.TryCancel(out var cancelledRequest))
             {
-                var cancelled = $"Cancelled pending Hermes action: {_pendingHermesControlCommand}";
-                _pendingHermesControlCommand = "";
-                _pendingHermesSshCommand = "";
+                var cancelled = $"Cancelled pending Hermes action: {cancelledRequest}";
                 await Dispatcher.InvokeAsync(() =>
                 {
                     if (assistantMessage != null)
                         assistantMessage.Body.Text = cancelled;
                     _history.Add("assistant", cancelled);
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
                 return new PhoneRemoteAssistantResult(cancelled, null);
             }
 
-            if (IsHermesApproval(hermesPrompt) && !string.IsNullOrWhiteSpace(_pendingHermesSshCommand))
+            // Same gate as the desktop: expired commands and casual "ok/yes" for a desktop-staged command
+            // are refused here instead of falling through to the Hermes CLI as the prompt "yes".
+            var stagedCommand = _hermesApprovals.StagedCommand;
+            var approval = _hermesApprovals.TryApprove(hermesPrompt, HermesCommandSource.Phone, DateTime.UtcNow, out var command);
+            if (approval is HermesApprovalDecision.Expired or HermesApprovalDecision.NeedsExplicitApproval)
             {
-                var command = _pendingHermesSshCommand;
-                _pendingHermesControlCommand = "";
-                _pendingHermesSshCommand = "";
+                var notice = BuildHermesApprovalNotice(approval, stagedCommand, HermesCommandSource.Phone);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (assistantMessage != null)
+                        assistantMessage.Body.Text = notice;
+                    _history.Add("assistant", notice);
+                    SetPhoneUIState("idle", "Ready");
+                });
+                return new PhoneRemoteAssistantResult(notice, null);
+            }
+
+            if (approval == HermesApprovalDecision.Approved)
+            {
                 await Dispatcher.InvokeAsync(() => AddSystemMessage("Phone Hermes approval received. Running pending SSH command."));
                 using var sshTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 sshTimeout.CancelAfter(TimeSpan.FromSeconds(120));
@@ -454,7 +504,7 @@ public partial class MainWindow
                     }
 
                     _history.Add("assistant", sshDisplay);
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
                 await RunOnUiAsync(RefreshLlamaCppModelAfterHermesAsync);
                 return new PhoneRemoteAssistantResult(sshDisplay, sshAudioPath);
@@ -499,21 +549,20 @@ public partial class MainWindow
                     }
 
                     _history.Add("assistant", display);
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
                 return new PhoneRemoteAssistantResult(display, modelAudioPath);
             }
             else if (TryGetDirectHermesSshCommand(hermesPrompt, out var directCommand))
             {
-                _pendingHermesControlCommand = hermesPrompt;
-                _pendingHermesSshCommand = directCommand;
+                _hermesApprovals.Stage(hermesPrompt, directCommand, HermesCommandSource.Phone, DateTime.UtcNow);
                 var staged = await BuildHermesSshApprovalPromptAsync(hermesPrompt, directCommand, ct);
                 await Dispatcher.InvokeAsync(() =>
                 {
                     if (assistantMessage != null)
                         assistantMessage.Body.Text = staged;
                     _history.Add("assistant", staged);
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
                 return new PhoneRemoteAssistantResult(staged, null);
             }
@@ -553,10 +602,10 @@ public partial class MainWindow
                 }
 
                 _history.Add("assistant", $"Hermes result:\n{cleaned}");
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
 
-            if (isModelControl || IsHermesApproval(hermesPrompt))
+            if (isModelControl || HermesApprovalGate.IsApprovalWord(hermesPrompt))
                 await RunOnUiAsync(RefreshLlamaCppModelAfterHermesAsync);
             // The phone shows plain text.
             return new PhoneRemoteAssistantResult(isHermesReply ? MarkdownText.ToPlainText(cleaned) : cleaned, audioPath);
@@ -569,7 +618,7 @@ public partial class MainWindow
                 if (assistantMessage != null)
                     assistantMessage.Body.Text = error;
                 AddSystemMessage(error);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
@@ -581,10 +630,39 @@ public partial class MainWindow
                 if (assistantMessage != null)
                     assistantMessage.Body.Text = error;
                 AddSystemMessage(error);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult(error, null);
         }
+    }
+
+    // True while a phone request has set the shared busy state (Send disabled). UI thread only.
+    private bool _phoneOwnsBusyState;
+
+    /// <summary>
+    /// SetUIState for phone requests. The phone only takes the busy state when no desktop turn is
+    /// running, and only gives back the state it took: it never re-enables Send during a desktop turn.
+    /// UI thread.
+    /// </summary>
+    private void SetPhoneUIState(string state, string label)
+    {
+        if (state == "idle")
+        {
+            if (!_phoneOwnsBusyState)
+                return;
+
+            _phoneOwnsBusyState = false;
+            // A desktop turn that started meanwhile sets idle itself when it ends.
+            if (_chatCts == null)
+                SetUIState("idle", "Ready");
+            return;
+        }
+
+        if (_chatCts != null && !_phoneOwnsBusyState)
+            return; // The desktop turn owns the busy state and its label.
+
+        _phoneOwnsBusyState = true;
+        SetUIState(state, label);
     }
 
     private async Task<PhoneRemoteAssistantResult> HandlePhoneRemoteChatAsync(PhoneRemoteUserInput input, CancellationToken ct)
@@ -613,7 +691,7 @@ public partial class MainWindow
                     _history.Add("user", userText);
                     piAssistantMessage = AddAssistantMessage("");
                     makePiPhoneAudio = _settings.PhoneRemote.PlayAudioOnPhone && TtsToggle.IsChecked == true;
-                    SetUIState("thinking", "Phone Pi...");
+                    SetPhoneUIState("thinking", "Phone Pi...");
                 });
 
                 var piAnswer = piBlockedReason;
@@ -645,7 +723,7 @@ public partial class MainWindow
                             AddAudioButtons(piAssistantMessage, piAudioPath);
                     }
                     _history.Add("assistant", $"Pi result:\n{piAnswer}");
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
 
                 return new PhoneRemoteAssistantResult(MarkdownText.ToPlainText(piAnswer), piAudioPath);
@@ -704,7 +782,7 @@ public partial class MainWindow
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    SetUIState("processing", "Phone camera...");
+                    SetPhoneUIState("processing", "Phone camera...");
                     AddSystemMessage("Phone remote requested one camera photo.");
                 });
 
@@ -716,9 +794,9 @@ public partial class MainWindow
             await Dispatcher.InvokeAsync(() =>
             {
                 model = ModelCombo.Text;
-                systemPrompt = GetEffectiveSystemPrompt(memoryQueryText: userText);
+                // Same prompt as the desktop, including the code/SVG instruction for code requests.
+                systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);
                 temperature = TempSlider.Value;
-                maxTokens = GetMaxTokensForRequest(modelUserText, model);
                 makePhoneAudio = _settings.PhoneRemote.PlayAudioOnPhone && TtsToggle.IsChecked == true;
                 webSearchEnabled = WebSearchToggle.IsChecked == true;
                 tavilyApiKey = TavilyApiKeyBox.Password.Trim();
@@ -742,11 +820,19 @@ public partial class MainWindow
                         ? $"{phoneDocumentCount} phone active document(s) included in this response."
                         : $"{phoneDocumentCount} phone attached document(s) added to this response.");
                 }
-                SetUIState("thinking", "Phone remote...");
+                SetPhoneUIState("thinking", "Phone remote...");
             });
 
             if (string.IsNullOrWhiteSpace(model))
-                return new PhoneRemoteAssistantResult("Select an Ollama model in the desktop app first.", null);
+            {
+                const string noModel = "Select a model in the desktop app first.";
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    AddSystemMessage($"Phone remote: {noModel}");
+                    SetPhoneUIState("idle", "Ready");
+                });
+                return new PhoneRemoteAssistantResult(noModel, null);
+            }
 
             if (DocumentTextService.TryAnswerExactSentenceQuestion(modelUserText, phoneDocumentsForResponse.Select(d => d.Document), out var exactPhoneDocumentAnswer))
             {
@@ -764,7 +850,7 @@ public partial class MainWindow
                         AddAudioButtons(assistantMessage, exactAudioPath);
 
                     _history.Add("assistant", exactPhoneDocumentAnswer);
-                    SetUIState("idle", "Ready");
+                    SetPhoneUIState("idle", "Ready");
                 });
 
                 return new PhoneRemoteAssistantResult(
@@ -777,7 +863,7 @@ public partial class MainWindow
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    SetUIState("processing", "Phone YouTube...");
+                    SetPhoneUIState("processing", "Phone YouTube...");
                     AddSystemMessage("Phone remote fetching YouTube transcript.");
                 });
 
@@ -813,7 +899,7 @@ public partial class MainWindow
                         AddSystemMessage(error);
                         var assistantMessage = AddAssistantMessage(error);
                         _history.Add("assistant", error);
-                        SetUIState("idle", "Ready");
+                        SetPhoneUIState("idle", "Ready");
                     });
                     return new PhoneRemoteAssistantResult(error, null);
                 }
@@ -830,7 +916,7 @@ public partial class MainWindow
                 {
                     try
                     {
-                        await Dispatcher.InvokeAsync(() => SetUIState("searching", "Phone search..."));
+                        await Dispatcher.InvokeAsync(() => SetPhoneUIState("searching", "Phone search..."));
                         _tavily.ApiKey = tavilyApiKey;
                         var webSearchQuery = RemoveWebSearchTriggerPhrases(modelUserText);
                         var searchContext = await _tavily.SearchAndBuildContextAsync(webSearchQuery, maxResults: 5, ct: ct);
@@ -864,9 +950,15 @@ public partial class MainWindow
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, phoneDocumentContext);
 
             var phoneContextTokens = await GetContextTokensForRequestAsync(model, ct);
+            maxTokens = GetMaxTokensForRequest(modelUserText, phoneContextTokens);
             TrimMessagesToContextBudget(messagesForModel, systemPrompt, phoneContextTokens, maxTokens);
             var response = await _ollama.ChatAsync(model, messagesForModel, systemPrompt, temperature, maxTokens, ct, phoneContextTokens);
-            var displayText = CleanDisplayText(response);
+            response = await CompleteCodeArtifactIfNeededAsync(
+                response, modelUserText, messagesForModel, systemPrompt, model, temperature, maxTokens, phoneContextTokens, ct);
+            // Code-preserving cleaning, as on the desktop: the history keeps the code intact and only the
+            // spoken copy and the phone's plain-text copy are simplified.
+            var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(response);
+            var displayText = CleanDisplayText(response, preserveCodeBlocks: isCodeResponse);
             string? audioPath = null;
 
             if (makePhoneAudio)
@@ -882,7 +974,7 @@ public partial class MainWindow
                     AddAudioButtons(assistantMessage, audioPath);
 
                 _history.Add("assistant", displayText);
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
 
             return new PhoneRemoteAssistantResult(
@@ -896,12 +988,15 @@ public partial class MainWindow
             await Dispatcher.InvokeAsync(() =>
             {
                 AddSystemMessage($"Phone remote chat error: {ex.Message}");
-                SetUIState("idle", "Ready");
+                SetPhoneUIState("idle", "Ready");
             });
             return new PhoneRemoteAssistantResult($"Phone remote error: {ex.Message}", null);
         }
         finally
         {
+            // Every path gives back the busy state it took, including early returns and cancellation.
+            try { await Dispatcher.InvokeAsync(() => SetPhoneUIState("idle", "Ready")); }
+            catch (Exception ex) { AppLog.Warn("Could not reset the UI after a phone request.", ex); }
             _phoneRemoteChatLock.Release();
         }
     }

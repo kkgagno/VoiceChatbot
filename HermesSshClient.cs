@@ -353,7 +353,7 @@ public sealed class HermesSshClient
         text = text.Replace(prompt ?? "", "");
         text = Regex.Replace(text, @"(?im)^\s*session_id:\s*\S+\s*$", "");
         text = Regex.Replace(text, @"(?im)^\s*Session:\s*\S+\s*$", "");
-        text = Regex.Replace(text, @"(?im)^.*(ctx|kimi-k2\.6|msg=interrupt|Ctrl\+C cancel|formulating|Initializing agent|Welcome to Hermes Agent|Available Tools|Available Skills|commits behind|Resume this session|Duration:|Messages:).*$", "");
+        text = Regex.Replace(text, @"(?im)^.*(\bctx\b[\s:=]*\d[\d.,]*[kKmM]?(?:\s*/\s*\d[\d.,]*[kKmM]?)?|kimi-k2\.6|msg=interrupt|Ctrl\+C cancel|formulating|Initializing agent|Welcome to Hermes Agent|Available Tools|Available Skills|commits behind|Resume this session|Duration:|Messages:).*$", "");
         text = Regex.Replace(text, @"(?m)^[\s╭╮╰╯─│⚕❯░╎╏┌┐└┘├┤┬┴┼]+$", "");
         text = Regex.Replace(text, @"\n{3,}", "\n\n");
         return text.Trim();

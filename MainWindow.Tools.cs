@@ -203,7 +203,7 @@ public partial class MainWindow
                         var text = streamed.ToString();
                         var preserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(text);
                         assistantMessage.Body.Text = GetStreamingDisplayText(text, preserveCode);
-                        ScrollChat();
+                        ScrollChat(onlyIfFollowing: true);
                         FeedStreamingSpeech(speech, token);
                     }, DispatcherPriority.Background);
                 }

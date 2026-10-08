@@ -112,6 +112,22 @@ public static class MarkdownText
     }
 
     /// <summary>
+    /// Applies <paramref name="transform"/> to the prose only: fenced code blocks and inline code spans
+    /// are passed through exactly as written.
+    /// </summary>
+    public static string MapProseOutsideCode(string? text, Func<string, string> transform)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text ?? "";
+
+        return MapProse(text, prose =>
+        {
+            var protectedProse = ProtectInlineCode(prose, out var spans);
+            return RestoreInlineCode(transform(protectedProse), spans, keepBackticks: true);
+        });
+    }
+
+    /// <summary>
     /// Markdown to readable plain text (phone remote, memories, the plain-text view): no emphasis
     /// marks, headings or link syntax; bullets become "•", task boxes ☐/☑, code keeps its content
     /// without fences.

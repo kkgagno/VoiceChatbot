@@ -24,7 +24,6 @@ namespace VoiceChatbot;
 
 public partial class MainWindow : Window
 {
-    private const int CodeResponseMaxTokens = 32768;
     private const int CodeContextTokens = 131072;
     private const int CodeContinuationMaxAttempts = 6;
     private const int LargePasteChars = 24000;
@@ -37,10 +36,8 @@ public partial class MainWindow : Window
         "videos");
     private OllamaClient _ollama;
     private HermesSshClient _hermesSsh;
-    // The one staged "Hermes run ..." command (expires after two minutes). The phone path reaches it
-    // through the _pendingHermes* properties in MainWindow.Hermes.cs.
+    // The one staged "Hermes run ..." command (expires after two minutes), for the desktop and phone paths.
     private readonly HermesApprovalGate _hermesApprovals = new();
-    private string _pendingHermesRequestDraft = "";
     private PiAgentService _piAgent;
     private YouTubeTranscriptService _youtubeTranscripts;
     private DocumentTextService _documentText;
@@ -125,7 +122,7 @@ public partial class MainWindow : Window
         _camera = new CameraService();
         _phoneRemoteServer = new PhoneRemoteServer(
             (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
-            HandlePhoneRemoteChatFromPhoneAsync,
+            HandlePhoneRemoteChatAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
             GetPhoneRemoteModelState);
         _faceIdentityManager = new FaceIdentityManager(
@@ -180,6 +177,7 @@ public partial class MainWindow : Window
             _applyingSettings = true;
             ApplySettings();
             SetupSliderBindings();
+            UpdateSliderValueLabels();
             SetupTimers();
 
             // Initialize speech - may fail on some systems
@@ -221,6 +219,8 @@ public partial class MainWindow : Window
                 ModelCombo.SelectedItem = _settings.Model;
             else if (ModelCombo.Items.Count > 0)
                 ModelCombo.SelectedIndex = 0;
+            else if (!string.IsNullOrEmpty(_settings.Model))
+                ModelCombo.Text = _settings.Model; // Backend offline: keep showing (and saving) the saved model.
 
             _applyingSettings = false;
             _schedulerTimer.Start();
@@ -260,11 +260,12 @@ public partial class MainWindow : Window
         HermesSshPasswordBox.Password = _settings.HermesSshPassword;
         SelectProviderCombo(_settings.ChatProvider);
         SystemPromptBox.Text = _settings.SystemPrompt;
+        RunOneTimeSettingsMigrations();
         TempSlider.Value = _settings.Temperature;
+        MaxTokensBox.Text = _settings.MaxTokens.ToString();
+        ContextWindowBox.Text = _settings.ContextWindow.ToString();
         ApplyToolSettings();
         ApplyMarkdownSettings();
-        if (_settings.SilenceTimeout < 2.0)
-            _settings.SilenceTimeout = 2.4;
         SilenceSlider.Value = _settings.SilenceTimeout;
         NoiseSlider.Value = _settings.NoiseSuppression;
         AutoDetectToggle.IsChecked = _settings.AutoDetectVoice;
@@ -290,17 +291,9 @@ public partial class MainWindow : Window
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
         ComfyUrlBox.Text = _settings.ComfyUiUrl;
-        if (_settings.ImageWidth == 1328 && _settings.ImageHeight == 1328)
-        {
-            _settings.ImageWidth = AppSettings.DefaultImageWidth;
-            _settings.ImageHeight = AppSettings.DefaultImageHeight;
-        }
-
         ImageWidthBox.Text = _settings.ImageWidth.ToString();
         ImageHeightBox.Text = _settings.ImageHeight.ToString();
         QwenCreateStepsBox.Text = _settings.QwenCreateSteps.ToString();
-        if (_settings.QwenEditSteps <= 4)
-            _settings.QwenEditSteps = 40;
         QwenEditStepsBox.Text = _settings.QwenEditSteps.ToString();
         VideoSecondsBox.Text = _settings.VideoSeconds.ToString();
         VideoFpsBox.Text = _settings.VideoFps.ToString();
@@ -322,8 +315,8 @@ public partial class MainWindow : Window
 
         _history.MaxMessages = _settings.MaxContextMessages;
 
-        // Window position
-        if (_settings.WindowLeft >= 0 && _settings.WindowTop >= 0)
+        // Window position: negative values are valid on monitors left of or above the primary one.
+        if (IsSavedWindowPositionVisible(_settings.WindowLeft, _settings.WindowTop, _settings.WindowWidth))
         {
             Left = _settings.WindowLeft;
             Top = _settings.WindowTop;
@@ -334,6 +327,54 @@ public partial class MainWindow : Window
             WindowState = WindowState.Maximized;
 
         SetSidebarVisible(_settings.SidebarVisible);
+    }
+
+    /// <summary>
+    /// Fixes older versions applied on every launch; they now run once per settings file and the
+    /// version is saved with the settings, so later user choices (for example silence below 2 s) stick.
+    /// </summary>
+    private void RunOneTimeSettingsMigrations()
+    {
+        if (_settings.SettingsVersion >= AppSettings.CurrentSettingsVersion)
+            return;
+
+        if (_settings.SettingsVersion < 1)
+        {
+            if (_settings.SilenceTimeout < 2.0)
+                _settings.SilenceTimeout = 2.4;
+            if (_settings.QwenEditSteps <= 4)
+                _settings.QwenEditSteps = 40;
+            if (_settings.ImageWidth == 1328 && _settings.ImageHeight == 1328)
+            {
+                _settings.ImageWidth = AppSettings.DefaultImageWidth;
+                _settings.ImageHeight = AppSettings.DefaultImageHeight;
+            }
+        }
+
+        _settings.SettingsVersion = AppSettings.CurrentSettingsVersion;
+    }
+
+    /// <summary>
+    /// True when a saved position (not the -1/-1 "never saved" default) puts the title bar on the
+    /// connected monitors, including monitors at negative coordinates.
+    /// </summary>
+    private static bool IsSavedWindowPositionVisible(double left, double top, double width)
+    {
+        if (double.IsNaN(left) || double.IsNaN(top) || double.IsInfinity(left) || double.IsInfinity(top))
+            return false;
+        if (left == -1 && top == -1)
+            return false;
+
+        const double visibleTitleBar = 100;
+        var screenLeft = SystemParameters.VirtualScreenLeft;
+        var screenTop = SystemParameters.VirtualScreenTop;
+        var screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+        var screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
+        var right = left + Math.Max(width, visibleTitleBar);
+        return right - visibleTitleBar >= screenLeft &&
+               left + visibleTitleBar <= screenRight &&
+               top >= screenTop - 8 &&
+               top + 30 <= screenBottom;
     }
 
     private async Task RefreshFaceProfileChoicesAsync()
@@ -367,7 +408,9 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(text) ? "Keith" : text.Trim();
     }
 
-    private void SaveSettings()
+    /// <param name="userChange">False when saving on exit, so an unreadable settings.json the user has not
+    /// replaced yet is kept (see SettingsManager.Save).</param>
+    private void SaveSettings(bool userChange = true)
     {
         if (_applyingSettings)
             return;
@@ -382,9 +425,12 @@ public partial class MainWindow : Window
         _settings.HermesSshUser = HermesSshUserBox.Text.Trim();
         _settings.HermesSshPassword = HermesSshPasswordBox.Password;
         _settings.ChatProvider = GetSelectedProvider();
-        _settings.Model = ModelCombo.Text;
+        // With the backend offline at launch the list is empty: keep the saved model instead of saving "".
+        if (!string.IsNullOrWhiteSpace(ModelCombo.Text) || ModelCombo.Items.Count > 0)
+            _settings.Model = ModelCombo.Text;
         _settings.SystemPrompt = SystemPromptBox.Text;
         _settings.Temperature = TempSlider.Value;
+        ReadTokenBudgetFields();
         SaveToolSettings();
         SaveMarkdownSettings();
         _settings.InputLanguage = InputLangCombo.Text;
@@ -451,7 +497,7 @@ public partial class MainWindow : Window
         if (SidebarPanel.Visibility == Visibility.Visible)
             _settings.SidebarWidth = SidebarColumn.ActualWidth;
 
-        SettingsManager.Save(_settings);
+        SettingsManager.Save(_settings, userChange);
         ConfigureChatClient();
         ConfigureImageClient();
     }
@@ -473,6 +519,25 @@ public partial class MainWindow : Window
         _comfyImages.BaseUrl = string.IsNullOrWhiteSpace(_settings.ComfyUiUrl)
             ? "http://localhost:8000"
             : _settings.ComfyUiUrl;
+    }
+
+    /// <summary>Reads the Max reply tokens and Context window fields into the settings.</summary>
+    private void ReadTokenBudgetFields()
+    {
+        _settings.MaxTokens = ParseBoundedInt(MaxTokensBox.Text, _settings.MaxTokens, TokenBudget.MinMaxTokens, TokenBudget.ArtifactMaxTokens);
+        var contextWindow = ParseBoundedInt(ContextWindowBox.Text, _settings.ContextWindow, 0, 1_048_576);
+        _settings.ContextWindow = contextWindow == 0 ? 0 : Math.Max(TokenBudget.MinContextWindow, contextWindow);
+        MaxTokensBox.Text = _settings.MaxTokens.ToString();
+        ContextWindowBox.Text = _settings.ContextWindow.ToString();
+    }
+
+    private void TokenBudgetBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_applyingSettings)
+            return;
+
+        ReadTokenBudgetFields();
+        SaveSettings();
     }
 
     private static int ParseBoundedInt(string text, int fallback, int min, int max)
@@ -628,6 +693,17 @@ public partial class MainWindow : Window
     }
 
     // ==================== Slider Bindings ====================
+
+    /// <summary>Shows the applied (saved) slider values; the ValueChanged handlers only run on later changes.</summary>
+    private void UpdateSliderValueLabels()
+    {
+        TempValue.Text = TempSlider.Value.ToString("F1");
+        SilenceValue.Text = SilenceSlider.Value.ToString("F1");
+        NoiseValue.Text = $"{(int)NoiseSlider.Value}%";
+        RateValue.Text = $"{(int)RateSlider.Value:+#;-#;0}";
+        VolumeValue.Text = $"{(int)VolumeSlider.Value}%";
+        ContextValue.Text = ((int)ContextSlider.Value).ToString();
+    }
 
     private void SetupSliderBindings()
     {
@@ -814,7 +890,7 @@ public partial class MainWindow : Window
 
         try
         {
-            SaveSettings();
+            SaveSettings(userChange: false);
             _schedulerTimer?.Stop();
             _schedulerStore.Save();
             _chatCts?.Cancel();
@@ -893,18 +969,7 @@ public partial class MainWindow : Window
         return withoutUnusedTokens.Length == 0 && Regex.IsMatch(text, @"<unused\d+>", RegexOptions.IgnoreCase);
     }
 
-    private static bool LooksLikeLeakedReasoningDump(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
-
-        var sample = text.TrimStart();
-        if (Regex.IsMatch(sample, @"\A(?:User asks|Context|Self-Correction|Correction|The user is asking|Previous response)\b", RegexOptions.IgnoreCase) &&
-            Regex.IsMatch(sample, @"\b(Self-Correction|Correction|Context|previous response|system prompt|prompt history|tool|video/conversation)\b", RegexOptions.IgnoreCase))
-            return true;
-
-        return Regex.IsMatch(sample, @"<\|?channel\|?>\s*thought|thought\s*<\|?channel\|?>|thoughtthought", RegexOptions.IgnoreCase);
-    }
+    private static bool LooksLikeLeakedReasoningDump(string text) => ReasoningText.LooksLikeLeakedReasoning(text);
 
     /// <summary>
     /// Removes citation/bracket artifacts and URLs before TTS, without changing chat display text.
@@ -1176,10 +1241,19 @@ public partial class MainWindow : Window
             : $"{NumberToWords(number / 1_000_000)} million {NumberToWords(millionRemainder)}";
     }
 
+    /// <summary>
+    /// Removes citation artifacts such as [1] or 【Title†L1-L2】 from the prose. Code blocks and inline
+    /// code are left alone, so code such as items[0] survives.
+    /// </summary>
     private static string RemoveCitationArtifacts(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
+        return MarkdownText.MapProseOutsideCode(text, RemoveCitationArtifactsFromProse).Trim();
+    }
+
+    private static string RemoveCitationArtifactsFromProse(string text)
+    {
         var cleaned = text;
 
         // Remove source citation artifacts like 【Title†L1-L2】 and (1†L1-L4).
@@ -1195,7 +1269,7 @@ public partial class MainWindow : Window
         cleaned = Regex.Replace(cleaned, "(?<=\\S)[ \\t]+([,.!?;:])", "$1");
         cleaned = Regex.Replace(cleaned, "(?<=\\S)[ \\t]{2,}", " ");
 
-        return cleaned.Trim();
+        return cleaned;
     }
 
     private sealed record PendingImageAttachment(string Path, string Base64);

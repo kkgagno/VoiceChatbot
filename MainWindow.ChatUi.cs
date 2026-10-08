@@ -260,9 +260,16 @@ public partial class MainWindow
         Ui.SetIconSize(copyButton, 12);
         copyButton.Click += (_, _) =>
         {
-            Clipboard.SetText(code);
-            copyButton.Content = "Copied";
-            Ui.SetIcon(copyButton, "\uE73E");
+            try
+            {
+                Clipboard.SetText(code);
+                copyButton.Content = "Copied";
+                Ui.SetIcon(copyButton, "\uE73E");
+            }
+            catch (Exception ex)
+            {
+                AddSystemMessage($"Copy failed: {FriendlyErrors.Describe(ex)}");
+            }
         };
         DockPanel.SetDock(copyButton, Dock.Right);
         header.Children.Add(copyButton);
@@ -320,8 +327,16 @@ public partial class MainWindow
         };
     }
 
-    private void ScrollChat()
+    /// <summary>
+    /// Scrolls the chat to the end. With <paramref name="onlyIfFollowing"/> (streamed text, re-rendered
+    /// replies) it only scrolls when the user is already near the bottom, so they can scroll up and read.
+    /// </summary>
+    private void ScrollChat(bool onlyIfFollowing = false)
     {
+        // Measured before the new text is laid out, so it tells where the user was reading.
+        if (onlyIfFollowing && ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset > ChatFollowDistance)
+            return;
+
         Dispatcher.BeginInvoke(() =>
         {
             ChatScroll.ScrollToEnd();
@@ -493,7 +508,14 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true)
             return;
 
-        File.Copy(audioPath, dialog.FileName, overwrite: true);
-        AddSystemMessage($"Audio saved to {dialog.FileName}");
+        try
+        {
+            File.Copy(audioPath, dialog.FileName, overwrite: true);
+            AddSystemMessage($"Audio saved to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"Could not save the audio: {FriendlyErrors.Describe(ex)}");
+        }
     }
 }

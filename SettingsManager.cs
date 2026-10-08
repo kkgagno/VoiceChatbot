@@ -11,6 +11,10 @@ namespace VoiceChatbot;
 
 public class AppSettings
 {
+    /// <summary>Version of the one-time fixes MainWindow applied to these settings (0 = none yet).</summary>
+    public const int CurrentSettingsVersion = 1;
+    public int SettingsVersion { get; set; }
+
     public const int DefaultImageWidth = 1080;
     public const int DefaultImageHeight = 1920;
     public const string DefaultTavilyApiKey = "";
@@ -98,6 +102,8 @@ public class AppSettings
     public string TavilyApiKey { get; set; } = DefaultTavilyApiKey;
     public bool WebSearchEnabled { get; set; } = true;
     public int MaxTokens { get; set; } = 2048;
+    /// <summary>Largest context window to use; sent to Ollama as num_ctx. 0 = the model's full window.</summary>
+    public int ContextWindow { get; set; } = TokenBudget.DefaultContextWindow;
 
     // Image generation / editing
     public string ComfyUiUrl { get; set; } = "http://localhost:8000";
@@ -163,7 +169,10 @@ public static class SettingsManager
     private static readonly ISecretProtector Protector = new DpapiSecretProtector();
     private static readonly object SaveLock = new();
     private static string? _loadWarning;
+    private static string? _recoveryNotice;
     private static bool _plainSaveLogged;
+    // Set when settings.json could not be read: the file is kept as it is until the user changes a setting.
+    private static volatile bool _keepUnreadableFile;
 
     /// <summary>True when secrets are written encrypted (Windows DPAPI is available).</summary>
     public static bool SecretsEncrypted => Protector.IsAvailable;
@@ -173,6 +182,11 @@ public static class SettingsManager
     /// Returns it once, then null.
     /// </summary>
     public static string? TakeLoadWarning() => Interlocked.Exchange(ref _loadWarning, null);
+
+    /// <summary>
+    /// The notice for the user after settings.json could not be read and was backed up. Returns it once, then null.
+    /// </summary>
+    public static string? TakeRecoveryNotice() => Interlocked.Exchange(ref _recoveryNotice, null);
 
     public static AppSettings Load()
     {
@@ -184,6 +198,7 @@ public static class SettingsManager
                 if (JsonNode.Parse(json) is not JsonObject root)
                 {
                     AppLog.Warn("settings.json is empty or not a JSON object. Using defaults.");
+                    HandleUnreadableFile();
                     return new AppSettings();
                 }
 
@@ -202,12 +217,57 @@ public static class SettingsManager
         catch (Exception ex)
         {
             AppLog.Error("Could not read settings.json. Using defaults.", ex);
+            HandleUnreadableFile();
         }
         return new AppSettings();
     }
 
-    public static void Save(AppSettings settings)
+    /// <summary>
+    /// Copies an unreadable settings.json to settings.json.bak (or a timestamped .bak when one exists),
+    /// prepares a one-time notice and keeps the file from being overwritten until the user changes something.
+    /// </summary>
+    private static void HandleUnreadableFile()
     {
+        _keepUnreadableFile = true;
+        string? backup = null;
+        try
+        {
+            if (File.Exists(Path))
+            {
+                backup = Path + ".bak";
+                if (File.Exists(backup))
+                    backup = $"{Path}.{DateTime.Now:yyyyMMdd-HHmmss}.bak";
+                File.Copy(Path, backup, overwrite: false);
+                AppLog.Warn($"Backed up the unreadable settings.json to {backup}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not back up the unreadable settings.json.", ex);
+            backup = null;
+        }
+
+        _recoveryNotice = backup is null
+            ? "Your settings could not be read, so default settings are in use. The settings file is left unchanged until you change a setting."
+            : $"Your settings could not be read, so default settings are in use. A copy of the old file was saved to {backup}. " +
+              "The settings file is left unchanged until you change a setting.";
+    }
+
+    /// <summary>
+    /// Writes settings.json. With <paramref name="userChange"/> false (saving on exit), nothing is written
+    /// while an unreadable settings.json is being kept; the first save after a user change replaces it.
+    /// </summary>
+    public static void Save(AppSettings settings, bool userChange = true)
+    {
+        if (_keepUnreadableFile)
+        {
+            if (!userChange)
+                return;
+
+            _keepUnreadableFile = false;
+            AppLog.Info("A setting was changed; replacing the unreadable settings.json (a backup was kept).");
+        }
+
         try
         {
             lock (SaveLock)

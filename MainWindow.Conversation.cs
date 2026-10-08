@@ -42,7 +42,6 @@ public partial class MainWindow
         _history.Clear();
         _recentWebSearchContexts.Clear();
         _hermesApprovals.Clear();
-        _pendingHermesRequestDraft = "";
         _latestLiveTranscript = "";
         _latestLiveTranscriptSummary = "";
         ChatPanel.Children.Clear();
