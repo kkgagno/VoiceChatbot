@@ -272,6 +272,7 @@ public partial class MainWindow : Window
         UpdateKokoroHint();
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
+        ApplyMemoryPromptSettings();
         ApplyConversationHistorySettings();
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
@@ -386,6 +387,7 @@ public partial class MainWindow : Window
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
+        SaveMemoryPromptSettings();
         SaveConversationHistorySettings();
         _settings.WebSearchEnabled = WebSearchToggle.IsChecked == true;
         var tavilyKey = TavilyApiKeyBox.Password.Trim();

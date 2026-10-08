@@ -58,6 +58,10 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    // Saved memories in the system prompt: "Relevant" = best matches for the message (up to
+    // MemoryMaxItems) plus the newest memory, "All" = every saved memory.
+    public string MemoryMode { get; set; } = MemorySelector.ModeRelevant;
+    public int MemoryMaxItems { get; set; } = MemorySelector.DefaultMaxItems;
     // Saved chat history: one JSON file per conversation in %APPDATA%\VoiceChatbot\conversations.
     public bool SaveConversationHistory { get; set; } = true;
 

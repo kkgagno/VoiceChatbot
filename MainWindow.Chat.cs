@@ -28,8 +28,9 @@ public partial class MainWindow
 
     /// <summary>
     /// Builds the effective system prompt with conversation memories injected.
+    /// Memories are matched against <paramref name="memoryQueryText"/> (default: currentUserText).
     /// </summary>
-    private string GetEffectiveSystemPrompt(string? currentUserText = null)
+    private string GetEffectiveSystemPrompt(string? currentUserText = null, string? memoryQueryText = null)
     {
         var basePrompt = SystemPromptBox.Text;
         if (IsCodeOrScriptRequest(currentUserText))
@@ -44,7 +45,7 @@ public partial class MainWindow
         if (_settings.FaceFeatures.FaceGatingEnabled)
             basePrompt += "\n\n" + GetFaceIdentitySystemContext();
 
-        var memoryBlock = MemoryManager.FormatForSystemPrompt(_loadedMemories);
+        var memoryBlock = BuildMemoryPromptBlock(memoryQueryText ?? currentUserText);
         if (!string.IsNullOrWhiteSpace(memoryBlock))
             basePrompt += "\n\n" + memoryBlock;
 
@@ -779,7 +780,7 @@ public partial class MainWindow
 
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
 
-            var systemPrompt = GetEffectiveSystemPrompt(modelUserText);
+            var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);
             var maxTokens = GetMaxTokensForRequest(modelUserText, model);
             var contextTokens = await GetContextTokensForRequestAsync(model, _chatCts.Token);
             var droppedContextMessages = TrimMessagesToContextBudget(messagesForModel, systemPrompt, contextTokens, maxTokens);

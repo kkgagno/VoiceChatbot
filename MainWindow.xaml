@@ -400,6 +400,33 @@
                                 <ToggleButton x:Name="StreamToggle" Content="Stream responses" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="StreamToggle_Click"/>
 
+                                <Border Style="{StaticResource Divider}" Margin="0,8,0,12"/>
+
+                                <StackPanel Style="{StaticResource FieldBlock}" Margin="0,0,0,8">
+                                    <TextBlock Text="Memories in prompt" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="MemoryModeCombo" SelectionChanged="MemoryModeCombo_SelectionChanged"
+                                              ToolTip="Relevant sends only the saved memories that match your message, plus the newest one. All sends every saved memory with every message.">
+                                        <ComboBoxItem Content="Relevant"/>
+                                        <ComboBoxItem Content="All"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel x:Name="MemoryMaxItemsPanel">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Matching memories" Style="{StaticResource SectionLabel}"/>
+                                        <TextBlock x:Name="MemoryMaxItemsValue" Grid.Column="1" Text="4" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="MemoryMaxItemsSlider" Minimum="1" Maximum="20" Value="4" SmallChange="1" LargeChange="2"
+                                            IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,4"
+                                            ValueChanged="MemoryMaxItemsSlider_ValueChanged"
+                                            ToolTip="How many of the best-matching saved memories to include with each message"/>
+                                </StackPanel>
+                                <TextBlock x:Name="MemoryPromptHint" Style="{StaticResource FieldHint}" Margin="0,0,0,10"
+                                           Text="Each message gets up to 4 saved memories that match it, plus the newest one."/>
+
                                 <UniformGrid Columns="2" Margin="0,4,0,0">
                                     <Button x:Name="SummarizeBtn" Content="Save Memory" local:Ui.Icon="&#xE74E;"
                                             Style="{StaticResource ActionButton}" Click="SummarizeConversation_Click" Margin="0,0,3,6"/>

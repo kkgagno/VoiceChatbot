@@ -118,6 +118,17 @@ Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\
 - **New chat** (the + button or **Ctrl+N**) and **Clear Chat** start a fresh conversation. The previous one stays in history.
 - Conversations are titled from the first message. Turn off **Save conversations** under **Chat History** in the sidebar to stop saving new messages. **Open Folder** shows the files.
 
+### Memories
+
+**Save Memory** in the **Conversation** expander summarizes the current chat into a memory, and **View Memory** lets you add, edit or delete them. Memories are stored in `%APPDATA%\VoiceChatbot\memory`.
+
+**Memories in prompt** decides which memories go into the system prompt:
+
+- `Relevant` (default) sends only the saved memories that best match your message, up to **Matching memories** (default 4), plus the newest memory. Matching is keyword based, so a message about "my dog Rex" brings back memories that mention Rex or dogs. A message with no real topic, or a question like "what do you remember?", gets the most recent memories instead.
+- `All` sends every saved memory with every message, which uses more of the model's context.
+
+The hint under the setting shows how many memories the last message used. The settings are saved as `MemoryMode` and `MemoryMaxItems` in `settings.json`.
+
 ## Optional integrations
 
 ### Web search
