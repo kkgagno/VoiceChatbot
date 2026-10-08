@@ -37,8 +37,10 @@ public partial class MainWindow : Window
         "videos");
     private OllamaClient _ollama;
     private HermesSshClient _hermesSsh;
-    private string _pendingHermesControlCommand = "";
-    private string _pendingHermesSshCommand = "";
+    // The one staged "Hermes run ..." command (expires after two minutes). The phone path reaches it
+    // through the _pendingHermes* properties in MainWindow.Hermes.cs.
+    private readonly HermesApprovalGate _hermesApprovals = new();
+    private string _pendingHermesRequestDraft = "";
     private PiAgentService _piAgent;
     private YouTubeTranscriptService _youtubeTranscripts;
     private DocumentTextService _documentText;
@@ -116,12 +118,13 @@ public partial class MainWindow : Window
         _documentText = new DocumentTextService();
         ConfigureChatClient();
         _tavily = new TavilySearchClient(_settings.TavilyApiKey);
+        _tavily.SearchFailed += ShowWebSearchFailure;
         _comfyImages = new ComfyUiImageClient { BaseUrl = _settings.ComfyUiUrl };
         _speech = new SpeechEngine();
         _camera = new CameraService();
         _phoneRemoteServer = new PhoneRemoteServer(
             (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
-            HandlePhoneRemoteChatAsync,
+            HandlePhoneRemoteChatFromPhoneAsync,
             (path, ct) => _documentText.ExtractAsync(path, ct),
             GetPhoneRemoteModelState);
         _faceIdentityManager = new FaceIdentityManager(

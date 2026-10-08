@@ -73,6 +73,8 @@ public partial class MainWindow
         var sourcePaths = GetImageEditSourcePaths();
         if (sourcePaths.Count == 0)
         {
+            // Keep the request on screen: the input box was already cleared when it was sent.
+            AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Edit.");
             return;
         }
@@ -132,6 +134,8 @@ public partial class MainWindow
         var sourcePath = GetVideoSourceImagePath();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
         {
+            // Keep the request on screen: the input box was already cleared when it was sent.
+            AddUserMessage(userText);
             AddSystemMessage("Attach an image first, or create an image before using Video.");
             return;
         }
@@ -459,103 +463,18 @@ public partial class MainWindow
         AddSystemMessage($"Video saved to {dialog.FileName}");
     }
 
-    private static bool TryGetImageCreatePrompt(string text, out string prompt)
-    {
-        prompt = "";
-        var trimmed = text.Trim();
-        var patterns = new[]
-        {
-            @"^(?:please\s+)?(?:create|generate|make|draw)\s+(?:an?\s+)?image\s+(?:of|showing|with)?\s*(.+)$",
-            @"^(?:please\s+)?(?:create|generate|make|draw)\s+(?:a\s+)?picture\s+(?:of|showing|with)?\s*(.+)$"
-        };
+    // The media parsers live in Core/MediaIntentParser.cs: they need explicit image/picture/photo or
+    // video generation phrasing, so "Edit the code above", "Create a movie review of ..." or a YouTube
+    // link that says "video" stay with the chat model.
+    private static bool TryGetImageCreatePrompt(string text, out string prompt) =>
+        MediaIntentParser.TryGetImageCreatePrompt(text, out prompt);
 
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value))
-            {
-                prompt = match.Groups[1].Value.Trim();
-                return true;
-            }
-        }
+    private static bool TryGetVideoPrompt(string text, out string prompt, out int? seconds) =>
+        MediaIntentParser.TryGetVideoPrompt(text, out prompt, out seconds);
 
-        return false;
-    }
+    private static int? TryParseVideoSeconds(string text) =>
+        MediaIntentParser.TryParseVideoSeconds(text);
 
-    private static bool TryGetVideoPrompt(string text, out string prompt, out int? seconds)
-    {
-        prompt = "";
-        seconds = null;
-        var trimmed = text.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed) || !Regex.IsMatch(trimmed, @"\b(video|movie|clip)\b", RegexOptions.IgnoreCase))
-            return false;
-
-        var patterns = new[]
-        {
-            @"^(?:please\s+)?(?:create|generate|make)\s+(?:an?\s+)?(?:\d+\s*(?:second|seconds|sec|s)\s+)?(?:video|movie|clip)\s*(?:of|showing|with)?\s*(.+)$",
-            @"^(?:please\s+)?(?:turn|make)\s+(?:this\s+)?(?:image|picture|photo)\s+into\s+(?:an?\s+)?(?:\d+\s*(?:second|seconds|sec|s)\s+)?(?:video|movie|clip)\s*(?:where|that|of|showing|with)?\s*(.*)$"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (!match.Success)
-                continue;
-
-            seconds = TryParseVideoSeconds(trimmed);
-            prompt = match.Groups.Count > 1 ? match.Groups[1].Value.Trim() : "";
-            if (string.IsNullOrWhiteSpace(prompt))
-                prompt = RemoveVideoCommandWords(trimmed);
-            return true;
-        }
-
-        if (Regex.IsMatch(trimmed, @"\b(?:\d+\s*)?(?:second|seconds|sec|s)\s+video\b", RegexOptions.IgnoreCase))
-        {
-            seconds = TryParseVideoSeconds(trimmed);
-            prompt = RemoveVideoCommandWords(trimmed);
-            return true;
-        }
-
-        return false;
-    }
-
-    private static int? TryParseVideoSeconds(string text)
-    {
-        var match = Regex.Match(text, @"\b(?<n>\d{1,2})\s*(?:second|seconds|sec|s)\b", RegexOptions.IgnoreCase);
-        if (match.Success && int.TryParse(match.Groups["n"].Value, out var seconds))
-            return Math.Clamp(seconds, 1, 30);
-
-        return null;
-    }
-
-    private static string RemoveVideoCommandWords(string text)
-    {
-        var cleaned = Regex.Replace(text, @"^(?:please\s+)?(?:create|generate|make|turn)\s+", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, @"\b(?:an?\s+)?\d*\s*(?:second|seconds|sec|s)?\s*(?:video|movie|clip)\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ");
-        return string.IsNullOrWhiteSpace(cleaned) ? text.Trim() : cleaned;
-    }
-
-    private static bool TryGetImageEditPrompt(string text, out string prompt)
-    {
-        prompt = "";
-        var trimmed = text.Trim();
-        var patterns = new[]
-        {
-            @"^(?:please\s+)?edit\s+(?:this\s+)?(?:image|picture|photo)?\s*(?:and|to)?\s*(.+)$",
-            @"^(?:please\s+)?(?:change|modify)\s+(?:this\s+)?(?:image|picture|photo)\s+(?:to|and)?\s*(.+)$"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(trimmed, pattern, RegexOptions.IgnoreCase);
-            if (match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value))
-            {
-                prompt = match.Groups[1].Value.Trim();
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool TryGetImageEditPrompt(string text, out string prompt) =>
+        MediaIntentParser.TryGetImageEditPrompt(text, out prompt);
 }

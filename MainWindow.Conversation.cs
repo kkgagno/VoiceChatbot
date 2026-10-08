@@ -28,6 +28,7 @@ public partial class MainWindow
     {
         _history.Clear();
         _recentWebSearchContexts.Clear();
+        _hermesApprovals.Clear();
         ChatPanel.Children.Clear();
         AddSystemMessage("Chat cleared.");
         _conversationStartTime = DateTime.Now;
