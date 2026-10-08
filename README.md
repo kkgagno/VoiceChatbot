@@ -106,6 +106,18 @@ Click **Test** to check the connection. If the server lists its voices, the voic
 
 Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
 
+## Conversations, memory and knowledge
+
+### Saved conversations
+
+Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\VoiceChatbot\conversations`. Messages from the phone remote and scheduled prompts that appear in the main chat are saved too, along with attached image paths and the spoken-reply audio.
+
+- Click the history button in the top bar (or press **Ctrl+H**) to open **Conversations**. Chats are grouped by Today, Yesterday, Previous 7 days and Older, and the search box matches titles and message text.
+- Click a conversation to reopen it. Its messages are redrawn, Replay Audio comes back if the audio file still exists, and the last *Max context messages* are loaded back into the model's context.
+- Hover a conversation to rename or delete it. Delete asks for confirmation.
+- **New chat** (the + button or **Ctrl+N**) and **Clear Chat** start a fresh conversation. The previous one stays in history.
+- Conversations are titled from the first message. Turn off **Save conversations** under **Chat History** in the sidebar to stop saving new messages. **Open Folder** shows the files.
+
 ## Optional integrations
 
 ### Web search
@@ -151,6 +163,8 @@ These tools can be installed with WinGet where packages are available.
 | Esc | Stop generating, speaking and listening |
 | Ctrl+B | Show or hide the settings sidebar |
 | Ctrl+K | Focus the message box |
+| Ctrl+H | Show or hide saved conversations |
+| Ctrl+N | Start a new chat |
 | Ctrl+V | Paste text or an image |
 
 ## Building from source
@@ -192,7 +206,7 @@ git push origin v1.0.0
 
 ## Data and security
 
-- Settings, API keys, downloaded Whisper models, generated media, memories, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
+- Settings, API keys, downloaded Whisper models, generated media, memories, saved conversations, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
 - Do not commit `settings.json`, certificates, passwords, API keys, model files, or private batch files.
 - SSH passwords are stored in the local settings file. Use a dedicated LAN account and restrict network access appropriately.
 - Uninstalling the application does not delete `%APPDATA%\VoiceChatbot`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.

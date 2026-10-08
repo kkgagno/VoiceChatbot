@@ -58,6 +58,8 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    // Saved chat history: one JSON file per conversation in %APPDATA%\VoiceChatbot\conversations.
+    public bool SaveConversationHistory { get; set; } = true;
 
     // Web Search
     public string TavilyApiKey { get; set; } = DefaultTavilyApiKey;

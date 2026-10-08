@@ -440,6 +440,24 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- ================= Chat history ================= -->
+                        <Expander Header="Chat History" local:Ui.Icon="&#xE823;" local:Ui.Subtitle="Saved conversations">
+                            <StackPanel>
+                                <ToggleButton x:Name="SaveHistoryToggle" Content="Save conversations" IsChecked="True"
+                                              Style="{StaticResource SwitchToggle}" Click="SaveHistoryToggle_Click"
+                                              ToolTip="Record every chat on this PC so it can be reopened from the Conversations panel"/>
+                                <TextBlock x:Name="HistorySettingsHint" Style="{StaticResource FieldHint}" Margin="0,0,0,10"
+                                           Text="Every chat is saved on this PC so you can reopen it later (Ctrl+H)."/>
+                                <UniformGrid Columns="2">
+                                    <Button Content="Browse" local:Ui.Icon="&#xE81C;" Style="{StaticResource SecondaryButton}"
+                                            Click="HistoryToggle_Click" Margin="0,0,3,0" ToolTip="Open the Conversations panel (Ctrl+H)"/>
+                                    <Button Content="Open Folder" local:Ui.Icon="&#xE838;" Style="{StaticResource SecondaryButton}"
+                                            Click="OpenHistoryFolder_Click" Margin="3,0,0,0"
+                                            ToolTip="Show the saved conversation files in Explorer"/>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Expander>
+
                         <!-- ================= Web search ================= -->
                         <Expander Header="Web Search" local:Ui.Icon="&#xE774;" local:Ui.Subtitle="Tavily live search">
                             <StackPanel>
@@ -629,8 +647,14 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
-                        <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE700;"
-                                Click="SidebarToggle_Click" ToolTip="Show / hide settings (Ctrl+B)" Margin="0,0,10,0"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE700;"
+                                    Click="SidebarToggle_Click" ToolTip="Show / hide settings (Ctrl+B)"/>
+                            <Button x:Name="HistoryBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE81C;"
+                                    Click="HistoryToggle_Click" ToolTip="Conversations (Ctrl+H)" Margin="2,0,0,0"/>
+                            <Button x:Name="NewChatBtn" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE710;"
+                                    Click="NewChat_Click" ToolTip="New chat (Ctrl+N)" Margin="2,0,0,0"/>
+                        </StackPanel>
 
                         <!-- State -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -813,6 +837,47 @@
                                Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
                 </StackPanel>
             </Border>
+
+            <!-- Conversations flyout (Ctrl+H): saved chats over the chat area -->
+            <Grid x:Name="HistoryOverlay" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed">
+                <Border Background="#99000000" MouseLeftButtonDown="HistoryScrim_MouseLeftButtonDown"/>
+                <Border Width="360" HorizontalAlignment="Left" Background="{DynamicResource PanelBgBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="HistoryFlyoutShift"/>
+                    </Border.RenderTransform>
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.55" Color="Black"/>
+                    </Border.Effect>
+                    <DockPanel Margin="14,12,8,12">
+                        <Grid DockPanel.Dock="Top" Margin="2,0,6,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE81C;" Style="{StaticResource IconText}" Foreground="{DynamicResource PrimaryLightBrush}"/>
+                                <TextBlock Text="Conversations" FontSize="14" FontWeight="SemiBold" Margin="8,0,0,0"
+                                           Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE710;"
+                                    Click="NewChat_Click" ToolTip="New chat (Ctrl+N)"/>
+                            <Button Grid.Column="2" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE711;"
+                                    Click="CloseHistory_Click" ToolTip="Close (Esc)"/>
+                        </Grid>
+                        <TextBox x:Name="HistorySearchBox" DockPanel.Dock="Top" Margin="0,0,6,10"
+                                 local:Ui.Placeholder="Search titles and messages"
+                                 TextChanged="HistorySearchBox_TextChanged" PreviewKeyDown="HistorySearchBox_PreviewKeyDown"
+                                 ToolTip="Every word must appear in the conversation. Enter opens the top result."/>
+                        <TextBlock x:Name="HistoryFooterText" DockPanel.Dock="Bottom" Style="{StaticResource FieldHint}"
+                                   Margin="4,10,6,0" TextTrimming="CharacterEllipsis"/>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="HistoryListPanel" Margin="0,0,6,0"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

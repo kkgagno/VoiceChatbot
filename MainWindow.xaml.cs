@@ -109,6 +109,7 @@ public partial class MainWindow : Window
         _settings = SettingsManager.Load();
         _schedulerStore = SchedulerStore.Load();
         _history = new ConversationHistory();
+        _history.MessageAdded += OnHistoryMessageAdded;
         _ollama = new OllamaClient(_settings.OllamaUrl);
         _hermesSsh = new HermesSshClient();
         _piAgent = new PiAgentService(GetDefaultPiWorkingDirectory());
@@ -271,6 +272,7 @@ public partial class MainWindow : Window
         UpdateKokoroHint();
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
+        ApplyConversationHistorySettings();
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
         ComfyUrlBox.Text = _settings.ComfyUiUrl;
@@ -384,6 +386,7 @@ public partial class MainWindow : Window
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
+        SaveConversationHistorySettings();
         _settings.WebSearchEnabled = WebSearchToggle.IsChecked == true;
         var tavilyKey = TavilyApiKeyBox.Password.Trim();
         _settings.TavilyApiKey = string.IsNullOrWhiteSpace(tavilyKey)
@@ -764,6 +767,7 @@ public partial class MainWindow : Window
             _schedulerTimer?.Stop();
             _schedulerStore.Save();
             _chatCts?.Cancel();
+            await FlushConversationHistoryAsync(TimeSpan.FromSeconds(3));
 
             var shutdown = Task.WhenAll(
                 StopFacePresenceAsync(),

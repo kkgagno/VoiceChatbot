@@ -26,9 +26,11 @@ public partial class MainWindow
 {
     // ==================== UI Helpers ====================
 
-    private Border AddUserMessage(string text, IEnumerable<string>? imagePaths = null)
+    private Border AddUserMessage(string text, IEnumerable<string>? imagePaths = null, DateTime? timestamp = null)
     {
         HideWelcomeCard();
+        var images = imagePaths?.ToList() ?? new List<string>();
+        NoteUserMessageImages(images);
         var border = new Border
         {
             Background = FindResource("UserBubbleBrush") as Brush,
@@ -42,7 +44,7 @@ public partial class MainWindow
         var stack = new StackPanel();
         var header = new TextBlock
         {
-            Text = $"You  ·  {DateTime.Now:t}",
+            Text = $"You  ·  {FormatBubbleTime(timestamp)}",
             FontSize = 10,
             FontWeight = FontWeights.SemiBold,
             Foreground = new SolidColorBrush(Color.FromArgb(190, 255, 255, 255)),
@@ -52,7 +54,7 @@ public partial class MainWindow
         body.FontSize = 14;
 
         stack.Children.Add(header);
-        foreach (var imagePath in imagePaths ?? Enumerable.Empty<string>())
+        foreach (var imagePath in images)
         {
             if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
                 continue;
@@ -115,7 +117,7 @@ public partial class MainWindow
         }
     }
 
-    private AssistantMessageUi AddAssistantMessage(string text)
+    private AssistantMessageUi AddAssistantMessage(string text, DateTime? timestamp = null)
     {
         // Outer border keeps HorizontalAlignment.Left so UpdateChatBubbleWidths can resize it.
         var border = new Border
@@ -165,7 +167,7 @@ public partial class MainWindow
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 4), LastChildFill = false };
         var nameBlock = new TextBlock
         {
-            Text = $"Assistant  ·  {DateTime.Now:t}",
+            Text = $"Assistant  ·  {FormatBubbleTime(timestamp)}",
             FontSize = 10,
             FontWeight = FontWeights.SemiBold,
             Foreground = FindResource("AccentBrush") as SolidColorBrush,
@@ -206,7 +208,9 @@ public partial class MainWindow
         border.Child = row;
         ChatPanel.Children.Add(border);
         ScrollChat();
-        return new AssistantMessageUi(body, content, actions);
+        var assistantMessage = new AssistantMessageUi(body, content, actions);
+        NoteAssistantBubble(assistantMessage);
+        return assistantMessage;
     }
 
     private void SetAssistantMessageText(AssistantMessageUi assistantMessage, string text, bool renderCodeBlocks = false)
@@ -528,6 +532,7 @@ public partial class MainWindow
 
     private void AddAudioButtons(AssistantMessageUi assistantMessage, string audioPath)
     {
+        RecordAssistantAudio(assistantMessage, audioPath);
         assistantMessage.Actions.Children.Clear();
         assistantMessage.Actions.Visibility = Visibility.Visible;
 

@@ -310,6 +310,7 @@ public partial class MainWindow
         };
         stack.Children.Insert(Math.Min(2, stack.Children.Count), image);
         AddImageButtons(assistantMessage, imagePath);
+        RecordAssistantImage(assistantMessage, imagePath);
         ScrollChat();
     }
 

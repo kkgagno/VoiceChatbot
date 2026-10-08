@@ -26,6 +26,7 @@ public partial class MainWindow
 {
     private void ClearChat_Click(object sender, RoutedEventArgs e)
     {
+        StartFreshConversation();
         _history.Clear();
         _recentWebSearchContexts.Clear();
         ChatPanel.Children.Clear();
