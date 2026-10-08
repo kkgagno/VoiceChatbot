@@ -552,7 +552,7 @@
                                               Style="{StaticResource SwitchToggle}" Click="PhoneRemoteToggle_Click"/>
                                 <ToggleButton x:Name="PhoneRemoteAudioToggle" Content="Play audio on phone" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="PhoneRemoteAudioToggle_Click"/>
-                                <Grid Margin="0,0,0,12">
+                                <Grid Margin="0,0,0,6">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="90"/>
                                         <ColumnDefinition Width="8"/>
@@ -562,11 +562,25 @@
                                         <TextBlock Text="Port" Style="{StaticResource SectionLabel}"/>
                                         <TextBox x:Name="PhoneRemotePortBox" Text="5100"/>
                                     </StackPanel>
+                                    <!-- Required PIN, see MainWindow.PhoneRemoteSecurity.cs -->
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="PIN (optional)" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="PhoneRemotePinBox"/>
+                                        <TextBlock Text="PIN" Style="{StaticResource SectionLabel}"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="PhoneRemotePinBox" FontFamily="{StaticResource CodeFont}"
+                                                     local:Ui.Placeholder="Automatic"/>
+                                            <Button x:Name="PhoneRemoteNewPinBtn" Grid.Column="1" Content="New PIN" local:Ui.Icon="&#xE72C;"
+                                                    Style="{StaticResource SecondaryButton}" Padding="10,7" Margin="6,0,0,0"
+                                                    Click="NewPhoneRemotePin_Click"
+                                                    ToolTip="Create a random 6-digit PIN. The phone must enter it again; lockouts are lifted."/>
+                                        </Grid>
                                     </StackPanel>
                                 </Grid>
+                                <TextBlock x:Name="PhoneRemotePinHintText" Style="{StaticResource FieldHint}" Margin="0,0,0,12"
+                                           Text="Required. A random 6-digit PIN is created when the remote starts."/>
                                 <Button x:Name="PhoneRemoteStartStopBtn" Content="Start Phone Remote" local:Ui.Icon="&#xE768;"
                                         Style="{StaticResource ActionButton}" Click="PhoneRemoteStartStop_Click" Margin="0,0,0,6"/>
                                 <UniformGrid Columns="2" Margin="0,0,0,8">

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -23,6 +24,16 @@ namespace VoiceChatbot;
 
 public sealed class PhoneRemoteServer : IAsyncDisposable
 {
+    public const string PinHeader = "X-Phone-Remote-Pin";
+    private const string AuthorizedItem = "PhoneRemoteAuthorized";
+    private const long MegaByte = 1024 * 1024;
+    // Request body limits. Unauthenticated requests are refused before any body is read, so only the
+    // small default applies to them; uploads get more once the PIN was checked.
+    private const long DefaultMaxBodyBytes = 1 * MegaByte;
+    private const long TextMaxBodyBytes = 4 * MegaByte;
+    private const long SpeechMaxBodyBytes = 64 * MegaByte;   // a 20-minute Long Talk clip is about 38 MB
+    private const long UploadMaxBodyBytes = 256 * MegaByte;  // files and recorded meetings
+
     private readonly Func<Stream, CancellationToken, Task<string>> _transcribeAsync;
     private readonly Func<PhoneRemoteUserInput, CancellationToken, Task<PhoneRemoteAssistantResult>> _chatAsync;
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
@@ -30,6 +41,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, string> _audioFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _imageFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _videoFiles = new(StringComparer.OrdinalIgnoreCase);
+    // Kept across restarts so stopping and starting the remote does not lift a lockout.
+    private readonly PhoneRemoteAuthenticator _auth = new();
     private WebApplication? _app;
     private PhoneRemoteSettings _settings = new();
     private PhoneRemoteCertificateInfo? _certificateInfo;
@@ -51,12 +64,34 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     public string Url => $"https://{LocalIpAddress}:{_settings.Port}/";
     public string CertificateExportPath => _certificateInfo?.CerPath ?? "";
 
+    /// <summary>The PIN the running remote accepts.</summary>
+    public string Pin => _auth.Pin;
+
+    /// <summary>
+    /// Raised on a Kestrel thread when a device is locked out after too many wrong PINs.
+    /// </summary>
+    public event Action<PhoneRemoteLockout>? LockoutStarted;
+
+    /// <summary>
+    /// Changes the PIN of the running remote right away. A new PIN also lifts all lockouts.
+    /// Returns false when the PIN is not valid (see <see cref="PhoneRemotePin.IsValid"/>) or unchanged.
+    /// </summary>
+    public bool ChangePin(string pin)
+    {
+        return PhoneRemotePin.IsValid(pin) && _auth.SetPin(pin);
+    }
+
     public async Task StartAsync(PhoneRemoteSettings settings, CancellationToken ct = default)
     {
         if (IsRunning)
             return;
 
+        // The PIN is required. MainWindow creates one before starting; refuse to run without it.
+        if (!PhoneRemotePin.IsValid(settings.Pin))
+            throw new InvalidOperationException("The phone remote needs a PIN of 4 to 64 characters without spaces.");
+
         _settings = settings;
+        _auth.SetPin(settings.Pin);
         LocalIpAddress = GetLocalIpAddress();
         _certificateInfo = PhoneRemoteCertificateManager.EnsureCertificate(LocalIpAddress);
 
@@ -67,7 +102,8 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Limits.MaxRequestBodySize = 256L * 1024 * 1024;
+            // Raised per request in AuthorizeRequestAsync after the PIN was checked.
+            options.Limits.MaxRequestBodySize = DefaultMaxBodyBytes;
             options.Listen(IPAddress.Any, _settings.Port, listen =>
             {
                 listen.Protocols = HttpProtocols.Http1;
@@ -76,7 +112,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         });
         builder.Services.Configure<FormOptions>(options =>
         {
-            options.MultipartBodyLengthLimit = 256L * 1024 * 1024;
+            options.MultipartBodyLengthLimit = UploadMaxBodyBytes;
         });
 
         var app = builder.Build();
@@ -104,14 +140,20 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
     private void MapRoutes(WebApplication app)
     {
+        app.Use(AuthorizeRequestAsync);
         app.MapGet("/", () => Results.Content(BuildPhonePage(), "text/html; charset=utf-8"));
-        app.MapGet("/api/status", () =>
+        app.MapGet("/api/status", (HttpRequest request) =>
         {
+            // Without a PIN the page only learns that one is needed; with the right PIN it also gets the model.
+            if (!IsAuthorized(request))
+                return Results.Json(new { ok = true, requiresPin = true, authorized = false });
+
             var modelState = _modelStateProvider();
             return Results.Json(new
             {
                 ok = true,
-                requiresPin = !string.IsNullOrWhiteSpace(_settings.Pin),
+                requiresPin = true,
+                authorized = true,
                 activeProvider = modelState.Provider,
                 activeModel = modelState.Model,
                 activeEndpoint = modelState.Endpoint
@@ -229,10 +271,11 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
                 continue;
 
             var contentType = file.ContentType ?? "";
-            var fileName = string.IsNullOrWhiteSpace(file.FileName) ? "attached file" : Path.GetFileName(file.FileName);
+            // Only ever shown as text; files are saved under a random name (see PhoneUploadFiles).
+            var fileName = PhoneUploadFiles.SafeDisplayName(file.FileName);
             if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             {
-                var tempPath = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-images", Guid.NewGuid().ToString("N") + Path.GetExtension(fileName));
+                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-images"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 await using (var source = file.OpenReadStream())
                 await using (var target = File.Create(tempPath))
@@ -249,7 +292,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
             if (IsAudioFile(contentType, fileName))
             {
-                var tempPath = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-audio", Guid.NewGuid().ToString("N") + Path.GetExtension(fileName));
+                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-audio"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 await using (var source = file.OpenReadStream())
                 await using (var target = File.Create(tempPath))
@@ -298,7 +341,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
 
             if (IsReadableDocumentFile(contentType, fileName))
             {
-                var tempPath = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-documents", Guid.NewGuid().ToString("N") + Path.GetExtension(fileName));
+                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-documents"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 try
                 {
@@ -511,12 +554,115 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
         };
     }
 
-    private bool IsAuthorized(HttpRequest request)
+    /// <summary>
+    /// Every request except the page itself and the media links needs the PIN, so a route added later is
+    /// protected by default. This runs before the endpoint reads or binds the request body, so a client
+    /// without the PIN cannot make the server read an upload. Wrong PINs count towards a per-IP lockout
+    /// (HTTP 429), see Core/PhoneRemoteAuth.cs.
+    /// </summary>
+    private async Task AuthorizeRequestAsync(HttpContext context, RequestDelegate next)
     {
-        if (string.IsNullOrWhiteSpace(_settings.Pin))
-            return true;
+        var path = context.Request.Path;
+        if (IsPublicPath(path))
+        {
+            await next(context);
+            return;
+        }
 
-        return string.Equals(request.Headers["X-Phone-Remote-Pin"].FirstOrDefault(), _settings.Pin, StringComparison.Ordinal);
+        var pin = context.Request.Headers[PinHeader].FirstOrDefault();
+        // The page asks for the status before a PIN was entered; that answer says a PIN is needed.
+        if (string.IsNullOrWhiteSpace(pin) && path.Equals("/api/status", StringComparison.OrdinalIgnoreCase))
+        {
+            await next(context);
+            return;
+        }
+
+        var client = GetClientKey(context);
+        var auth = _auth.Authenticate(client, pin);
+        if (!auth.IsAuthorized)
+        {
+            if (auth.Status == PhoneRemoteAuthStatus.WrongPin)
+                AppLog.Warn($"Phone remote: wrong PIN from {client}, {auth.AttemptsLeft} attempt(s) left.");
+            if (auth.LockoutStarted)
+                ReportLockout(client);
+            await WriteErrorAsync(context, auth.HttpStatus, auth.Message, auth.RetryAfterSeconds);
+            return;
+        }
+
+        context.Items[AuthorizedItem] = true;
+        var maxBytes = GetMaxBodyBytes(path);
+        var sizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (sizeFeature is { IsReadOnly: false })
+            sizeFeature.MaxRequestBodySize = maxBytes;
+        if (context.Request.ContentLength > maxBytes)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge,
+                $"That is too large for the phone remote (limit {maxBytes / MegaByte} MB).", 0);
+            return;
+        }
+
+        await next(context);
+    }
+
+    /// <summary>
+    /// The page, and the reply audio, images and videos it shows. Media links carry a random 128-bit id
+    /// that is only handed out in an authenticated response; audio and img tags cannot send the PIN header.
+    /// </summary>
+    private static bool IsPublicPath(PathString path)
+    {
+        return path == "/" ||
+               path.StartsWithSegments("/audio", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWithSegments("/image", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWithSegments("/video", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static long GetMaxBodyBytes(PathString path)
+    {
+        if (path.StartsWithSegments("/api/message", StringComparison.OrdinalIgnoreCase))
+            return UploadMaxBodyBytes;
+        if (path.StartsWithSegments("/api/chat", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWithSegments("/api/transcribe", StringComparison.OrdinalIgnoreCase))
+            return SpeechMaxBodyBytes;
+        if (path.StartsWithSegments("/api/respond", StringComparison.OrdinalIgnoreCase))
+            return TextMaxBodyBytes;
+        return DefaultMaxBodyBytes;
+    }
+
+    /// <summary>Set by <see cref="AuthorizeRequestAsync"/>; checked again by every API handler.</summary>
+    private static bool IsAuthorized(HttpRequest request)
+    {
+        return request.HttpContext.Items.ContainsKey(AuthorizedItem);
+    }
+
+    private static string GetClientKey(HttpContext context)
+    {
+        var address = context.Connection.RemoteIpAddress;
+        if (address == null)
+            return "unknown";
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        return address.ToString();
+    }
+
+    private void ReportLockout(string client)
+    {
+        var lockout = new PhoneRemoteLockout(client, _auth.Limiter.MaxFailures, _auth.Limiter.LockoutDuration);
+        try
+        {
+            LockoutStarted?.Invoke(lockout);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Phone remote: locked out {client}, but reporting it failed.", ex);
+        }
+    }
+
+    private static async Task WriteErrorAsync(HttpContext context, int statusCode, string message, int retryAfterSeconds)
+    {
+        context.Response.StatusCode = statusCode;
+        if (retryAfterSeconds > 0)
+            context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        await context.Response.WriteAsJsonAsync(new { error = message, retryAfterSeconds });
     }
 
     private static string GetLocalIpAddress()
@@ -572,6 +718,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     .textbar { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; position: sticky; bottom: 0; background: #101114; padding: 5px 0 env(safe-area-inset-bottom); }
     input, textarea { min-width: 0; border: 1px solid #373b45; background: #181a20; color: white; border-radius: 7px; padding: 8px 9px; font-size: 16px; }
     input[type="file"] { font-size: 16px; padding: 7px; }
+    #pin.needed { border-color: #d63031; }
     input[type="checkbox"] { width: 18px; height: 18px; padding: 0; accent-color: #00a884; }
     textarea { resize: vertical; min-height: 38px; max-height: 130px; }
     button { border: 0; border-radius: 7px; color: white; background: #00a884; padding: 8px 10px; font-weight: 700; font-size: 13px; line-height: 1.1; }
@@ -616,7 +763,7 @@ public sealed class PhoneRemoteServer : IAsyncDisposable
     <span id="meetingStatus"></span>
   </div>
   <div class="bar">
-    <input id="pin" inputmode="numeric" placeholder="PIN, if enabled">
+    <input id="pin" inputmode="numeric" autocomplete="off" placeholder="PIN from the desktop app">
     <button id="test">Test Mic</button>
   </div>
   <div class="bar filebar">
@@ -685,6 +832,81 @@ const longSilenceToSendMs = 5500;
 const normalMaxClipMs = 300000;
 const longMaxClipMs = 1200000;
 const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+const pinStorageKey = 'voicechatbot-remote-pin';
+const pinHelp = 'Enter the PIN shown in the desktop app under Settings > Phone Remote.';
+
+// The PIN is required and sent with every request. This phone remembers it until the desktop app rejects it.
+function loadSavedPin() {
+  try { pin.value = localStorage.getItem(pinStorageKey) || ''; } catch {}
+}
+
+function savePin() {
+  try {
+    const value = pin.value.trim();
+    if (value) localStorage.setItem(pinStorageKey, value);
+    else localStorage.removeItem(pinStorageKey);
+  } catch {}
+}
+
+function forgetPin() {
+  pin.value = '';
+  savePin();
+  pin.classList.add('needed');
+}
+
+function pinHeaders(extra) {
+  return Object.assign({ 'X-Phone-Remote-Pin': pin.value.trim() }, extra || {});
+}
+
+function requirePin() {
+  if (pin.value.trim()) return true;
+  pin.classList.add('needed');
+  statusEl.textContent = 'PIN needed';
+  add('sys', pinHelp);
+  return false;
+}
+
+// Turns a failed response into an Error with a friendly message.
+// 401: wrong or missing PIN (forgotten so it is not sent again), 429: locked out after too many wrong PINs.
+async function responseError(r, label) {
+  let message = '';
+  try { message = ((await r.json()) || {}).error || ''; } catch {}
+  if (r.status === 401 || r.status === 429) {
+    if (r.status === 401) forgetPin();
+    else pin.classList.add('needed');
+    if (liveMode) setLiveMode(false);
+    statusEl.textContent = r.status === 429 ? 'Locked out' : 'PIN needed';
+    if (!message) {
+      message = r.status === 429
+        ? 'Too many wrong PIN attempts. Wait 10 minutes, then try again.'
+        : 'Wrong PIN. ' + pinHelp;
+    }
+    return new Error(message);
+  }
+  if (r.status === 413) return new Error(message || 'That is too large to send to the desktop app.');
+  return new Error(message || (label + ' error ' + r.status));
+}
+
+// Checks the PIN with the desktop app and shows the active model when it is right.
+async function checkPin(announce) {
+  if (!pin.value.trim()) return false;
+  try {
+    const r = await fetch('/api/status', { headers: pinHeaders() });
+    if (!r.ok) {
+      add('sys', (await responseError(r, 'Status')).message);
+      return false;
+    }
+    const data = await r.json();
+    if (!data.authorized) return false;
+    updateModelState(data);
+    pin.classList.remove('needed');
+    if (announce) add('sys', 'PIN accepted.');
+    return true;
+  } catch {
+    // Connection problems show up when something is sent.
+    return false;
+  }
+}
 
 function add(cls, text) {
   const el = document.createElement('div');
@@ -746,16 +968,6 @@ function updateModelState(data) {
   if (endpoint) parts.push(endpoint.replace(/^https?:\/\//, ''));
   modelStateEl.textContent = parts.join(' @ ');
   modelStateEl.title = [provider, model, endpoint].filter(Boolean).join(' | ');
-}
-
-async function refreshModelState() {
-  try {
-    const r = await fetch('/api/status');
-    if (!r.ok) return;
-    updateModelState(await r.json());
-  } catch {
-    // Status display is best-effort.
-  }
 }
 
 function showModelHelp() {
@@ -996,14 +1208,15 @@ async function stop() {
 
 async function sendChunks(autoPlay) {
   if (!chunks.length) return;
+  if (!requirePin()) return;
   statusEl.textContent = 'Transcribing';
   const blob = encodeWav(chunks, audioContext.sampleRate);
   const form = new FormData();
   form.append('audio', blob, 'phone.wav');
   try {
     talk.disabled = true;
-    const transcribe = await fetch('/api/transcribe', { method: 'POST', headers: { 'X-Phone-Remote-Pin': pin.value }, body: form });
-    if (!transcribe.ok) throw new Error(transcribe.status === 401 ? 'Wrong PIN' : 'Transcribe error ' + transcribe.status);
+    const transcribe = await fetch('/api/transcribe', { method: 'POST', headers: pinHeaders(), body: form });
+    if (!transcribe.ok) throw await responseError(transcribe, 'Transcribe');
     const first = await transcribe.json();
     const transcript = (first.transcript || '').trim();
     if (!transcript) {
@@ -1019,15 +1232,15 @@ async function sendChunks(autoPlay) {
       messageForm.append('text', transcript);
       appendRequestFlags(messageForm);
       appendAttachedFiles(messageForm);
-      r = await fetch('/api/message', { method: 'POST', headers: { 'X-Phone-Remote-Pin': pin.value }, body: messageForm });
+      r = await fetch('/api/message', { method: 'POST', headers: pinHeaders(), body: messageForm });
     } else {
       r = await fetch('/api/respond', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Phone-Remote-Pin': pin.value },
+        headers: pinHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text: transcript, keepDocumentsActive: keepDoc.checked })
       });
     }
-    if (!r.ok) throw new Error(r.status === 401 ? 'Wrong PIN' : 'Response error ' + r.status);
+    if (!r.ok) throw await responseError(r, 'Response');
     const data = await r.json();
     updateActiveDocStatus(data.activeDocumentCount);
     const botEl = addBotResult(data);
@@ -1065,6 +1278,7 @@ async function sendTypedMessage() {
 
   const text = textMessage.value.trim();
   if (!text && files.files.length === 0 && videoAudio.files.length === 0 && !meetingBlob) return;
+  if (!requirePin()) return;
 
   const form = new FormData();
   form.append('text', text);
@@ -1078,8 +1292,8 @@ async function sendTypedMessage() {
     const display = text || (meetingBlob ? 'Recorded meeting audio' : selectedFileNames().join(', '));
     add('me', display);
 
-    const r = await fetch('/api/message', { method: 'POST', headers: { 'X-Phone-Remote-Pin': pin.value }, body: form });
-    if (!r.ok) throw new Error(r.status === 401 ? 'Wrong PIN' : 'Message error ' + r.status);
+    const r = await fetch('/api/message', { method: 'POST', headers: pinHeaders(), body: form });
+    if (!r.ok) throw await responseError(r, 'Message');
     const data = await r.json();
     updateActiveDocStatus(data.activeDocumentCount);
     const botEl = addBotResult(data);
@@ -1318,7 +1532,10 @@ talk.addEventListener('touchstart', e => { e.preventDefault(); start(); }, { pas
 talk.addEventListener('touchend', e => { e.preventDefault(); stop(); }, { passive: false });
 talk.addEventListener('mousedown', start);
 talk.addEventListener('mouseup', stop);
-live.addEventListener('click', () => setLiveMode(!liveMode));
+live.addEventListener('click', () => {
+  if (!liveMode && !requirePin()) return;
+  setLiveMode(!liveMode);
+});
 longTalk.addEventListener('click', () => setLongTalkMode(!longTalkMode));
 stopAudio.addEventListener('click', stopAllAudio);
 modelHelp.addEventListener('click', showModelHelp);
@@ -1364,7 +1581,18 @@ keepDoc.addEventListener('change', () => {
   if (!keepDoc.checked) updateActiveDocStatus(0);
 });
 document.getElementById('test').addEventListener('click', async () => { await ensureMic(); add('sys', 'Mic permission is working.'); });
-refreshModelState();
+pin.addEventListener('input', () => pin.classList.remove('needed'));
+pin.addEventListener('change', () => {
+  savePin();
+  checkPin(true);
+});
+loadSavedPin();
+if (pin.value.trim()) {
+  checkPin(false);
+} else {
+  pin.classList.add('needed');
+  add('sys', pinHelp);
+}
 if (!navigator.mediaDevices) add('sys', 'This browser requires HTTPS before microphone access works.');
 </script>
 </body>

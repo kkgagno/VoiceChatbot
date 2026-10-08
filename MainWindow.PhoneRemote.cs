@@ -108,6 +108,7 @@ public partial class MainWindow
             PhoneRemoteStatusText.Text = "Starting...";
             PhoneRemoteStartStopBtn.IsEnabled = false;
             PhoneRemoteToggle.IsEnabled = false;
+            EnsurePhoneRemotePin();
             var settings = new PhoneRemoteSettings
             {
                 Enabled = _settings.PhoneRemote.Enabled,
@@ -177,7 +178,7 @@ public partial class MainWindow
 
         if (_phoneRemoteServer.IsRunning)
         {
-            PhoneRemoteStatusText.Text = $"Running: {_phoneRemoteServer.Url}";
+            PhoneRemoteStatusText.Text = $"Running: {_phoneRemoteServer.Url}\nPIN: {_phoneRemoteServer.Pin}";
             PhoneRemoteStartStopBtn.Content = "Stop Phone Remote";
             PhoneRemoteCopyUrlBtn.IsEnabled = true;
         }

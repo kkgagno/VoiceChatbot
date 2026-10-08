@@ -295,6 +295,7 @@ public partial class MainWindow : Window
         PhoneRemotePortBox.Text = _settings.PhoneRemote.Port.ToString();
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
         PhoneRemoteAudioToggle.IsChecked = _settings.PhoneRemote.PlayAudioOnPhone;
+        ApplyPhoneRemoteSecuritySettings();
         ApplySecretsAndLogsUi();
         ApplySshHostKeySettings();
         UpdatePhoneRemoteUi();
@@ -408,6 +409,7 @@ public partial class MainWindow : Window
             : 5100;
         _settings.PhoneRemote.Pin = PhoneRemotePinBox.Text.Trim();
         _settings.PhoneRemote.PlayAudioOnPhone = PhoneRemoteAudioToggle.IsChecked == true;
+        SavePhoneRemoteSecuritySettings();
         SaveSshHostKeySettings();
         // Remember the restored size/position even when closing maximized.
         var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
