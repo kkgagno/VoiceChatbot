@@ -80,11 +80,18 @@ public partial class MainWindow
     {
         _settings.PhoneRemote.Pin = pin;
         PhoneRemotePinBox.Text = pin;
-        // SaveSettings is a no-op while startup applies settings, but the PIN must still be saved.
+        // SaveSettings is a no-op while startup applies settings, but the PIN must still be saved
+        // (and handed to the remote, which starts before startup finishes).
         if (_applyingSettings)
+        {
             SettingsManager.Save(_settings);
+            if (_phoneRemoteServer.IsRunning && _phoneRemoteServer.ChangePin(pin))
+                UpdatePhoneRemoteUi();
+        }
         else
+        {
             SaveSettings();
+        }
         UpdatePhoneRemotePinUi();
     }
 

@@ -38,6 +38,19 @@ public partial class MainWindow
         _settings.HermesSshHostKeyFingerprints = _hermesSsh.HostKeys.ToDictionary();
     }
 
+    /// <summary>
+    /// Writes the pins to settings.json now. SaveSettings is a no-op while startup applies settings (the phone
+    /// remote and scheduler can already run SSH commands then), so save the settings object directly in that case.
+    /// </summary>
+    private void PersistSshHostKeys()
+    {
+        SaveSshHostKeySettings();
+        if (_applyingSettings)
+            SettingsManager.Save(_settings);
+        else
+            SaveSettings();
+    }
+
     /// <summary>Host and port as typed in the sidebar, parsed the same way SaveSettings does.</summary>
     private (string Host, int Port) GetSshHostKeyTarget()
     {
@@ -82,8 +95,7 @@ public partial class MainWindow
                 {
                     if (_rejectedSshHostKey?.HostPort == check.HostPort)
                         _rejectedSshHostKey = null;
-                    SaveSshHostKeySettings();
-                    SaveSettings();
+                    PersistSshHostKeys();
                     UpdateSshHostKeyUi();
                     var type = check.KeyType.Length > 0 ? $" ({check.KeyType})" : "";
                     AddSystemMessage($"Trusted SSH host key for {check.HostPort} {check.Presented}{type}. " +
@@ -144,8 +156,7 @@ public partial class MainWindow
 
             _hermesSsh.HostKeys.Forget(host, port);
             _rejectedSshHostKey = null;
-            SaveSshHostKeySettings();
-            SaveSettings();
+            PersistSshHostKeys();
             UpdateSshHostKeyUi();
             AddSystemMessage($"Forgot the SSH host key for {hostPort} ({fingerprint}). " +
                              "The next connection will trust the key the server sends.");
