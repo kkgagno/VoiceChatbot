@@ -85,6 +85,10 @@ public class AppSettings
     public bool WindowMaximized { get; set; } = false;
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = 340;
+    // Tray icon and global listen hotkey (MainWindow.Tray.cs). Minimizing hides to the tray only when this is on.
+    public bool MinimizeToTray { get; set; } = false;
+    // One of GlobalHotkeys.Choices ("Off", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Ctrl+Alt+L").
+    public string GlobalListenHotkey { get; set; } = GlobalHotkeys.Default;
     // Pinned SSH host keys for Model Server Control: "host:port" -> "SHA256:<base64>" as OpenSSH prints it.
     // Filled on the first connection to each server (trust on first use); a different key is then refused.
     public Dictionary<string, string> HermesSshHostKeyFingerprints { get; set; } = new();

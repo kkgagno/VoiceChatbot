@@ -152,6 +152,11 @@ These tools can be installed with WinGet where packages are available.
 | Ctrl+B | Show or hide the settings sidebar |
 | Ctrl+K | Focus the message box |
 | Ctrl+V | Paste text or an image |
+| Ctrl+Alt+Space (any app) | Listen for one question; press again to stop listening |
+
+### Tray and hotkey
+
+The listen hotkey (Ctrl+Alt+Space by default) works in any app, also while Voice Chatbot is minimized or hidden in the tray. It starts listening like **Listen** does and stops listening when pressed again. Pick Ctrl+Shift+Space, Ctrl+Alt+L or Off under **App > Listen hotkey**; if another app already uses the combination, the app says so there and in the chat. Right-click the tray icon for **Open Voice Chatbot**, **Listen now**, **Speak responses** and **Exit**, or double-click it to open the window. Turn on **App > Minimize to tray** to hide the window in the tray instead of the taskbar when you minimize it.
 
 ## Building from source
 
@@ -198,4 +203,5 @@ git push origin v1.0.0
 - SSH host keys are pinned on first use. The first connection to each SSH `host:port` trusts the server's key, saves its fingerprint in `settings.json` as `SHA256:...` (the same text `ssh-keygen -lf` prints for the server's host key) and posts a "Trusted SSH host key" note in the chat. After that, a server that presents a different key is refused with an error saying the host key changed. **Model Server Control > Host key** shows the pinned fingerprint. After you reinstall or reconfigure the SSH server, click **Forget host key** there and the next connection trusts the new key.
 - The phone remote checks its PIN (in constant time) on every API request; spoken replies, generated images and videos are fetched by random, unguessable links. After 5 wrong PINs within 10 minutes, that IP address is locked out for 10 minutes: the phone shows "Too many wrong PIN attempts" (HTTP 429), even the right PIN is refused until the lockout ends, and the desktop app posts a note in the chat. A correct PIN resets the count, and **New PIN** lifts all lockouts. Requests without the right PIN are refused before their body is read, and request sizes are capped (64 MB for a voice clip, 256 MB for a message with files or a meeting recording). Uploaded files are saved under random names in `%TEMP%\VoiceChatbot\phone-*`, so a file name cannot place a file anywhere else.
 - The app keeps a daily log in `%APPDATA%\VoiceChatbot\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
+- The listen hotkey turns the microphone on from any app, also while the window is hidden in the tray. Face gating still applies, the tray icon's tooltip shows "Listening...", and **App > Listen hotkey > Off** turns it off. It is registered with Windows only while Voice Chatbot runs.
 - Uninstalling the application does not delete `%APPDATA%\VoiceChatbot`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.

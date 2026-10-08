@@ -295,6 +295,7 @@ public partial class MainWindow : Window
         PhoneRemotePortBox.Text = _settings.PhoneRemote.Port.ToString();
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
         PhoneRemoteAudioToggle.IsChecked = _settings.PhoneRemote.PlayAudioOnPhone;
+        ApplyTrayAndHotkeySettings();
         ApplyPhoneRemoteSecuritySettings();
         ApplySecretsAndLogsUi();
         ApplySshHostKeySettings();
@@ -409,6 +410,7 @@ public partial class MainWindow : Window
             : 5100;
         _settings.PhoneRemote.Pin = PhoneRemotePinBox.Text.Trim();
         _settings.PhoneRemote.PlayAudioOnPhone = PhoneRemoteAudioToggle.IsChecked == true;
+        SaveTrayAndHotkeySettings();
         SavePhoneRemoteSecuritySettings();
         SaveSshHostKeySettings();
         // Remember the restored size/position even when closing maximized.
@@ -761,6 +763,8 @@ public partial class MainWindow : Window
 
         _shutdownStarted = true;
         AppLog.Info("Main window closing. Stopping services.");
+        // First, so the hotkey cannot start listening and the tray icon goes away while services stop.
+        DisposeTrayAndHotkey();
         IsEnabled = false;
         StateLabel.Text = "Closing...";
 
@@ -806,7 +810,7 @@ public partial class MainWindow : Window
 
     private void Window_StateChanged(object? sender, EventArgs e)
     {
-        // Could add minimize to tray here
+        HideToTrayIfMinimized();
     }
 
     /// <summary>

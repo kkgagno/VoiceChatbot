@@ -6,6 +6,8 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseWPF>true</UseWPF>
+    <!-- Only for the tray icon (NotifyIcon); see MainWindow.Tray.cs. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <StartupObject>VoiceChatbot.App</StartupObject>
@@ -16,6 +18,13 @@
     <Product>Voice Chatbot</Product>
     <Company>Keith Gagnon</Company>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UseWindowsForms adds these implicit global usings; drop them so WPF names (Application,
+         MessageBox, Button, Brush, Color, Point...) stay unambiguous. Name WinForms types explicitly. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The test project has its own csproj; keep its sources out of the app. -->
@@ -36,6 +45,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Embedded so the tray icon can load its 16x16 frame (MainWindow.Tray.cs). -->
+    <Resource Include="Resources\AppIcon.ico" />
     <Content Include="Resources\Models\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
