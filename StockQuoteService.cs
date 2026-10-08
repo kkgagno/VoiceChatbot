@@ -134,7 +134,7 @@ public sealed class StockQuoteService : IDisposable
             : text[..markerIndex].Trim();
     }
 
-    private static string FormatQuoteLine(StockQuote q)
+    public static string FormatQuoteLine(StockQuote q)
     {
         var change = q.Change.HasValue && q.ChangePercent.HasValue
             ? $"{q.Change.Value.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture)} ({q.ChangePercent.Value.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture)}%)"
@@ -142,7 +142,7 @@ public sealed class StockQuoteService : IDisposable
         return $"{q.Symbol}: ${q.Price.ToString("0.00", CultureInfo.InvariantCulture)} USD, {change}, as of {q.TimestampLocal:g}. Source: Yahoo Finance chart endpoint.";
     }
 
-    private async Task<StockQuote?> GetQuoteAsync(string ticker, CancellationToken ct)
+    public async Task<StockQuote?> GetQuoteAsync(string ticker, CancellationToken ct)
     {
         try
         {

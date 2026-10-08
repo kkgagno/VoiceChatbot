@@ -206,8 +206,9 @@ public partial class SchedulerWindow : Window
             return;
         }
 
+        // Replies are stored as Markdown; this box shows plain text.
         ResponseBox.Text = string.IsNullOrWhiteSpace(run.Error)
-            ? run.ResponseText
+            ? MarkdownText.ToPlainText(run.ResponseText)
             : $"Error: {run.Error}";
         PlayAudioBtn.IsEnabled = !string.IsNullOrWhiteSpace(run.AudioPath) && File.Exists(run.AudioPath);
         SendToMainChatBtn.IsEnabled = true;

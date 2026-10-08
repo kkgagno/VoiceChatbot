@@ -11,6 +11,17 @@ public class ChatMessage
     public List<string> ImagesBase64 { get; set; } = new();
     public DateTime Timestamp { get; set; } = DateTime.Now;
 
+    // Tool calling. All null for ordinary messages, which then serialize exactly as before.
+    /// <summary>Calls the model asked for (role "assistant").</summary>
+    public List<ToolCall>? ToolCalls { get; set; }
+    /// <summary>The call this result answers (role "tool"; OpenAI-compatible servers match on it).</summary>
+    public string? ToolCallId { get; set; }
+    /// <summary>The tool that produced this result (role "tool"; Ollama matches on it).</summary>
+    public string? ToolName { get; set; }
+
+    public bool HasToolData() =>
+        ToolCalls is { Count: > 0 } || !string.IsNullOrEmpty(ToolCallId) || !string.IsNullOrEmpty(ToolName);
+
     public override string ToString()
     {
         var imageNote = ImagesBase64.Count > 0 ? $" [{ImagesBase64.Count} photo(s)]" : "";

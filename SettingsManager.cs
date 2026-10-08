@@ -34,8 +34,12 @@ public class AppSettings
     public string HermesSshUser { get; set; } = "";
     public string HermesSshPassword { get; set; } = "";
     public string Model { get; set; } = "llama3";
-    public string SystemPrompt { get; set; } = "You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Use plain natural language for normal conversation. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block.";
+    public string SystemPrompt { get; set; } = "You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Light Markdown such as short lists, bold text or a small table is fine because it is rendered on screen and removed before speaking. Avoid emojis and hashtags. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block.";
     public double Temperature { get; set; } = 0.7;
+    // Native tool calling (web search, date/time, stock quotes, memories, web pages). Falls back per model when unsupported.
+    public bool UseTools { get; set; } = true;
+    // Show assistant replies as formatted Markdown (headings, lists, tables, links). Off shows plain text.
+    public bool RenderMarkdown { get; set; } = true;
 
     // Voice Input
     public string InputLanguage { get; set; } = "en-US";

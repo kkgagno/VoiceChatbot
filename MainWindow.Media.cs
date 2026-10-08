@@ -300,9 +300,8 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
             return;
 
-        if (assistantMessage.Body.Parent is not StackPanel stack)
-            return;
-
+        // Content, not Body.Parent: the body text box can be hidden or replaced by a rendered reply.
+        var stack = assistantMessage.Content;
         var image = new Image
         {
             Source = new BitmapImage(new Uri(imagePath)),
@@ -311,7 +310,7 @@ public partial class MainWindow
             Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 8, 0, 0)
         };
-        stack.Children.Insert(Math.Min(2, stack.Children.Count), image);
+        stack.Children.Add(image);
         AddImageButtons(assistantMessage, imagePath);
         ScrollChat();
     }
@@ -362,9 +361,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(videoPath) || !File.Exists(videoPath))
             return;
 
-        if (assistantMessage.Body.Parent is not StackPanel stack)
-            return;
-
+        var stack = assistantMessage.Content;
         var player = new MediaElement
         {
             Source = new Uri(videoPath),
@@ -375,7 +372,7 @@ public partial class MainWindow
             Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 8, 0, 0)
         };
-        stack.Children.Insert(Math.Min(2, stack.Children.Count), player);
+        stack.Children.Add(player);
         AddVideoButtons(assistantMessage, videoPath, player);
         ScrollChat();
     }

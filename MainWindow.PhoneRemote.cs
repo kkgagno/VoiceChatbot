@@ -527,6 +527,8 @@ public partial class MainWindow
             hermesCliTimeout.CancelAfter(hermesTimeout + TimeSpan.FromSeconds(10));
             var cliResult = await _hermesSsh.RunHermesCliAsync(hermesPromptForCli, hermesTimeout, hermesMaxTurns, hermesCliTimeout.Token);
             var cleaned = CleanDisplayText(cliResult.Stdout);
+            // Hermes' own answer is rendered as Markdown; timeouts and raw command output stay plain text.
+            var isHermesReply = !cliResult.TimedOut && !string.IsNullOrWhiteSpace(cleaned);
             if (cliResult.TimedOut)
                 cleaned = BuildHermesTimeoutMessage(hermesPrompt);
             if (string.IsNullOrWhiteSpace(cleaned))
@@ -542,7 +544,10 @@ public partial class MainWindow
             {
                 if (assistantMessage != null)
                 {
-                    assistantMessage.Body.Text = cleaned;
+                    if (isHermesReply)
+                        SetAssistantMessageText(assistantMessage, cleaned);
+                    else
+                        assistantMessage.Body.Text = cleaned;
                     if (!string.IsNullOrWhiteSpace(audioPath))
                         AddAudioButtons(assistantMessage, audioPath);
                 }
@@ -553,7 +558,8 @@ public partial class MainWindow
 
             if (isModelControl || IsHermesApproval(hermesPrompt))
                 await RunOnUiAsync(RefreshLlamaCppModelAfterHermesAsync);
-            return new PhoneRemoteAssistantResult(cleaned, audioPath);
+            // The phone shows plain text.
+            return new PhoneRemoteAssistantResult(isHermesReply ? MarkdownText.ToPlainText(cleaned) : cleaned, audioPath);
         }
         catch (OperationCanceledException)
         {
@@ -634,7 +640,7 @@ public partial class MainWindow
                 {
                     if (piAssistantMessage != null)
                     {
-                        piAssistantMessage.Body.Text = piAnswer;
+                        SetAssistantMessageText(piAssistantMessage, piAnswer);
                         if (!string.IsNullOrWhiteSpace(piAudioPath))
                             AddAudioButtons(piAssistantMessage, piAudioPath);
                     }
@@ -642,7 +648,7 @@ public partial class MainWindow
                     SetUIState("idle", "Ready");
                 });
 
-                return new PhoneRemoteAssistantResult(piAnswer, piAudioPath);
+                return new PhoneRemoteAssistantResult(MarkdownText.ToPlainText(piAnswer), piAudioPath);
             }
 
             var phoneCommandText = GetPhoneCommandText(userText);
@@ -870,7 +876,7 @@ public partial class MainWindow
 
             await Dispatcher.InvokeAsync(() =>
             {
-                var assistantMessage = AddAssistantMessage(displayText);
+                var assistantMessage = AddFinishedAssistantMessage(displayText);
                 if (!string.IsNullOrWhiteSpace(audioPath))
                     AddAudioButtons(assistantMessage, audioPath);
 
@@ -879,7 +885,7 @@ public partial class MainWindow
             });
 
             return new PhoneRemoteAssistantResult(
-                displayText,
+                MarkdownText.ToPlainText(displayText),
                 audioPath,
                 ActiveDocumentCount: keepPhoneDocumentsActive ? _activePhoneDocuments.Count : 0);
         }

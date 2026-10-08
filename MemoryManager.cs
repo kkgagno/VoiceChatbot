@@ -48,8 +48,11 @@ public static class MemoryManager
     {
         Directory.CreateDirectory(MemoryDir);
 
-        var filename = $"mem_{DateTime.Now:yyyyMMdd_HHmmss}.json";
-        var path = Path.Combine(MemoryDir, filename);
+        var stamp = $"mem_{DateTime.Now:yyyyMMdd_HHmmss}";
+        var path = Path.Combine(MemoryDir, $"{stamp}.json");
+        // Two saves in the same second (e.g. several save_memory tool calls) must not overwrite each other.
+        for (var n = 1; File.Exists(path); n++)
+            path = Path.Combine(MemoryDir, $"{stamp}_{n}.json");
         var json = JsonSerializer.Serialize(memory, JsonOpts);
         File.WriteAllText(path, json);
 
