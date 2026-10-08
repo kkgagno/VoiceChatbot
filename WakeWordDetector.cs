@@ -1,32 +1,29 @@
 using System;
-using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.IO;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using NAudio.Wave;
 
 namespace VoiceChatbot;
 
 /// <summary>
-/// Always-on wake word detection with openWakeWord, independent of Whisper. Runs
-/// Tools\WakeWord\wakeword_server.py hidden, feeds it 16 kHz mono PCM from the selected microphone
-/// and reports what it prints. While paused the microphone stays open but no audio is sent, so it
-/// never hears the assistant. All events are raised on background threads.
+/// Always-on wake word detection with openWakeWord's models, independent of Whisper. Runs the models
+/// in-process with ONNX Runtime (WakeWordOnnxModels, OpenWakeWordPipeline) on a background thread,
+/// fed 16 kHz mono PCM from the selected microphone. While paused the microphone stays open but its
+/// audio is dropped, so it never hears the assistant. All events are raised on background threads.
 /// </summary>
 public sealed class WakeWordDetector : IDisposable
 {
-    private const string ScriptFolder = "WakeWord";
-    private const string ScriptName = "wakeword_server.py";
     private const int BufferMilliseconds = 80; // one openWakeWord frame (1280 samples at 16 kHz)
+    private const int MaxQueuedBuffers = 64;   // ~5 s; older audio is dropped if detection falls behind
 
     private readonly object _lock = new();
     private Session? _session;
     private volatile bool _paused;
     private bool _disposed;
 
-    // One run of the Python process. A new Start replaces it; late callbacks from an old run are ignored.
+    // One run: models, worker thread and microphone. A new Start replaces it; late callbacks from an
+    // old run are ignored.
     private sealed class Session
     {
         public Session(string model, double threshold, int deviceIndex)
@@ -39,12 +36,10 @@ public sealed class WakeWordDetector : IDisposable
         public string Model { get; }
         public double Threshold { get; }
         public int DeviceIndex { get; }
-        public Process? Process;
-        public Stream? Stdin;
+        public readonly BlockingCollection<(byte[] Pcm, long Ticks)> Audio = new(MaxQueuedBuffers);
+        public readonly CancellationTokenSource Cancel = new();
         public WaveInEvent? WaveIn;
         public volatile bool Closed;
-        public volatile string LastError = "";   // message of an "error" event
-        public volatile string LastStderr = "";  // last line Python wrote to stderr
     }
 
     /// <summary>The wake word was heard (and the detector is not paused).</summary>
@@ -60,12 +55,12 @@ public sealed class WakeWordDetector : IDisposable
     public string StatusDetail { get; private set; } = "";
     public string Model { get; private set; } = WakeWordProtocol.DefaultModel;
 
-    /// <summary>True from Start until Stop, or until the process ends by itself.</summary>
+    /// <summary>True from Start until Stop, or until the detector stops because of an error.</summary>
     public bool IsRunning => _session != null;
 
     /// <summary>
-    /// Starts detection, replacing any current run. Returns at once; the Python process and the
-    /// microphone open in the background and report progress through StatusChanged.
+    /// Starts detection, replacing any current run. Returns at once; the models load and the
+    /// microphone opens in the background and report progress through StatusChanged.
     /// </summary>
     public void Start(string model, double threshold, int micDeviceIndex)
     {
@@ -89,10 +84,16 @@ public sealed class WakeWordDetector : IDisposable
             CloseSession(previous);
 
         SetStatus(session, WakeWordStatus.Starting, "");
-        Task.Run(() => LaunchProcess(session));
+        var worker = new Thread(() => Run(session))
+        {
+            IsBackground = true,
+            Name = "Wake word detector",
+            Priority = ThreadPriority.BelowNormal
+        };
+        worker.Start();
     }
 
-    /// <summary>Stops sending audio. Use while the app listens or speaks.</summary>
+    /// <summary>Stops listening to the audio. Use while the app listens or speaks.</summary>
     public void Pause()
     {
         _paused = true;
@@ -101,7 +102,7 @@ public sealed class WakeWordDetector : IDisposable
             SetStatus(session, WakeWordStatus.Paused, "");
     }
 
-    /// <summary>Sends audio again. The helper clears what it heard before the pause.</summary>
+    /// <summary>Listens again. What was heard before a pause of more than a second is forgotten.</summary>
     public void Resume()
     {
         _paused = false;
@@ -110,7 +111,7 @@ public sealed class WakeWordDetector : IDisposable
             SetStatus(session, WakeWordStatus.Listening, "");
     }
 
-    /// <summary>Stops detection: closes the microphone and ends the Python process.</summary>
+    /// <summary>Stops detection: closes the microphone and releases the models.</summary>
     public void Stop()
     {
         Session? session;
@@ -134,212 +135,105 @@ public sealed class WakeWordDetector : IDisposable
         Stop();
     }
 
-    // ==================== Process ====================
+    // ==================== Detection thread ====================
 
-    private void LaunchProcess(Session session)
+    // Loads the models, opens the microphone, then scores every 80 ms frame until the run closes.
+    private void Run(Session session)
     {
+        WakeWordOnnxModels? models = null;
         try
         {
-            var script = PythonTools.FindToolScript(ScriptFolder, ScriptName);
-            if (script == null)
-            {
-                SetStatus(session, WakeWordStatus.NotInstalled, $"{ScriptName} was not found next to the app.");
-                return;
-            }
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = PythonTools.FindPythonExecutable(),
-                Arguments = WakeWordProtocol.BuildArguments(script, session.Model, session.Threshold),
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                // No byte order mark: stdin carries raw audio samples.
-                StandardInputEncoding = new UTF8Encoding(false),
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            Process? process;
             try
             {
-                process = Process.Start(psi);
+                models = new WakeWordOnnxModels(WakeWordOnnxModels.DefaultFolder, WakeWordProtocol.ModelFileName(session.Model));
             }
-            catch (Win32Exception ex)
+            catch (Exception ex)
             {
-                Fail(session, $"Python was not found ({ex.Message}).", notInstalled: true);
+                Fail(session, $"The \"{WakeWordProtocol.DisplayName(session.Model)}\" wake word model could not be loaded: {ex.Message}");
                 return;
             }
 
-            if (process == null)
-            {
-                Fail(session, "Python could not be started.", notInstalled: false);
+            var pipeline = new OpenWakeWordPipeline(models);
+            var gate = new WakeWordGate(session.Threshold);
+            var frames = new WakeWordFrameAssembler();
+            if (session.Closed)
                 return;
-            }
 
-            process.OutputDataReceived += (_, e) => OnOutputLine(session, e.Data);
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                    session.LastStderr = e.Data.Trim();
-            };
+            ThreadPool.QueueUserWorkItem(_ => OpenMicrophone(session));
 
-            var keep = false;
-            lock (_lock)
+            foreach (var (pcm, ticks) in session.Audio.GetConsumingEnumerable(session.Cancel.Token))
             {
-                if (!session.Closed)
+                var now = (double)ticks / Stopwatch.Frequency;
+                frames.Add(pcm, frame =>
                 {
-                    session.Process = process;
-                    session.Stdin = process.StandardInput.BaseStream;
-                    keep = true;
-                }
-            }
+                    if (gate.FrameArrived(now))
+                        pipeline.Reset(); // the audio was paused; forget what came before
 
-            if (!keep)
-            {
-                KillProcess(process);
-                return;
-            }
+                    var score = pipeline.Process(frame);
+                    if (!gate.IsWake(score, now))
+                        return;
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+                    // Forget this utterance so it cannot fire again once the cooldown ends.
+                    pipeline.Reset();
+                    // A frame queued just before Pause can still score; the app is busy by then.
+                    if (!_paused && !session.Closed && ReferenceEquals(session, _session))
+                        Detected?.Invoke(new WakeWordEvent(session.Model, score));
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Stop or a new Start.
         }
         catch (Exception ex)
         {
-            Fail(session, $"Could not start the wake word detector: {ex.Message}", notInstalled: false);
+            Fail(session, $"Wake word detection stopped: {ex.Message}");
         }
-    }
-
-    // Output reader thread. A null line means the process has ended.
-    private void OnOutputLine(Session session, string? line)
-    {
-        try
+        finally
         {
-            if (line == null)
-            {
-                OnProcessEnded(session);
-                return;
-            }
-
-            var evt = WakeWordProtocol.ParseEvent(line);
-            if (evt == null || session.Closed)
-                return;
-
-            switch (evt.Kind)
-            {
-                case WakeWordEventKind.Ready:
-                    ThreadPool.QueueUserWorkItem(_ =>
-                    {
-                        try
-                        {
-                            OpenMicrophone(session);
-                        }
-                        catch (Exception ex)
-                        {
-                            Fail(session, $"Microphone could not start: {ex.Message}", notInstalled: false);
-                        }
-                    });
-                    break;
-
-                case WakeWordEventKind.Wake:
-                    // A frame sent just before Pause can still report; the app is busy by then.
-                    if (!_paused && session.WaveIn != null && ReferenceEquals(session, _session))
-                        Detected?.Invoke(evt);
-                    break;
-
-                case WakeWordEventKind.Error:
-                    var message = string.IsNullOrWhiteSpace(evt.Message) ? "The wake word detector failed." : evt.Message;
-                    session.LastError = message;
-                    Fail(session, message, WakeWordProtocol.LooksNotInstalled(message, code: evt.Code));
-                    break;
-            }
+            models?.Dispose();
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Wake word output handling failed: {ex.Message}");
-        }
-    }
-
-    private void OnProcessEnded(Session session)
-    {
-        if (session.Closed)
-            return;
-
-        // An "error" line was already reported and the session closed by Fail.
-        if (session.LastError.Length > 0)
-            return;
-
-        int? exitCode = null;
-        try
-        {
-            var process = session.Process;
-            if (process != null && process.WaitForExit(2000))
-                exitCode = process.ExitCode;
-        }
-        catch { }
-
-        var message = session.LastStderr.Length > 0
-            ? session.LastStderr
-            : $"The wake word detector stopped (exit code {exitCode?.ToString() ?? "unknown"}).";
-        Fail(session, message, WakeWordProtocol.LooksNotInstalled(message, exitCode));
     }
 
     // Reports a problem with the current run, then closes it.
-    private void Fail(Session session, string message, bool notInstalled)
+    private void Fail(Session session, string message)
     {
-        var status = notInstalled ? WakeWordStatus.NotInstalled : WakeWordStatus.Error;
         lock (_lock)
         {
             if (session.Closed || !ReferenceEquals(session, _session))
                 return;
             _session = null;
-            Status = status;
+            Status = WakeWordStatus.Error;
             StatusDetail = message;
         }
 
-        // Not on this thread: it may be the process's own output reader.
+        // Not on this thread: it may be the detection thread or the device's capture thread.
         ThreadPool.QueueUserWorkItem(_ => CloseSession(session));
-        try { StatusChanged?.Invoke(status); } catch { }
+        try { StatusChanged?.Invoke(WakeWordStatus.Error); } catch { }
         try { Error?.Invoke(message); } catch { }
     }
 
     private void CloseSession(Session session)
     {
-        Process? process;
         WaveInEvent? waveIn;
         lock (_lock)
         {
+            if (session.Closed)
+                return;
             session.Closed = true;
-            process = session.Process;
             waveIn = session.WaveIn;
-            session.Process = null;
             session.WaveIn = null;
-            session.Stdin = null;
         }
 
         if (waveIn != null)
             CloseMicrophone(waveIn);
-        // Killing the process also unblocks a capture thread stuck writing to its stdin.
-        if (process != null)
-            KillProcess(process);
-    }
-
-    private static void KillProcess(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch { }
-        try { process.Dispose(); } catch { }
+        // Ends the detection thread, which then releases the models.
+        try { session.Cancel.Cancel(); } catch { }
     }
 
     // ==================== Microphone ====================
 
-    // Thread pool, after the helper reported "ready".
+    // Thread pool, once the models are loaded.
     private void OpenMicrophone(Session session)
     {
         if (session.Closed)
@@ -369,7 +263,7 @@ public sealed class WakeWordDetector : IDisposable
 
         if (waveIn == null)
         {
-            Fail(session, $"Microphone could not start: {problem}", notInstalled: false);
+            Fail(session, $"Microphone could not start: {problem}");
             return;
         }
 
@@ -396,18 +290,18 @@ public sealed class WakeWordDetector : IDisposable
     {
         var waveIn = new WaveInEvent
         {
-            WaveFormat = new WaveFormat(16000, 16, 1),
+            WaveFormat = new WaveFormat(OpenWakeWordPipeline.SampleRate, 16, 1),
             BufferMilliseconds = BufferMilliseconds,
             DeviceNumber = deviceNumber
         };
 
         try
         {
-            waveIn.DataAvailable += (_, e) => SendAudio(session, e);
+            waveIn.DataAvailable += (_, e) => QueueAudio(session, e);
             waveIn.RecordingStopped += (_, e) =>
             {
                 if (e.Exception != null && !session.Closed)
-                    Fail(session, $"The microphone stopped: {e.Exception.Message}", notInstalled: false);
+                    Fail(session, $"The microphone stopped: {e.Exception.Message}");
             };
             waveIn.StartRecording();
             return waveIn;
@@ -419,24 +313,21 @@ public sealed class WakeWordDetector : IDisposable
         }
     }
 
-    // Capture thread, every ~80 ms.
-    private void SendAudio(Session session, WaveInEventArgs e)
+    // Capture thread, every ~80 ms: only copies the audio; the detection thread does the work.
+    private void QueueAudio(Session session, WaveInEventArgs e)
     {
         if (_paused || session.Closed || e.BytesRecorded <= 0)
             return;
 
-        var stdin = session.Stdin;
-        if (stdin == null)
-            return;
-
+        var pcm = new byte[e.BytesRecorded];
+        Buffer.BlockCopy(e.Buffer, 0, pcm, 0, e.BytesRecorded);
         try
         {
-            stdin.Write(e.Buffer, 0, e.BytesRecorded);
-            stdin.Flush();
+            // Full means detection has fallen far behind; drop this buffer rather than block capture.
+            session.Audio.TryAdd((pcm, Stopwatch.GetTimestamp()));
         }
-        catch
+        catch (InvalidOperationException)
         {
-            // The process has ended; OnProcessEnded reports why.
         }
     }
 

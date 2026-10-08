@@ -233,8 +233,7 @@ public partial class SpeechEngine : IDisposable
             return;
         }
 
-        _whisperFactory = WhisperFactory.FromPath(foundModel);
-        _whisperProcessor = BuildWhisperProcessor(_whisperFactory);
+        LoadWhisperModel(foundModel);
     }
 
     private WhisperProcessor BuildWhisperProcessor(WhisperFactory factory)

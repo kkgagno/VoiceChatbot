@@ -60,13 +60,15 @@ public class AppSettings
     public int SpeechRate { get; set; } = 1;
     public int Volume { get; set; } = 80;
     public bool TtsEnabled { get; set; } = true;
+    // Run Whisper.net on the GPU through Vulkan when one is available; off forces the CPU.
+    public bool WhisperUseGpu { get; set; } = true;
     // Speak each sentence of a streamed reply as soon as it is written.
     public bool StreamingSpeechEnabled { get; set; } = true;
     // Stop speaking when the user starts talking over the assistant (barge-in), then listen.
     public bool BargeInEnabled { get; set; } = false;
     // 0 = needs loud, clear speech to interrupt; 100 = quiet speech is enough.
     public int BargeInSensitivity { get; set; } = 50;
-    // Always-on openWakeWord detector (Tools/WakeWord). Needs install-wakeword.ps1 once.
+    // Always-on openWakeWord detector, run in-process with the models in Resources/Models/WakeWord.
     public bool WakeWordDetectorEnabled { get; set; } = false;
     // hey_jarvis, alexa, hey_mycroft or hey_rhasspy.
     public string WakeWordModel { get; set; } = WakeWordProtocol.DefaultModel;

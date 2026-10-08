@@ -60,6 +60,8 @@ Finished replies are shown formatted: headings, bold, italic and strikethrough t
 
 Local transcription uses Whisper.net. Use **Download Model** inside the app to download a Whisper model. A microphone is required for voice input.
 
+Whisper runs on the graphics card when it can: the installer includes the Vulkan build of Whisper.net, which works on AMD Radeon (including Ryzen integrated graphics), NVIDIA and Intel GPUs with a current driver. This is the fast path out of the box, with nothing else to install. Without a usable Vulkan GPU, or if it fails to load, Whisper falls back to the CPU automatically. **Use GPU for speech recognition** under **Voice Input** (on by default, saved as `WhisperUseGpu`) turns this off to force the CPU; the line under it shows what the model runs on, for example `Whisper: Vulkan GPU (AMD Radeon(TM) 780M)` or `Whisper: CPU`. Changing it reloads the model; switching back to the GPU after starting with it off needs a restart.
+
 If **Listen** does not start on a new PC:
 
 1. Select `Whisper.net` as the transcription backend.
@@ -80,6 +82,7 @@ Optional transcription tools:
 
 - Ryzen AI Whisper uses this default external command:
   `call "%USERPROFILE%\VoiceChatbot\tools\ryzen-ai-whisper-transcribe.bat" {input}`
+  Whisper on the AMD Ryzen AI NPU cannot be bundled with the installer: it needs AMD's Ryzen AI Software and NPU driver installed separately. The bundled GPU Whisper above needs neither.
 - `ffmpeg` is needed for some phone audio formats.
 
 ### Kokoro speech output
@@ -130,23 +133,16 @@ Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut 
 
 ### Always-on wake word
 
-The **Wake word** box under **Voice Input** is checked against Whisper transcripts, so it only works while the app is already listening. For a real always-on wake word, Voice Chatbot can run [openWakeWord](https://github.com/dscripka/openWakeWord) on your PC. It does not use Whisper or the internet once installed.
+The **Wake word** box under **Voice Input** is checked against Whisper transcripts, so it only works while the app is already listening. For a real always-on wake word, turn on **Listen for a wake word** under **Voice Input** and choose the **Wake word model**: Hey Jarvis (default), Alexa, Hey Mycroft, or Hey Rhasspy.
 
-1. Install Python 3.11, 3.12, or 3.13 x64 as for Kokoro above.
-2. Open PowerShell in the installed app's `Tools\WakeWord` folder and run:
+It runs [openWakeWord](https://github.com/dscripka/openWakeWord)'s models inside the app with ONNX Runtime. The models ship with the installer (`Resources\Models\WakeWord`), so there is nothing else to install: no Python, no internet, no Whisper. It needs only a few percent of one CPU core.
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\install-wakeword.ps1
-   ```
-
-   This installs `openwakeword`, `onnxruntime` and `numpy` and downloads the wake word models (about 10 MB).
-3. Under **Voice Input**, turn on **Listen for a wake word** and choose the **Wake word model**: Hey Jarvis (default), Alexa, Hey Mycroft, or Hey Rhasspy.
-
-The line under the switch shows `Starting...`, `Listening for "hey jarvis"`, `Not installed`, or the error. When the app hears the wake word, it plays the Windows "Asterisk" sound and listens for one request, as if you had pressed **Listen**. Face gating still applies. Say your request after the sound. The text wake word is not needed for that turn, and if you say nothing for about 8 seconds the app stops listening. Detection pauses while the app is listening, working on a reply or speaking, and while **Auto** listening is on, so the assistant's own voice cannot wake it.
+The line under the switch shows `Loading the wake word model...`, `Listening for "hey jarvis"`, `Paused...`, or the error. When the app hears the wake word, it plays the Windows "Asterisk" sound and listens for one request, as if you had pressed **Listen**. Face gating still applies. Say your request after the sound. The text wake word is not needed for that turn, and if you say nothing for about 8 seconds the app stops listening. Detection pauses while the app is listening, working on a reply or speaking, and while **Auto** listening is on, so the assistant's own voice cannot wake it.
 
 - **Wake word sensitivity** (10-90, default 50): higher reacts to quieter or less exact speech but wakes up by mistake more often. Lower it if the app wakes up on its own.
 - The microphone stays open while the detector is on, so Bluetooth headsets may stay in their call-quality audio mode.
-- It uses the same Python as Kokoro; set `VOICECHATBOT_PYTHON` to choose one. Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
+- Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
+- The pretrained wake word models are licensed CC BY-NC-SA 4.0 (non-commercial use only); see `Resources\Models\WakeWord\README.md`.
 
 ## Conversations, memory and knowledge
 

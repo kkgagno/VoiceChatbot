@@ -10,8 +10,9 @@ namespace VoiceChatbot;
 public partial class MainWindow
 {
     // ==================== Wake word detector ====================
-    // Always-on openWakeWord detector (WakeWordDetector). Hearing the wake word starts one listening
-    // turn, like the Listen button. It is paused while the app listens, thinks or speaks.
+    // Always-on openWakeWord detector (WakeWordDetector), running in-process with the bundled models.
+    // Hearing the wake word starts one listening turn, like the Listen button. It is paused while the
+    // app listens, thinks or speaks.
 
     private WakeWordDetector? _wakeWord;
     private bool _wakeWordWired;
@@ -73,7 +74,7 @@ public partial class MainWindow
         WakeWordSensitivityValue.Text = ((int)Math.Round(WakeWordSensitivitySlider.Value)).ToString();
         if (_applyingSettings)
             return;
-        // The threshold is passed to the helper when it starts; restart once the slider settles.
+        // The threshold is read when the detector starts; restart once the slider settles.
         ScheduleWakeWordRestart();
     }
 
@@ -126,7 +127,7 @@ public partial class MainWindow
         UpdateWakeWordUi();
     }
 
-    // Window close: kills the helper process and releases the microphone.
+    // Window close: releases the microphone and the models.
     private void DisposeWakeWordDetector()
     {
         _wakeWordPauseTimer?.Stop();
@@ -237,9 +238,7 @@ public partial class MainWindow
             return;
 
         UpdateWakeWordUi();
-        AddSystemMessage(_wakeWord.Status == WakeWordStatus.NotInstalled
-            ? $"Wake word detector is not installed: {message} Run {WakeWordProtocol.InstallScript} (see README), then turn \"Listen for a wake word\" off and on."
-            : $"Wake word detector stopped: {message} Turn \"Listen for a wake word\" off and on to retry.");
+        AddSystemMessage($"Wake word detector stopped: {message} Turn \"Listen for a wake word\" off and on to retry.");
     }
 
     // ==================== UI ====================
@@ -262,7 +261,6 @@ public partial class MainWindow
         WakeWordStatusText.SetResourceReference(TextBlock.ForegroundProperty, status switch
         {
             WakeWordStatus.Listening => "SuccessBrush",
-            WakeWordStatus.NotInstalled => "WarningBrush",
             WakeWordStatus.Error => "ErrorBrush",
             WakeWordStatus.Starting or WakeWordStatus.Paused => "TextSecondaryBrush",
             _ => "TextMutedBrush"

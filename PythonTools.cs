@@ -6,7 +6,7 @@ namespace VoiceChatbot;
 
 /// <summary>
 /// Finds the Python interpreter and the bundled helper scripts that run on it
-/// (Tools\Kokoro for speech output, Tools\WakeWord for the wake word detector).
+/// (Tools\Kokoro for speech output).
 /// </summary>
 internal static class PythonTools
 {

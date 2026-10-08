@@ -278,6 +278,7 @@ public partial class MainWindow : Window
         TtsToggle.IsChecked = _settings.TtsEnabled;
         ApplyStreamingSpeechSettings();
         ApplyBargeInSettings();
+        ApplyWhisperGpuSettings();
         ApplyWakeWordSettings();
         KokoroHostBox.Text = _settings.KokoroRemoteUrl;
         SelectKokoroModeCombo(_settings.KokoroMode);
@@ -451,6 +452,7 @@ public partial class MainWindow : Window
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
         SaveStreamingSpeechSettings();
         SaveBargeInSettings();
+        SaveWhisperGpuSettings();
         SaveWakeWordSettings();
         _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
         _settings.KokoroMode = GetSelectedKokoroMode();

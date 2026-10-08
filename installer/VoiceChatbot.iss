@@ -34,6 +34,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
+[InstallDelete]
+; The wake word no longer uses Python; remove the old helper left by earlier versions.
+Type: filesandordirs; Name: "{app}\Tools\WakeWord"
+
 [Files]
 Source: "..\bin\Release\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

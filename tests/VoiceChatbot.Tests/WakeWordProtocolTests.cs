@@ -1,4 +1,3 @@
-using System.Globalization;
 using VoiceChatbot;
 using Xunit;
 
@@ -66,110 +65,42 @@ public class WakeWordProtocolTests
         Assert.Equal(0.5, WakeWordProtocol.SensitivityToThreshold(double.NaN), 6);
     }
 
-    [Fact]
-    public void BuildsArgumentsWithInvariantDecimalPoint()
-    {
-        var previous = CultureInfo.CurrentCulture;
-        try
-        {
-            // A German Windows would otherwise write "0,45", which argparse rejects.
-            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-            var args = WakeWordProtocol.BuildArguments(@"C:\Program Files\Voice Chatbot\Tools\WakeWord\wakeword_server.py", "Alexa", 0.45);
-            Assert.Equal("\"C:\\Program Files\\Voice Chatbot\\Tools\\WakeWord\\wakeword_server.py\" --model alexa --threshold 0.45", args);
-        }
-        finally
-        {
-            CultureInfo.CurrentCulture = previous;
-        }
-    }
-
-    [Fact]
-    public void BuildArgumentsFallsBackToDefaults()
-    {
-        Assert.Equal("\"s.py\" --model hey_jarvis --threshold 0.90", WakeWordProtocol.BuildArguments("s.py", "unknown", 5));
-    }
-
-    [Fact]
-    public void ParsesReadyEvent()
-    {
-        var evt = WakeWordProtocol.ParseEvent("{\"event\": \"ready\", \"model\": \"hey_jarvis\"}");
-
-        Assert.NotNull(evt);
-        Assert.Equal(WakeWordEventKind.Ready, evt!.Kind);
-        Assert.Equal("hey_jarvis", evt.Model);
-    }
-
-    [Fact]
-    public void ParsesWakeEventWithScore()
-    {
-        var evt = WakeWordProtocol.ParseEvent("  {\"event\":\"wake\",\"model\":\"alexa\",\"score\":0.873}\r\n");
-
-        Assert.NotNull(evt);
-        Assert.Equal(WakeWordEventKind.Wake, evt!.Kind);
-        Assert.Equal("alexa", evt.Model);
-        Assert.Equal(0.873, evt.Score, 6);
-    }
-
-    [Fact]
-    public void ParsesScoreGivenAsString()
-    {
-        var evt = WakeWordProtocol.ParseEvent("{\"event\":\"wake\",\"score\":\"0.6\"}");
-
-        Assert.Equal(0.6, evt!.Score, 6);
-        Assert.Equal("", evt.Model);
-    }
-
-    [Fact]
-    public void ParsesErrorEventWithCode()
-    {
-        var evt = WakeWordProtocol.ParseEvent(
-            "{\"event\": \"error\", \"code\": \"missing_package\", \"message\": \"openWakeWord is not installed (No module named 'openwakeword').\"}");
-
-        Assert.NotNull(evt);
-        Assert.Equal(WakeWordEventKind.Error, evt!.Kind);
-        Assert.Equal("missing_package", evt.Code);
-        Assert.Contains("No module named", evt.Message);
-    }
-
     [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("Downloading model...")]
-    [InlineData("{not json")]
-    [InlineData("[1, 2]")]
-    [InlineData("{\"event\": \"progress\"}")]
-    [InlineData("{\"model\": \"alexa\"}")]
-    [InlineData("{\"event\": 5}")]
-    public void IgnoresLinesThatAreNotEvents(string? line)
+    [InlineData("hey_jarvis", "hey_jarvis_v0.1.onnx")]
+    [InlineData("Alexa", "alexa_v0.1.onnx")]
+    [InlineData("hey-rhasspy", "hey_rhasspy_v0.1.onnx")]
+    [InlineData("unknown", "hey_jarvis_v0.1.onnx")]
+    public void NamesTheBundledModelFile(string model, string expected)
     {
-        Assert.Null(WakeWordProtocol.ParseEvent(line));
+        Assert.Equal(expected, WakeWordProtocol.ModelFileName(model));
     }
 
-    [Theory]
-    [InlineData("openWakeWord is not installed (No module named 'openwakeword').", null, null, true)]
-    [InlineData("ModuleNotFoundError: No module named 'numpy'", null, null, true)]
-    [InlineData("Python was not found; run without arguments to install from the Microsoft Store", null, null, true)]
-    [InlineData("", 9009, null, true)]
-    [InlineData("anything", null, "missing_package", true)]
-    [InlineData("Could not load the 'alexa' wake word model: bad file", 3, "model_failed", false)]
-    [InlineData("Microphone could not start", null, null, false)]
-    [InlineData(null, 1, null, false)]
-    public void RecognizesMissingInstall(string? message, int? exitCode, string? code, bool expected)
+    [Fact]
+    public void BundlesAModelFileForEveryOfferedModel()
     {
-        Assert.Equal(expected, WakeWordProtocol.LooksNotInstalled(message, exitCode, code));
+        var folder = Path.Combine(FindRepoRoot(), "Resources", "Models", "WakeWord");
+        foreach (var file in WakeWordProtocol.Models.Select(WakeWordProtocol.ModelFileName)
+                     .Concat(new[] { "melspectrogram.onnx", "embedding_model.onnx" }))
+            Assert.True(new FileInfo(Path.Combine(folder, file)).Length > 100_000, $"{file} is missing or empty");
     }
 
     [Fact]
     public void DescribesEachStatus()
     {
         Assert.Equal("Off", WakeWordProtocol.DescribeStatus(WakeWordStatus.Off, "alexa"));
-        Assert.Equal("Starting...", WakeWordProtocol.DescribeStatus(WakeWordStatus.Starting, "alexa"));
+        Assert.Equal("Loading the wake word model...", WakeWordProtocol.DescribeStatus(WakeWordStatus.Starting, "alexa"));
         Assert.Equal("Listening for \"hey jarvis\"", WakeWordProtocol.DescribeStatus(WakeWordStatus.Listening, "hey_jarvis"));
         Assert.Equal("Listening for \"alexa\"", WakeWordProtocol.DescribeStatus(WakeWordStatus.Listening, "Alexa"));
         Assert.Contains("Paused", WakeWordProtocol.DescribeStatus(WakeWordStatus.Paused, "alexa"));
-        Assert.Contains("install-wakeword.ps1", WakeWordProtocol.DescribeStatus(WakeWordStatus.NotInstalled, "alexa"));
         Assert.Equal("Error: mic unplugged", WakeWordProtocol.DescribeStatus(WakeWordStatus.Error, "alexa", " mic unplugged "));
         Assert.Equal("Error", WakeWordProtocol.DescribeStatus(WakeWordStatus.Error, "alexa"));
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "VoiceChatbot.csproj")))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new DirectoryNotFoundException("VoiceChatbot.csproj was not found above the test folder.");
     }
 }

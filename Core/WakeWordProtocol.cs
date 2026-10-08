@@ -1,39 +1,24 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text.Json;
 
 namespace VoiceChatbot;
 
 public enum WakeWordStatus
 {
     Off,
-    NotInstalled,
     Starting,
     Listening,
     Paused,
     Error
 }
 
-public enum WakeWordEventKind
-{
-    Ready,
-    Wake,
-    Error
-}
-
-/// <summary>One JSON line printed by Tools/WakeWord/wakeword_server.py.</summary>
-public sealed record WakeWordEvent(
-    WakeWordEventKind Kind,
-    string Model = "",
-    double Score = 0,
-    string Message = "",
-    string Code = "");
+/// <summary>A detection reported by WakeWordDetector.</summary>
+public sealed record WakeWordEvent(string Model, double Score);
 
 /// <summary>
-/// The app side of the openWakeWord helper: the pretrained models it offers, the command line it is
-/// started with, the events it prints, and how its state is described in the UI.
+/// The app side of the openWakeWord detector: the pretrained models it offers, their files under
+/// Resources\Models\WakeWord, and how its state is described in the UI.
 /// </summary>
 public static class WakeWordProtocol
 {
@@ -41,7 +26,6 @@ public static class WakeWordProtocol
     public const double DefaultThreshold = 0.5;
     public const double MinThreshold = 0.1;
     public const double MaxThreshold = 0.9;
-    public const string InstallScript = @"Tools\WakeWord\install-wakeword.ps1";
 
     /// <summary>Pretrained openWakeWord models, in the order the UI lists them.</summary>
     public static readonly IReadOnlyList<string> Models = new[] { "hey_jarvis", "alexa", "hey_mycroft", "hey_rhasspy" };
@@ -72,63 +56,8 @@ public static class WakeWordProtocol
     public static double SensitivityToThreshold(double sensitivity) =>
         ClampThreshold(Math.Round(1 - (double.IsFinite(sensitivity) ? sensitivity : 50) / 100, 2));
 
-    /// <summary>Arguments for python.exe. The threshold always uses a dot, whatever the Windows locale.</summary>
-    public static string BuildArguments(string scriptPath, string? model, double threshold) =>
-        $"\"{scriptPath}\" --model {NormalizeModel(model)} --threshold " +
-        ClampThreshold(threshold).ToString("0.00", CultureInfo.InvariantCulture);
-
-    /// <summary>Parses one stdout line. Returns null for blank, non-JSON or unknown lines.</summary>
-    public static WakeWordEvent? ParseEvent(string? line)
-    {
-        var text = line?.Trim() ?? "";
-        if (!text.StartsWith('{'))
-            return null;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(text);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
-
-            WakeWordEventKind? kind = GetString(root, "event").ToLowerInvariant() switch
-            {
-                "ready" => WakeWordEventKind.Ready,
-                "wake" => WakeWordEventKind.Wake,
-                "error" => WakeWordEventKind.Error,
-                _ => null
-            };
-            if (kind == null)
-                return null;
-
-            return new WakeWordEvent(
-                kind.Value,
-                GetString(root, "model"),
-                GetDouble(root, "score"),
-                GetString(root, "message"),
-                GetString(root, "code"));
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// True when a failure means the helper is not set up yet: Python or the openwakeword package is
-    /// missing. Exit code 9009 is what the Windows "python.exe" store alias returns without Python.
-    /// </summary>
-    public static bool LooksNotInstalled(string? message, int? exitCode = null, string? code = null)
-    {
-        if (exitCode == 9009 || string.Equals(code, "missing_package", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var text = message ?? "";
-        return text.Contains("No module named", StringComparison.OrdinalIgnoreCase) ||
-               text.Contains("ModuleNotFoundError", StringComparison.OrdinalIgnoreCase) ||
-               text.Contains("Python was not found", StringComparison.OrdinalIgnoreCase) ||
-               text.Contains("not installed", StringComparison.OrdinalIgnoreCase);
-    }
+    /// <summary>The model's file in Resources\Models\WakeWord: "hey_jarvis_v0.1.onnx".</summary>
+    public static string ModelFileName(string? model) => $"{NormalizeModel(model)}_v0.1.onnx";
 
     /// <summary>Status line shown under the switch in Voice Input.</summary>
     public static string DescribeStatus(WakeWordStatus status, string? model, string? detail = null)
@@ -137,29 +66,11 @@ public static class WakeWordProtocol
         return status switch
         {
             WakeWordStatus.Off => "Off",
-            WakeWordStatus.NotInstalled => $"Not installed - run {InstallScript}",
-            WakeWordStatus.Starting => "Starting...",
+            WakeWordStatus.Starting => "Loading the wake word model...",
             WakeWordStatus.Listening => $"Listening for \"{SpokenPhrase(model)}\"",
             WakeWordStatus.Paused => "Paused while the assistant listens or speaks",
             WakeWordStatus.Error => info.Length > 0 ? $"Error: {info}" : "Error",
             _ => ""
         };
-    }
-
-    private static string GetString(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? ""
-            : "";
-
-    private static double GetDouble(JsonElement root, string name)
-    {
-        if (!root.TryGetProperty(name, out var value))
-            return 0;
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
-            return number;
-        return value.ValueKind == JsonValueKind.String &&
-               double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : 0;
     }
 }
