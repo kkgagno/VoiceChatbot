@@ -192,6 +192,7 @@ public partial class MainWindow : Window
             {
                 AddSystemMessage($"Speech init failed: {ex.Message}. Text-only mode active.");
             }
+            StartWakeWordDetectorIfEnabled();
 
             // Test connection
             await TestConnection();
@@ -268,6 +269,7 @@ public partial class MainWindow : Window
         TtsToggle.IsChecked = _settings.TtsEnabled;
         ApplyStreamingSpeechSettings();
         ApplyBargeInSettings();
+        ApplyWakeWordSettings();
         KokoroHostBox.Text = _settings.KokoroRemoteUrl;
         SelectKokoroModeCombo(_settings.KokoroMode);
         UpdateKokoroHint();
@@ -384,6 +386,7 @@ public partial class MainWindow : Window
         _settings.TtsEnabled = TtsToggle.IsChecked == true;
         SaveStreamingSpeechSettings();
         SaveBargeInSettings();
+        SaveWakeWordSettings();
         _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
@@ -768,6 +771,7 @@ public partial class MainWindow : Window
             _schedulerTimer?.Stop();
             _schedulerStore.Save();
             _chatCts?.Cancel();
+            DisposeWakeWordDetector();
 
             var shutdown = Task.WhenAll(
                 StopFacePresenceAsync(),

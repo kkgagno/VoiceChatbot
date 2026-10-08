@@ -245,6 +245,7 @@ public partial class MainWindow
     {
         ApplySelectedMicrophone();
         SaveSettings();
+        RestartWakeWordDetectorOnNewMicrophone();
         if (MicCombo.SelectedItem is AudioDeviceInfo mic)
             AddSystemMessage($"Microphone set to: {mic.Name}");
     }

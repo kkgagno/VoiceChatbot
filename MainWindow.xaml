@@ -390,6 +390,36 @@
 
                                 <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
 
+                                <ToggleButton x:Name="WakeWordDetectorToggle" Content="Listen for a wake word" Margin="0,0,0,2"
+                                              Style="{StaticResource SwitchToggle}" Click="WakeWordDetectorToggle_Click"
+                                              ToolTip="Always-on wake word that runs locally with openWakeWord, without Whisper. Say it and the app chimes and listens once, like pressing Listen."/>
+                                <TextBlock x:Name="WakeWordStatusText" Text="Off" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
+
+                                <StackPanel Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Wake word model" Style="{StaticResource SectionLabel}"/>
+                                    <ComboBox x:Name="WakeWordModelCombo" IsEnabled="False"
+                                              SelectionChanged="WakeWordModelCombo_SelectionChanged"
+                                              ToolTip="The phrase to say. These are openWakeWord's pretrained English models."/>
+                                </StackPanel>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Wake word sensitivity" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock x:Name="WakeWordSensitivityValue" Grid.Column="1" Text="50" Style="{StaticResource SliderValue}"/>
+                                </Grid>
+                                <Slider x:Name="WakeWordSensitivitySlider" Minimum="10" Maximum="90" Value="50"
+                                        SmallChange="5" LargeChange="10" IsEnabled="False"
+                                        ToolTip="Higher reacts to quieter or less exact speech but triggers by mistake more often. Lower it if it wakes up on its own."/>
+                                <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0">
+                                    Install once: run <Run Text="Tools\WakeWord\install-wakeword.ps1" FontFamily="{StaticResource CodeFont}"/>
+                                    from the app folder in PowerShell (needs Python 3.11+). Keeps the microphone open while on.
+                                </TextBlock>
+
+                                <Border Style="{StaticResource Divider}" Margin="0,14,0,10"/>
+
                                 <ToggleButton x:Name="BargeInToggle" Content="Interrupt by speaking" Margin="0,0,0,2"
                                               Style="{StaticResource SwitchToggle}" Click="BargeInToggle_Click"
                                               ToolTip="The microphone stays open while the assistant speaks. When you start talking, it stops and listens to you. Bluetooth headsets may switch to their lower-quality call audio while it listens."/>

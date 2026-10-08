@@ -120,6 +120,26 @@ Turn on **Interrupt by speaking** under **Voice Input** (off by default) to cut 
 - Bluetooth headsets may switch to their lower-quality call audio while the microphone is open during speech.
 - Saved as `BargeInEnabled` and `BargeInSensitivity` (0-100, default 50) in `settings.json`.
 
+### Always-on wake word
+
+The **Wake word** box under **Voice Input** is checked against Whisper transcripts, so it only works while the app is already listening. For a real always-on wake word, Voice Chatbot can run [openWakeWord](https://github.com/dscripka/openWakeWord) on your PC. It does not use Whisper or the internet once installed.
+
+1. Install Python 3.11, 3.12, or 3.13 x64 as for Kokoro above.
+2. Open PowerShell in the installed app's `Tools\WakeWord` folder and run:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install-wakeword.ps1
+   ```
+
+   This installs `openwakeword`, `onnxruntime` and `numpy` and downloads the wake word models (about 10 MB).
+3. Under **Voice Input**, turn on **Listen for a wake word** and choose the **Wake word model**: Hey Jarvis (default), Alexa, Hey Mycroft, or Hey Rhasspy.
+
+The line under the switch shows `Starting...`, `Listening for "hey jarvis"`, `Not installed`, or the error. When the app hears the wake word, it plays the Windows "Asterisk" sound and listens for one request, as if you had pressed **Listen**. Face gating still applies. Say your request after the sound. The text wake word is not needed for that turn, and if you say nothing for about 8 seconds the app stops listening. Detection pauses while the app is listening, working on a reply or speaking, and while **Auto** listening is on, so the assistant's own voice cannot wake it.
+
+- **Wake word sensitivity** (10-90, default 50): higher reacts to quieter or less exact speech but wakes up by mistake more often. Lower it if the app wakes up on its own.
+- The microphone stays open while the detector is on, so Bluetooth headsets may stay in their call-quality audio mode.
+- It uses the same Python as Kokoro; set `VOICECHATBOT_PYTHON` to choose one. Saved as `WakeWordDetectorEnabled` (default off), `WakeWordModel`, and `WakeWordThreshold` (the detection score needed, 0.1-0.9, default 0.5) in `settings.json`.
+
 ## Optional integrations
 
 ### Web search

@@ -55,6 +55,12 @@ public class AppSettings
     public bool BargeInEnabled { get; set; } = false;
     // 0 = needs loud, clear speech to interrupt; 100 = quiet speech is enough.
     public int BargeInSensitivity { get; set; } = 50;
+    // Always-on openWakeWord detector (Tools/WakeWord). Needs install-wakeword.ps1 once.
+    public bool WakeWordDetectorEnabled { get; set; } = false;
+    // hey_jarvis, alexa, hey_mycroft or hey_rhasspy.
+    public string WakeWordModel { get; set; } = WakeWordProtocol.DefaultModel;
+    // Score (0.1-0.9) a detection must reach; lower is more sensitive.
+    public double WakeWordThreshold { get; set; } = WakeWordProtocol.DefaultThreshold;
 
     // Kokoro text-to-speech. Leave the remote URL blank to use only the bundled local server.
     // Accepts "192.168.1.50", "192.168.1.50:8880" or "http://host:8880/v1".
