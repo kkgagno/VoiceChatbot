@@ -139,6 +139,17 @@ The assistant can answer from your own documents. Open **Knowledge Folder** in t
 - For each message, desktop or phone remote, the best-matching passages (up to **Excerpts per message**, default 4, about 900 characters each) are added to that request only, and the chat shows a note such as *Using 3 excerpts from: lease.pdf, car.md*. Matching is keyword based, like memories: a message has to share its main words with a passage, so small talk and general questions are not affected. File and subfolder names count as words too.
 - The index is stored in `%APPDATA%\VoiceChatbot\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
 
+### Personas
+
+A persona is a named preset for the system prompt, the voice, the speech rate and, optionally, the model. Pick one from the **Persona** box in the top bar, left of the voice buttons: the system prompt, voice and speech rate switch to it, and so does the model if the persona has one.
+
+- On first run a **Default** persona is made from your current prompt, voice and rate.
+- Under **Personas** in the **Chat Backend** expander, type a name and click **Save as new persona** (or press Enter) to save the current prompt, voice and rate as a new persona. **Update persona** saves them into the active persona. Turn on **Include the current model** before saving or updating to make the persona also switch models; leave it off to keep whatever model is selected.
+- **Delete persona** deletes the active persona after a second click to confirm, then switches to the first remaining one. The last persona cannot be deleted.
+- Changes you make to the prompt, voice or speed are kept, but are not saved into the persona until you click **Update persona**.
+- Saved conversations remember their persona. Reopening a conversation switches back to that persona if it still exists.
+- Personas are saved as `Personas` and `ActivePersona` in `settings.json`.
+
 ## Optional integrations
 
 ### Web search

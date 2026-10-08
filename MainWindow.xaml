@@ -162,6 +162,31 @@
                                     <TextBlock x:Name="TempValue" Grid.Column="1" Text="0.7" Style="{StaticResource SliderValue}"/>
                                 </Grid>
                                 <Slider x:Name="TempSlider" Minimum="0" Maximum="2" Value="0.7" SmallChange="0.1" LargeChange="0.2"/>
+
+                                <!-- Personas: see MainWindow.Personas.cs -->
+                                <Border Style="{StaticResource Divider}" Margin="0,14,0,12"/>
+                                <TextBlock Text="PERSONAS" Style="{StaticResource SubHeading}"/>
+                                <TextBlock x:Name="PersonaActiveText" Text="Active persona: Default" FontSize="12"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                <ToggleButton x:Name="PersonaModelToggle" Content="Include the current model" IsChecked="False"
+                                              Style="{StaticResource SwitchToggle}"
+                                              ToolTip="On: Save and Update also store the model selected above, and picking the persona switches to it. Off: picking the persona keeps whatever model is selected."/>
+                                <TextBox x:Name="PersonaNameBox" local:Ui.Placeholder="New persona name" MaxLength="40" Margin="0,0,0,6"
+                                         KeyDown="PersonaNameBox_KeyDown"
+                                         ToolTip="Name for a new persona made from the current prompt, voice and speech rate. Press Enter to save."/>
+                                <Button x:Name="SavePersonaBtn" Content="Save as new persona" local:Ui.Icon="&#xE710;"
+                                        Style="{StaticResource ActionButton}" Click="SavePersona_Click" Margin="0,0,0,6"
+                                        ToolTip="Save the system prompt, voice and speech rate as a new persona"/>
+                                <UniformGrid Columns="2" Margin="0,0,0,6">
+                                    <Button x:Name="UpdatePersonaBtn" Content="Update persona" local:Ui.Icon="&#xE74E;"
+                                            Style="{StaticResource SecondaryButton}" Click="UpdatePersona_Click" Margin="0,0,3,0"
+                                            ToolTip="Save the current system prompt, voice and speech rate into the active persona"/>
+                                    <Button x:Name="DeletePersonaBtn" Content="Delete persona" local:Ui.Icon="&#xE74D;"
+                                            Style="{StaticResource DangerButton}" Click="DeletePersona_Click" Margin="3,0,0,0"
+                                            ToolTip="Delete the active persona. The last persona cannot be deleted."/>
+                                </UniformGrid>
+                                <TextBlock x:Name="PersonaStatusText" Style="{StaticResource FieldHint}"
+                                           Text="Pick a persona from the top bar. Edits to the prompt, voice or speed are kept until you pick another persona; Update persona saves them."/>
                             </StackPanel>
                         </Expander>
 
@@ -770,6 +795,9 @@
 
                         <!-- Voice controls -->
                         <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                            <ComboBox x:Name="PersonaCombo" Width="140" Margin="0,0,8,0" VerticalAlignment="Center"
+                                      MaxDropDownHeight="360" ToolTip="Persona"
+                                      SelectionChanged="PersonaCombo_SelectionChanged"/>
                             <Button x:Name="ListenBtn" Content="Listen" local:Ui.Icon="&#xE720;" Style="{StaticResource ActionButton}"
                                     Click="ListenToggle_Click" Margin="0,0,6,0" ToolTip="Listen for one question (Ctrl+L)"/>
                             <ToggleButton x:Name="AlwaysListenToggle" Content="Auto" local:Ui.Icon="&#xE8EE;"

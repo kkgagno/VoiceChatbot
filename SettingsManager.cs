@@ -58,6 +58,10 @@ public class AppSettings
     // Conversation
     public int MaxContextMessages { get; set; } = 20;
     public bool StreamResponses { get; set; } = true;
+    // Personas: named presets for the system prompt, voice, speech rate and (optionally) model.
+    // "Default" is created from the current prompt/voice/rate on first run.
+    public List<Persona> Personas { get; set; } = new();
+    public string ActivePersona { get; set; } = "";
     // Knowledge folder: the documents in KnowledgeFolder are indexed into %APPDATA%\VoiceChatbot\knowledge-index.json;
     // while KnowledgeEnabled is on, up to KnowledgeMaxChunks matching excerpts go with each message.
     public bool KnowledgeEnabled { get; set; } = false;

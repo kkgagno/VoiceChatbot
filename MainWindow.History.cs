@@ -131,10 +131,12 @@ public partial class MainWindow
             }
 
             var now = DateTime.UtcNow;
-            _currentConversation ??= ConversationStore.Create(now, ModelCombo.Text?.Trim() ?? "");
+            _currentConversation ??= ConversationStore.Create(now, ModelCombo.Text?.Trim() ?? "", _settings.ActivePersona);
             var message = _currentConversation.AddMessage(role, content, now, imagePaths);
             if (!isUser && !string.IsNullOrWhiteSpace(ModelCombo.Text))
                 _currentConversation.Model = ModelCombo.Text.Trim();
+            if (!isUser && !string.IsNullOrWhiteSpace(_settings.ActivePersona))
+                _currentConversation.Persona = _settings.ActivePersona;
 
             if (bubble != null)
             {
@@ -364,6 +366,7 @@ public partial class MainWindow
         AddSystemMessage(context.Count < conversation.Messages.Count
             ? $"Reopened \"{conversation.DisplayTitle}\". The last {context.Count} of {conversation.Messages.Count} messages are back in context."
             : $"Reopened \"{conversation.DisplayTitle}\". The conversation is back in context.");
+        SwitchToConversationPersona(conversation.Persona);
     }
 
     private void RenderStoredConversation(StoredConversation conversation)

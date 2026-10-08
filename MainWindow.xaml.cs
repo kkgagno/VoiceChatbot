@@ -272,6 +272,7 @@ public partial class MainWindow : Window
         UpdateKokoroHint();
         ContextSlider.Value = _settings.MaxContextMessages;
         StreamToggle.IsChecked = _settings.StreamResponses;
+        ApplyPersonaSettings();
         ApplyKnowledgeSettings();
         ApplyMemoryPromptSettings();
         ApplyConversationHistorySettings();
@@ -388,6 +389,7 @@ public partial class MainWindow : Window
         _settings.KokoroMode = GetSelectedKokoroMode();
         _settings.MaxContextMessages = (int)ContextSlider.Value;
         _settings.StreamResponses = StreamToggle.IsChecked == true;
+        SavePersonaSettings();
         SaveKnowledgeSettings();
         SaveMemoryPromptSettings();
         SaveConversationHistorySettings();
