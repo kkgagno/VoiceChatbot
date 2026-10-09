@@ -29,7 +29,6 @@ public partial class MainWindow : Window
     private const int LargePasteChars = 24000;
     private const int MaxCurrentModelInputChars = 300000;
     private const int EstimatedCharsPerToken = 4;
-    private const int ContextSafetyTokens = 4096;
     private static readonly string SyncedVideoDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "VoiceChatbot",
@@ -228,6 +227,7 @@ public partial class MainWindow : Window
             _applyingSettings = false;
             _schedulerTimer.Start();
             UpdateActiveModelText();
+            ScheduleContextWindowStatusRefresh();
             await InitializeDesktopServiceControlsAsync();
 
             // Always-listen toggle
@@ -519,6 +519,9 @@ public partial class MainWindow : Window
         SettingsManager.Save(_settings, userChange);
         ConfigureChatClient();
         ConfigureImageClient();
+        // The provider, endpoint or Context window may have changed (cached detections are reused).
+        if (userChange)
+            ScheduleContextWindowStatusRefresh();
     }
 
     private void ConfigureChatClient()
@@ -757,16 +760,19 @@ public partial class MainWindow : Window
         {
             _settings.OllamaUrl = OllamaUrlBox.Text.Trim();
             ConfigureChatClient();
+            ScheduleContextWindowStatusRefresh();
         };
         OpenAiUrlBox.TextChanged += (s, e) =>
         {
             _settings.OpenAiCompatibleUrl = OpenAiUrlBox.Text.Trim();
             ConfigureChatClient();
+            ScheduleContextWindowStatusRefresh();
         };
         OpenAiApiKeyBox.PasswordChanged += (s, e) =>
         {
             _settings.OpenAiCompatibleApiKey = OpenAiApiKeyBox.Password.Trim();
             ConfigureChatClient();
+            ScheduleContextWindowStatusRefresh();
         };
         HermesSshHostBox.TextChanged += (s, e) =>
         {
@@ -814,9 +820,17 @@ public partial class MainWindow : Window
             UpdateKokoroHint();
         };
 
-        ModelCombo.SelectionChanged += (s, e) => Dispatcher.BeginInvoke(UpdateActiveModelText, DispatcherPriority.Background);
+        ModelCombo.SelectionChanged += (s, e) =>
+        {
+            Dispatcher.BeginInvoke(UpdateActiveModelText, DispatcherPriority.Background);
+            ScheduleContextWindowStatusRefresh();
+        };
         ModelCombo.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
-            new TextChangedEventHandler((s, e) => UpdateActiveModelText()));
+            new TextChangedEventHandler((s, e) =>
+            {
+                UpdateActiveModelText();
+                ScheduleContextWindowStatusRefresh();
+            }));
 
         TranscriptionBackendCombo.SelectionChanged += (s, e) =>
         {

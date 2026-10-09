@@ -15,14 +15,18 @@ namespace VoiceChatbot;
 public class OllamaClient : IDisposable
 {
     private readonly HttpClient _http;
-    private readonly Dictionary<string, int> _contextTokenCache = new(StringComparer.OrdinalIgnoreCase);
+    private string _provider = "Ollama";
     private string _baseUrl = "http://localhost:11434";
     private string _openAiBaseUrl = "http://localhost:8080/v1";
     private string _openAiApiKey = "";
     // Base URLs whose server rejected the skip-thinking fields with HTTP 400 in this session.
     private readonly HashSet<string> _thinkingFieldsRejected = new(StringComparer.OrdinalIgnoreCase);
 
-    public string Provider { get; set; } = "Ollama";
+    public string Provider
+    {
+        get => _provider;
+        set => SetConnectionField(ref _provider, value ?? "");
+    }
 
     /// <summary>
     /// "Hide model thinking": ask the server to skip the model's thinking phase. OpenAI-compatible servers
@@ -40,36 +44,33 @@ public class OllamaClient : IDisposable
     public string BaseUrl
     {
         get => _baseUrl;
-        set => _baseUrl = value.TrimEnd('/');
+        set => SetConnectionField(ref _baseUrl, (value ?? "").TrimEnd('/'));
     }
 
-    public async Task<int?> GetModelContextTokensAsync(string model, CancellationToken ct = default)
-    {
-        var cacheKey = $"{Provider}|{_baseUrl}|{_openAiBaseUrl}|{model}";
-        if (_contextTokenCache.TryGetValue(cacheKey, out var cached))
-            return cached;
-
-        int? detected = IsOpenAiCompatible
-            ? await TryGetOpenAiCompatibleContextTokensAsync(ct)
-            : await TryGetOllamaContextTokensAsync(model, ct);
-        detected ??= GuessKnownContextTokens(model);
-
-        if (detected is int tokens && tokens > 0)
-            _contextTokenCache[cacheKey] = tokens;
-
-        return detected;
-    }
+    /// <summary>The detected context window in tokens, or null (see <see cref="DetectContextWindowAsync"/>).</summary>
+    public async Task<int?> GetModelContextTokensAsync(string model, CancellationToken ct = default) =>
+        (await DetectContextWindowAsync(model, ct: ct).ConfigureAwait(false)).Tokens;
 
     public string OpenAiBaseUrl
     {
         get => _openAiBaseUrl;
-        set => _openAiBaseUrl = value.TrimEnd('/');
+        set => SetConnectionField(ref _openAiBaseUrl, (value ?? "").TrimEnd('/'));
     }
 
     public string OpenAiApiKey
     {
         get => _openAiApiKey;
-        set => _openAiApiKey = value;
+        set => SetConnectionField(ref _openAiApiKey, value ?? "");
+    }
+
+    // A different provider, endpoint or key is another server: detect its context window again.
+    private void SetConnectionField(ref string field, string value)
+    {
+        if (string.Equals(field, value, StringComparison.Ordinal))
+            return;
+
+        field = value;
+        InvalidateContextWindowCache();
     }
 
     public OllamaClient(string baseUrl = "http://localhost:11434")
@@ -363,10 +364,13 @@ public class OllamaClient : IDisposable
     }
 
     // Some servers report errors inside the stream ({"error": ...}) after a 200 response.
-    private static void ThrowIfStreamError(JsonElement root, bool toolsSent)
+    private void ThrowIfStreamError(JsonElement root, bool toolsSent)
     {
         if (!root.TryGetProperty("error", out var error) || error.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             return;
+
+        if (TryCreateContextOverflow(root.GetRawText()) is { } overflow)
+            throw overflow;
 
         var message = error.ValueKind == JsonValueKind.String
             ? error.GetString() ?? ""
@@ -405,11 +409,11 @@ public class OllamaClient : IDisposable
     }
 
     // ---- Helpers ----
-    /// <summary>True for llama.cpp and other OpenAI-compatible servers, whose context window is fixed at launch.</summary>
+    /// <summary>True for llama.cpp and other OpenAI-compatible servers (false for Ollama).</summary>
     public bool IsOpenAiCompatibleBackend => IsOpenAiCompatible;
 
-    private bool IsOpenAiCompatible => Provider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase) ||
-                                       Provider.Equals("llama.cpp", StringComparison.OrdinalIgnoreCase);
+    private bool IsOpenAiCompatible => _provider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase) ||
+                                       _provider.Equals("llama.cpp", StringComparison.OrdinalIgnoreCase);
 
     private async Task<List<string>> ListOpenAiCompatibleModelsAsync()
     {
@@ -544,137 +548,304 @@ public class OllamaClient : IDisposable
         catch { return false; }
     }
 
-    private async Task<int?> TryGetOllamaContextTokensAsync(string model, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(model))
-            return null;
+    // ---- Context window detection ----
 
+    // Detected windows are kept this long, so a llama-server restarted with another -c is noticed.
+    private static readonly TimeSpan ContextCacheLifetime = TimeSpan.FromMinutes(5);
+    // Nothing found (server down, or it does not report a window): ask again sooner.
+    private static readonly TimeSpan ContextMissLifetime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ContextProbeTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ContextDetectTimeout = TimeSpan.FromSeconds(20);
+
+    private sealed record ContextProbeTarget(string Provider, bool OpenAiCompatible, string OllamaUrl, string OpenAiUrl,
+        string ApiKey, string Model, string EndpointKey)
+    {
+        public string CacheKey => $"{EndpointKey}|{Model}";
+    }
+
+    private sealed record ContextCacheEntry(Task<ServerContextWindow> Detection, DateTime StartedUtc);
+
+    private sealed record ReportedContext(int Tokens, bool IsLlamaCpp, DateTime ReportedUtc);
+
+    private readonly object _contextLock = new();
+    // Keyed by provider, endpoints and model. An entry holds the detection task, so concurrent requests
+    // share one round of probes.
+    private readonly Dictionary<string, ContextCacheEntry> _contextCache = new(StringComparer.OrdinalIgnoreCase);
+    // n_ctx a server put in a context overflow error, per endpoint, for when probing finds nothing better.
+    private readonly Dictionary<string, ReportedContext> _reportedContext = new(StringComparer.OrdinalIgnoreCase);
+    private string _lastLoggedContext = "";
+    private string? _lastContextModel;
+
+    private string EndpointKey => $"{_provider}|{_baseUrl}|{_openAiBaseUrl}";
+
+    /// <summary>
+    /// The context window the server reports for <paramref name="model"/>: llama.cpp's per-slot n_ctx
+    /// (/props, then /slots), another server's runtime field (vLLM max_model_len, LM Studio), Ollama's
+    /// model maximum (/api/show), or a known limit on a cloud API. Nothing is guessed for a local or
+    /// self-hosted server: when it reports nothing, <see cref="ServerContextWindow.Tokens"/> is null and
+    /// the Context window setting applies. Results are kept for five minutes (one minute when nothing was
+    /// found) per provider, endpoint and model, and dropped when any of them changes;
+    /// <paramref name="forceRefresh"/> asks the server again.
+    /// Server problems never throw; <paramref name="ct"/> only stops waiting.
+    /// </summary>
+    public Task<ServerContextWindow> DetectContextWindowAsync(string model, bool forceRefresh = false, CancellationToken ct = default)
+    {
+        Task<ServerContextWindow> detection;
+        lock (_contextLock)
+        {
+            var target = new ContextProbeTarget(_provider, IsOpenAiCompatible, _baseUrl, _openAiBaseUrl, _openAiApiKey,
+                (model ?? "").Trim(), EndpointKey);
+
+            if (forceRefresh)
+                _reportedContext.Remove(target.EndpointKey);
+            // Another model may mean a restarted server (llama-server loads one model, with its own -c).
+            if (!string.Equals(_lastContextModel, target.Model, StringComparison.OrdinalIgnoreCase))
+            {
+                _contextCache.Clear();
+                _lastContextModel = target.Model;
+            }
+
+            if (!forceRefresh && _contextCache.TryGetValue(target.CacheKey, out var entry) && !IsExpired(entry))
+            {
+                detection = entry.Detection;
+            }
+            else
+            {
+                // Off the caller's thread (the UI thread for the settings line), and not tied to one
+                // caller's cancellation, since other requests may wait for the same detection.
+                detection = Task.Run(() => DetectContextWindowCoreAsync(target));
+                _contextCache[target.CacheKey] = new ContextCacheEntry(detection, DateTime.UtcNow);
+            }
+        }
+
+        return detection.WaitAsync(ct);
+    }
+
+    /// <summary>Forgets every detected context window, so the next request asks the server again.</summary>
+    public void InvalidateContextWindowCache()
+    {
+        lock (_contextLock)
+            _contextCache.Clear();
+    }
+
+    private static bool IsExpired(ContextCacheEntry entry)
+    {
+        if (!entry.Detection.IsCompleted)
+            return false; // Still probing: share it.
+        if (!entry.Detection.IsCompletedSuccessfully)
+            return true;
+
+        var lifetime = entry.Detection.Result.Tokens is null ? ContextMissLifetime : ContextCacheLifetime;
+        return DateTime.UtcNow - entry.StartedUtc > lifetime;
+    }
+
+    private async Task<ServerContextWindow> DetectContextWindowCoreAsync(ContextProbeTarget target)
+    {
+        ServerContextWindow result;
+        using var timeout = new CancellationTokenSource(ContextDetectTimeout);
         try
         {
-            var body = new { model };
-            using var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-            using var resp = await _http.PostAsync($"{_baseUrl}/api/show", content, ct);
+            result = target.OpenAiCompatible
+                ? await DetectOpenAiCompatibleContextAsync(target, timeout.Token).ConfigureAwait(false)
+                : await DetectOllamaContextAsync(target, timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Context window detection failed", ex);
+            result = ServerContextWindow.NotDetected(reachable: false);
+        }
+
+        result = ApplyReportedContext(target, result);
+        LogContextWindowIfChanged(target, result);
+        return result;
+    }
+
+    private async Task<ServerContextWindow> DetectOpenAiCompatibleContextAsync(ContextProbeTarget target, CancellationToken ct)
+    {
+        var baseUrl = target.OpenAiUrl.TrimEnd('/');
+        // llama.cpp serves /props and /slots at the server root, next to /v1.
+        var root = baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? baseUrl[..^3].TrimEnd('/') : baseUrl;
+        var roots = root.Equals(baseUrl, StringComparison.OrdinalIgnoreCase) ? new[] { root } : new[] { root, baseUrl };
+        var reachable = false;
+
+        // 1. llama.cpp /props: default_generation_settings.n_ctx, the window of one slot.
+        foreach (var url in roots.Select(r => r + "/props"))
+        {
+            var props = await ProbeAsync(HttpMethod.Get, url, target.ApiKey, null, ct).ConfigureAwait(false);
+            // No answer at all: the other URLs are on the same server, so do not make a request wait for them.
+            if (props.Status == 0 && !reachable)
+                return ServerContextWindow.NotDetected(reachable: false);
+            reachable = true;
+            var tokens = ContextWindowParser.FromLlamaCppProps(props.Body, out var totalSlots);
+            if (tokens is null && target.Model.Length > 0 && (props.Body is not null || props.Status == 400))
+            {
+                // llama-server in router mode (several models) answers /props for one model at a time.
+                var routed = await ProbeAsync(HttpMethod.Get, $"{url}?model={Uri.EscapeDataString(target.Model)}",
+                    target.ApiKey, null, ct).ConfigureAwait(false);
+                tokens = ContextWindowParser.FromLlamaCppProps(routed.Body, out totalSlots);
+            }
+            if (tokens is int slotContext)
+            {
+                return new ServerContextWindow(slotContext, ContextWindowSource.LlamaCppProps,
+                    ContextWindowParser.LlamaCppServerName, totalSlots);
+            }
+        }
+
+        // 2. llama.cpp /slots: the smallest slot n_ctx.
+        foreach (var url in roots.Select(r => r + "/slots"))
+        {
+            var slots = await ProbeAsync(HttpMethod.Get, url, target.ApiKey, null, ct).ConfigureAwait(false);
+            reachable |= slots.Status != 0;
+            if (ContextWindowParser.FromLlamaCppSlots(slots.Body, out var slotCount) is int slotContext)
+            {
+                return new ServerContextWindow(slotContext, ContextWindowSource.LlamaCppSlots,
+                    ContextWindowParser.LlamaCppServerName, slotCount);
+            }
+        }
+
+        // 3. Other servers' runtime fields: vLLM max_model_len in /v1/models, LM Studio's loaded context length.
+        var models = await ProbeAsync(HttpMethod.Get, $"{baseUrl}/models", target.ApiKey, null, ct).ConfigureAwait(false);
+        reachable |= models.Status != 0;
+        if (ContextWindowParser.FromServerMetadata(models.Body, target.Model) is int modelsContext)
+        {
+            var name = ContextWindowParser.ServerNameFromModels(models.Body);
+            return new ServerContextWindow(modelsContext, ContextWindowSource.ServerMetadata, name.Length > 0 ? name : "Server");
+        }
+
+        var isCloud = ContextWindowParser.IsKnownCloudEndpoint(baseUrl);
+        if (!isCloud && reachable)
+        {
+            var lmStudio = await ProbeAsync(HttpMethod.Get, $"{root}/api/v0/models", target.ApiKey, null, ct).ConfigureAwait(false);
+            if (ContextWindowParser.FromServerMetadata(lmStudio.Body, target.Model) is int lmStudioContext)
+                return new ServerContextWindow(lmStudioContext, ContextWindowSource.ServerMetadata, "LM Studio");
+        }
+
+        // 4. Hosted APIs only: a known limit for the model name.
+        if (isCloud && ContextWindowParser.GuessCloudModelContext(baseUrl, target.Model) is int known)
+            return new ServerContextWindow(known, ContextWindowSource.KnownModel, Reachable: reachable);
+
+        return ServerContextWindow.NotDetected(reachable);
+    }
+
+    private async Task<ServerContextWindow> DetectOllamaContextAsync(ContextProbeTarget target, CancellationToken ct)
+    {
+        if (target.Model.Length == 0)
+            return ServerContextWindow.NotDetected(reachable: true, "Ollama");
+
+        using var content = new StringContent(JsonSerializer.Serialize(new { model = target.Model }), Encoding.UTF8, "application/json");
+        var show = await ProbeAsync(HttpMethod.Post, $"{target.OllamaUrl}/api/show", "", content, ct).ConfigureAwait(false);
+        return ContextWindowParser.FromOllamaShow(show.Body) is int modelMax
+            ? new ServerContextWindow(modelMax, ContextWindowSource.OllamaModel, "Ollama")
+            : ServerContextWindow.NotDetected(show.Status != 0, "Ollama");
+    }
+
+    /// <summary>One metadata request with a short timeout. Status 0 = no answer; Body is null unless it succeeded.</summary>
+    private async Task<(int Status, string? Body)> ProbeAsync(HttpMethod method, string url, string apiKey, HttpContent? content,
+        CancellationToken ct)
+    {
+        using var probe = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probe.CancelAfter(ContextProbeTimeout);
+        try
+        {
+            using var request = new HttpRequestMessage(method, url);
+            if (content is not null)
+                request.Content = content;
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+            using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, probe.Token).ConfigureAwait(false);
+            var status = (int)resp.StatusCode;
             if (!resp.IsSuccessStatusCode)
-                return null;
+                return (status, null);
 
-            var json = await resp.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-            return ExtractContextTokens(doc.RootElement);
+            return (status, await resp.Content.ReadAsStringAsync(probe.Token).ConfigureAwait(false));
         }
-        catch
+        catch (Exception)
         {
+            return (0, null); // Unreachable, timed out or refused: try the next source.
+        }
+    }
+
+    // An n_ctx the server reported in an overflow error caps what probing found, unless llama.cpp itself
+    // reported a value (then the probe is current: a restarted server may run with another -c).
+    private ServerContextWindow ApplyReportedContext(ContextProbeTarget target, ServerContextWindow result)
+    {
+        ReportedContext? reported;
+        lock (_contextLock)
+        {
+            if (!_reportedContext.TryGetValue(target.EndpointKey, out reported))
+                return result;
+            if (DateTime.UtcNow - reported.ReportedUtc > ContextCacheLifetime)
+            {
+                _reportedContext.Remove(target.EndpointKey);
+                return result;
+            }
+        }
+
+        if (result.Source is ContextWindowSource.LlamaCppProps or ContextWindowSource.LlamaCppSlots)
+            return result;
+        if (result.IsServerWindow && result.Tokens <= reported.Tokens)
+            return result;
+
+        var name = reported.IsLlamaCpp
+            ? ContextWindowParser.LlamaCppServerName
+            : result.IsServerWindow ? result.ServerName : target.OpenAiCompatible ? "Server" : "Ollama";
+        return new ServerContextWindow(reported.Tokens, ContextWindowSource.ServerError, name);
+    }
+
+    private void LogContextWindowIfChanged(ContextProbeTarget target, ServerContextWindow result)
+    {
+        var summary = result.Tokens is int tokens
+            ? $"{tokens:N0} tokens from {DescribeSource(result)}"
+            : result.Reachable
+                ? "not reported, so the Context window setting is used"
+                : "server not reachable, so the Context window setting is used";
+        var logKey = $"{target.CacheKey}|{summary}";
+        lock (_contextLock)
+        {
+            if (logKey == _lastLoggedContext)
+                return;
+            _lastLoggedContext = logKey;
+        }
+
+        var endpoint = target.OpenAiCompatible ? target.OpenAiUrl : target.OllamaUrl;
+        var model = target.Model.Length > 0 ? $", model {target.Model}" : "";
+        AppLog.Info($"Context window for {target.Provider} at {endpoint}{model}: {summary}.");
+    }
+
+    private static string DescribeSource(ServerContextWindow window) => window.Source switch
+    {
+        ContextWindowSource.LlamaCppProps => window.Slots > 1 ? $"llama.cpp /props ({window.Slots} slots)" : "llama.cpp /props",
+        ContextWindowSource.LlamaCppSlots => $"llama.cpp /slots ({window.Slots} slot(s))",
+        ContextWindowSource.ServerMetadata => $"{window.ServerName} metadata",
+        ContextWindowSource.ServerError => "the server's context overflow error",
+        ContextWindowSource.OllamaModel => "the Ollama model (its maximum, capped by the setting)",
+        ContextWindowSource.KnownModel => "the known limit for this model (capped by the setting)",
+        _ => "nowhere",
+    };
+
+    /// <summary>
+    /// Turns an error body that says the request did not fit the context window into a
+    /// <see cref="ContextOverflowException"/>, and drops the cached windows so the next request (and the
+    /// caller's retry) detects again; an n_ctx in the error caps what the server reports otherwise.
+    /// </summary>
+    private ContextOverflowException? TryCreateContextOverflow(string? body)
+    {
+        if (!ContextOverflow.TryParse(body, out var info))
             return null;
-        }
-    }
 
-    private async Task<int?> TryGetOpenAiCompatibleContextTokensAsync(CancellationToken ct)
-    {
-        foreach (var url in GetOpenAiCompatibleMetadataUrls())
+        lock (_contextLock)
         {
-            try
-            {
-                using var request = CreateOpenAiRequest(HttpMethod.Get, url);
-                using var resp = await _http.SendAsync(request, ct);
-                if (!resp.IsSuccessStatusCode)
-                    continue;
-
-                var json = await resp.Content.ReadAsStringAsync(ct);
-                using var doc = JsonDocument.Parse(json);
-                var tokens = ExtractContextTokens(doc.RootElement);
-                if (tokens is > 0)
-                    return tokens;
-            }
-            catch
-            {
-                // Try the next metadata endpoint.
-            }
+            _contextCache.Clear();
+            if (info.ServerContextTokens is int serverWindow)
+                _reportedContext[EndpointKey] = new ReportedContext(serverWindow, info.IsLlamaCpp, DateTime.UtcNow);
         }
 
-        return null;
-    }
-
-    private IEnumerable<string> GetOpenAiCompatibleMetadataUrls()
-    {
-        var baseUrl = _openAiBaseUrl.TrimEnd('/');
-        yield return $"{baseUrl}/props";
-        yield return $"{baseUrl}/slots";
-
-        if (baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            var root = baseUrl[..^3].TrimEnd('/');
-            yield return $"{root}/props";
-            yield return $"{root}/slots";
-        }
-    }
-
-    private static int? ExtractContextTokens(JsonElement element)
-    {
-        var candidates = new List<int>();
-        Visit(element, "");
-        return candidates.Count == 0 ? null : candidates.Max();
-
-        void Visit(JsonElement current, string name)
-        {
-            switch (current.ValueKind)
-            {
-                case JsonValueKind.Object:
-                    foreach (var property in current.EnumerateObject())
-                        Visit(property.Value, property.Name);
-                    break;
-                case JsonValueKind.Array:
-                    foreach (var item in current.EnumerateArray())
-                        Visit(item, name);
-                    break;
-                case JsonValueKind.Number:
-                    if (current.TryGetInt32(out var number) && LooksLikeContextKey(name) && IsReasonableContextLength(number))
-                        candidates.Add(number);
-                    break;
-                case JsonValueKind.String:
-                    var value = current.GetString() ?? "";
-                    if (LooksLikeContextKey(name) && int.TryParse(value, out var stringNumber) && IsReasonableContextLength(stringNumber))
-                        candidates.Add(stringNumber);
-                    ExtractContextFromParameterText(value, candidates);
-                    break;
-            }
-        }
-    }
-
-    private static bool LooksLikeContextKey(string name)
-    {
-        var key = name.Replace(".", "_", StringComparison.Ordinal).Replace("-", "_", StringComparison.Ordinal).ToLowerInvariant();
-        return key is "n_ctx" or "num_ctx" or "ctx_size" or "context_size" or "context_length" or "max_context_length" or "max_position_embeddings" ||
-               (key.Contains("context", StringComparison.Ordinal) && key.Contains("length", StringComparison.Ordinal));
-    }
-
-    private static void ExtractContextFromParameterText(string text, List<int> candidates)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        foreach (var line in text.Split('\n'))
-        {
-            var trimmed = line.Trim();
-            var parts = trimmed.Split([' ', '\t', '='], StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2 || !LooksLikeContextKey(parts[0]))
-                continue;
-
-            if (int.TryParse(parts[^1], out var number) && IsReasonableContextLength(number))
-                candidates.Add(number);
-        }
-    }
-
-    private static bool IsReasonableContextLength(int value) => value is >= 4096 and <= 2_000_000;
-
-    private static int? GuessKnownContextTokens(string model)
-    {
-        var normalized = (model ?? "").ToLowerInvariant();
-        if (normalized.Contains("gemma") && (normalized.Contains("4") || normalized.Contains("3")))
-            return 262144;
-        if (normalized.Contains("gpt-4.1") || normalized.Contains("gpt-4o") || normalized.Contains("gpt-5"))
-            return 131072;
-        if (normalized.Contains("claude"))
-            return 200000;
-        return null;
+        var window = info.ServerContextTokens is int n ? $"{n:N0}-token window" : "context window";
+        var prompt = info.PromptTokens is int p ? $" ({p:N0} prompt tokens)" : "";
+        AppLog.Info($"The chat server rejected a request as too long for its {window}{prompt}: {info.Message} " +
+                    "The context window is detected again.");
+        return new ContextOverflowException(info);
     }
 
     private HttpRequestMessage CreateOllamaChatRequest(object body) =>
@@ -708,6 +879,9 @@ public class OllamaClient : IDisposable
         try { problem = (await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)).Trim(); }
         catch (Exception ex) when (ex is not OperationCanceledException) { problem = ""; }
         finally { response.Dispose(); }
+        // Too long for the context window: sending it again without the thinking fields would not help.
+        if (TryCreateContextOverflow(problem) is { } overflow)
+            throw overflow;
         if (problem.Length > 300)
             problem = problem[..300] + "...";
 
@@ -749,12 +923,14 @@ public class OllamaClient : IDisposable
         return request;
     }
 
-    private static async Task EnsureSuccessWithBodyAsync(HttpResponseMessage response, CancellationToken ct, bool toolsSent = false)
+    private async Task EnsureSuccessWithBodyAsync(HttpResponseMessage response, CancellationToken ct, bool toolsSent = false)
     {
         if (response.IsSuccessStatusCode)
             return;
 
         var body = await response.Content.ReadAsStringAsync(ct);
+        if ((int)response.StatusCode is >= 400 and < 500 && TryCreateContextOverflow(body) is { } overflow)
+            throw overflow;
         var detail = string.IsNullOrWhiteSpace(body)
             ? response.ReasonPhrase ?? ""
             : body.Trim();

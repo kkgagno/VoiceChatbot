@@ -177,11 +177,15 @@
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="Context window" Style="{StaticResource SectionLabel}"/>
                                         <TextBox x:Name="ContextWindowBox" Text="16384" LostFocus="TokenBudgetBox_LostFocus"
-                                                 ToolTip="Largest context to use, sent to Ollama as num_ctx. llama.cpp servers use the window they were started with."/>
+                                                 ToolTip="Sent to Ollama as num_ctx. A llama.cpp, vLLM or LM Studio server that reports its window uses that instead; this box is used when it reports nothing."/>
                                     </StackPanel>
                                 </Grid>
+                                <!-- Filled by MainWindow.ContextWindow.cs: the window requests use and where it comes from. -->
+                                <TextBlock x:Name="ContextWindowStatusText" Style="{StaticResource FieldHint}"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,2"
+                                           Text="Checking the server's context window..."/>
                                 <TextBlock Style="{StaticResource FieldHint}"
-                                           Text="Context window 0 = model default (its full window). A larger window uses more GPU memory."/>
+                                           Text="Context window: used when the server does not report one, and sent to Ollama as num_ctx (0 = the model's full window). A larger window uses more GPU memory."/>
 
                                 <ToggleButton x:Name="UseToolsToggle" Content="Let the model use tools" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="UseToolsToggle_Click" Margin="0,12,0,2"/>

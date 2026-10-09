@@ -81,6 +81,8 @@ public partial class MainWindow
                 ? _settings.OpenAiCompatibleUrl
                 : _settings.OllamaUrl;
             AddSystemMessage($"Loaded {models.Count} model(s) from {_settings.ChatProvider}: {endpoint}");
+            // The server may have been restarted with another context size (-c): ask it again.
+            ScheduleContextWindowStatusRefresh(forceDetect: true);
 
             await TestConnection();
         }

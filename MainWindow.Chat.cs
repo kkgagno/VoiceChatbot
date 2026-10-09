@@ -99,13 +99,69 @@ public partial class MainWindow
         TokenBudget.ResolveMaxTokens(_settings.MaxTokens, IsCodeOrScriptRequest(text), contextTokens);
 
     /// <summary>
-    /// The context window for this request: the server's window on llama.cpp/OpenAI-compatible servers,
-    /// and on Ollama the model's window capped by the ContextWindow setting (sent as num_ctx).
+    /// The context window for this request: the window a llama.cpp (or vLLM, LM Studio) server reports it
+    /// runs with; on Ollama the model's window capped by the ContextWindow setting (sent as num_ctx); and
+    /// the setting itself when nothing is reported. See <see cref="OllamaClient.DetectContextWindowAsync"/>.
     /// </summary>
     private async Task<int> GetContextTokensForRequestAsync(string model, CancellationToken ct)
     {
-        var detected = await _ollama.GetModelContextTokensAsync(model, ct);
-        return TokenBudget.ResolveContextWindow(detected, _settings.ContextWindow, _ollama.IsOpenAiCompatibleBackend, CodeContextTokens);
+        var window = await _ollama.DetectContextWindowAsync(model, ct: ct);
+        _lastContextWindow = window;
+        return ResolveContextTokens(window);
+    }
+
+    private int ResolveContextTokens(ServerContextWindow window) =>
+        TokenBudget.ResolveContextWindow(window.Tokens, _settings.ContextWindow, window.IsServerWindow, CodeContextTokens);
+
+    /// <summary>
+    /// After the server rejected a request as too long for its context window: detects the window again
+    /// (the client has dropped its cached value and noted the n_ctx from the error), then drops more of
+    /// the oldest messages so the request fits, also allowing for the server's real prompt size when the
+    /// error gave it. Returns null when nothing could be made shorter, so a retry would fail the same way.
+    /// Touches no UI, so the scheduler can use it too.
+    /// </summary>
+    private async Task<ContextRefit?> RefitAfterContextOverflowAsync(string model, ContextOverflowException overflow,
+        List<ChatMessage> messages, string systemPrompt, string modelUserText, int previousContextTokens,
+        int previousMaxTokens, bool toolTurn, CancellationToken ct)
+    {
+        var window = await _ollama.DetectContextWindowAsync(model, ct: ct);
+        _lastContextWindow = window;
+        var contextTokens = ResolveContextTokens(window);
+        if (overflow.Info.ServerContextTokens is int serverWindow)
+            contextTokens = Math.Min(contextTokens, serverWindow);
+        var maxTokens = GetMaxTokensForRequest(modelUserText, contextTokens);
+        var scale = TokenBudget.RetryEstimateScale(overflow.Info.PromptTokens, EstimatePromptTokens(messages, systemPrompt),
+            windowShrank: contextTokens < previousContextTokens);
+        var dropped = toolTurn
+            ? TrimToolTurnToContextBudget(messages, systemPrompt, contextTokens, maxTokens, scale)
+            : TrimMessagesToContextBudget(messages, systemPrompt, contextTokens, maxTokens, scale);
+
+        _ = Dispatcher.BeginInvoke(() => ScheduleContextWindowStatusRefresh());
+        if (dropped == 0 && maxTokens >= previousMaxTokens)
+            return null;
+
+        AppLog.Info($"Retrying the chat request for a {contextTokens:N0}-token window: {dropped} older message(s) left out, " +
+                    $"reply limit {maxTokens:N0}.");
+        return new ContextRefit(contextTokens, maxTokens, dropped, window);
+    }
+
+    private sealed record ContextRefit(int ContextTokens, int MaxTokens, int DroppedMessages, ServerContextWindow Window);
+
+    /// <summary>The note in the chat when a request is sent again after a context overflow.</summary>
+    private static string DescribeContextRefit(ContextRefit refit)
+    {
+        var server = refit.Window.IsLlamaCpp ? "The llama.cpp server" : "The server";
+        var left = refit.DroppedMessages > 0
+            ? $"left out {refit.DroppedMessages} older message(s)"
+            : "shortened the reply limit";
+        return $"{server} takes {refit.ContextTokens:N0} tokens per request, so the app {left} and sent the request again.";
+    }
+
+    /// <summary>The short message for a request that still does not fit, with the window detection found.</summary>
+    private static string DescribeContextOverflow(ContextOverflowException overflow, ServerContextWindow? window)
+    {
+        var known = window is { IsServerWindow: true, Tokens: int tokens } ? tokens : (int?)null;
+        return ContextOverflow.Describe(overflow.Info, known, window?.IsLlamaCpp == true);
     }
 
     private List<ChatMessage> BuildMessagesForModel(string currentUserText, IEnumerable<string> currentImagesBase64)
@@ -165,12 +221,14 @@ public partial class MainWindow
                text[^tailLength..];
     }
 
-    private int TrimMessagesToContextBudget(List<ChatMessage> messages, string systemPrompt, int contextTokens, int maxOutputTokens)
+    /// <param name="estimateScale">Above 1 when the character-based estimate is known to undercount (after a context overflow).</param>
+    private int TrimMessagesToContextBudget(List<ChatMessage> messages, string systemPrompt, int contextTokens, int maxOutputTokens,
+        double estimateScale = 1.0)
     {
         if (messages.Count <= 1 || contextTokens <= 0)
             return 0;
 
-        var promptBudget = Math.Max(4096, contextTokens - maxOutputTokens - ContextSafetyTokens);
+        var promptBudget = TokenBudget.PromptBudget(contextTokens, maxOutputTokens, estimateScale);
         var dropped = 0;
         while (messages.Count > 1 && EstimatePromptTokens(messages, systemPrompt) > promptBudget)
         {
@@ -825,57 +883,153 @@ public partial class MainWindow
                 return;
             }
 
-            if (StreamToggle.IsChecked == true)
+            // A request the server rejects as too long for its context window is sent once more, with the
+            // window detected again and the oldest messages left out until it fits.
+            for (var overflowRetry = false; ; overflowRetry = true)
             {
-                // Stream
-                SetUIState("thinking", "Thinking...");
-                var fullText = new StringBuilder();
-                streamingSpeech = BeginStreamingSpeech(modelUserText, assistantMessage);
-                // onComplete starts the async completion; the turn waits for it below.
-                Task? streamCompletion = null;
-                await _ollama.ChatStreamAsync(
-                    model,
-                    messagesForModel,
-                    systemPrompt,
-                    TempSlider.Value,
-                    maxTokens,
-                    contextTokens,
-                    onToken: token =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            fullText.Append(token);
-                            var streamingText = fullText.ToString();
-                            var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
-                            assistantMessage.Body.Text = GetStreamingDisplayText(streamingText, shouldPreserveCode);
-                            ScrollChat(onlyIfFollowing: true);
-                            FeedStreamingSpeech(streamingSpeech, token);
-                        }, DispatcherPriority.Background);
-                    },
-                    onComplete: full => streamCompletion = CompleteStreamedReplyAsync(full),
-                    onError: ex =>
-                    {
-                        AppLog.Error("Chat backend stream failed", ex);
-                        Dispatcher.Invoke(() =>
-                        {
-                            assistantMessage.Body.Text = $"Error: {ex.Message}";
-                            AddSystemMessage($"API Error: {ex.Message}");
-                            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
-                        });
-                    },
-                    ct: ct
-                );
-                if (streamCompletion != null)
-                    await streamCompletion;
-
-                async Task CompleteStreamedReplyAsync(string full)
+                try
                 {
-                    try
+                    if (StreamToggle.IsChecked == true)
                     {
-                        await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
+                        // Stream
+                        SetUIState("thinking", "Thinking...");
+                        var fullText = new StringBuilder();
+                        streamingSpeech = BeginStreamingSpeech(modelUserText, assistantMessage);
+                        // onComplete starts the async completion; the turn waits for it below.
+                        Task? streamCompletion = null;
+                        ContextOverflowException? streamOverflow = null;
+                        await _ollama.ChatStreamAsync(
+                            model,
+                            messagesForModel,
+                            systemPrompt,
+                            TempSlider.Value,
+                            maxTokens,
+                            contextTokens,
+                            onToken: token =>
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    fullText.Append(token);
+                                    var streamingText = fullText.ToString();
+                                    var shouldPreserveCode = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(streamingText);
+                                    assistantMessage.Body.Text = GetStreamingDisplayText(streamingText, shouldPreserveCode);
+                                    ScrollChat(onlyIfFollowing: true);
+                                    FeedStreamingSpeech(streamingSpeech, token);
+                                }, DispatcherPriority.Background);
+                            },
+                            onComplete: full => streamCompletion = CompleteStreamedReplyAsync(full),
+                            onError: ex =>
+                            {
+                                if (ex is ContextOverflowException overflow && !overflowRetry)
+                                {
+                                    // Nothing was streamed yet; sent again below with a shorter history.
+                                    streamOverflow = overflow;
+                                    return;
+                                }
 
-                        var completed = await CompleteCodeArtifactIfNeededAsync(
-                            full,
+                                AppLog.Error("Chat backend stream failed", ex);
+                                Dispatcher.Invoke(() =>
+                                {
+                                    if (ex is ContextOverflowException tooLong)
+                                    {
+                                        assistantMessage.Body.Text = DescribeContextOverflow(tooLong, _lastContextWindow);
+                                    }
+                                    else
+                                    {
+                                        assistantMessage.Body.Text = $"Error: {ex.Message}";
+                                        AddSystemMessage($"API Error: {ex.Message}");
+                                    }
+                                    CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                                });
+                            },
+                            ct: ct
+                        );
+                        if (streamOverflow is not null)
+                        {
+                            // The retry starts its own live speech.
+                            streamingSpeech?.Session.Abandon();
+                            streamingSpeech = null;
+                            throw streamOverflow;
+                        }
+                        if (streamCompletion != null)
+                            await streamCompletion;
+
+                        async Task CompleteStreamedReplyAsync(string full)
+                        {
+                            try
+                            {
+                                await Dispatcher.InvokeAsync(() => AddBackendFinishDiagnostic("Backend usage", full.Length, maxTokens, contextTokens));
+
+                                var completed = await CompleteCodeArtifactIfNeededAsync(
+                                    full,
+                                    modelUserText,
+                                    messagesForModel,
+                                    systemPrompt,
+                                    model,
+                                    TempSlider.Value,
+                                    maxTokens,
+                                    contextTokens,
+                                    ct);
+
+                                Dispatcher.Invoke(() =>
+                                {
+                                    var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
+                                    var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
+                                    if (IsPlanningNotesOnlyNotice(cleaned))
+                                    {
+                                        // Only planning notes: show the note, but do not save or speak it.
+                                        assistantMessage.Body.Text = cleaned;
+                                        CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(cleaned))
+                                    {
+                                        SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
+                                        _history.Add("assistant", cleaned);
+                                        // With live speech the reply is already being spoken; otherwise speak it now.
+                                        if (!FinishStreamingSpeech(streamingSpeech, full, completed))
+                                            SpeakLastResponse(cleaned, assistantMessage);
+                                    }
+                                    else
+                                    {
+                                        AddSystemMessage("The model returned an empty answer.");
+                                        CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                                    }
+                                });
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // Stop/Esc during the code continuation: the outer catch ends the turn.
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                AppLog.Error("Code/SVG continuation failed", ex);
+                                Dispatcher.Invoke(() =>
+                                {
+                                    assistantMessage.Body.Text = $"Error: {ex.Message}";
+                                    AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
+                                    CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+                                });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Non-streaming
+                        SetUIState("processing", "Generating...");
+                        var response = await _ollama.ChatAsync(
+                            model,
+                            messagesForModel,
+                            systemPrompt,
+                            TempSlider.Value,
+                            maxTokens,
+                            ct,
+                            contextTokens
+                        );
+                        AddBackendFinishDiagnostic("Backend usage", response.Length, maxTokens, contextTokens);
+
+                        response = await CompleteCodeArtifactIfNeededAsync(
+                            response,
                             modelUserText,
                             messagesForModel,
                             systemPrompt,
@@ -885,93 +1039,54 @@ public partial class MainWindow
                             contextTokens,
                             ct);
 
-                        Dispatcher.Invoke(() =>
+                        var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(response);
+                        var cleaned = CleanDisplayText(response, preserveCodeBlocks: isCodeResponse);
+                        if (IsPlanningNotesOnlyNotice(cleaned))
                         {
-                            var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(completed);
-                            var cleaned = CleanDisplayText(completed, preserveCodeBlocks: isCodeResponse);
-                            if (IsPlanningNotesOnlyNotice(cleaned))
-                            {
-                                // Only planning notes: show the note, but do not save or speak it.
-                                assistantMessage.Body.Text = cleaned;
-                                CancelStreamingSpeechAndFinishTurn(streamingSpeech);
-                            }
-                            else if (!string.IsNullOrWhiteSpace(cleaned))
-                            {
-                                SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
-                                _history.Add("assistant", cleaned);
-                                // With live speech the reply is already being spoken; otherwise speak it now.
-                                if (!FinishStreamingSpeech(streamingSpeech, full, completed))
-                                    SpeakLastResponse(cleaned, assistantMessage);
-                            }
-                            else
-                            {
-                                AddSystemMessage("The model returned an empty answer.");
-                                CancelStreamingSpeechAndFinishTurn(streamingSpeech);
-                            }
-                        });
+                            // Only planning notes: show the note, but do not save or speak it.
+                            assistantMessage.Body.Text = cleaned;
+                            FinishTurn();
+                            return;
+                        }
+
+                        SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
+                        _history.Add("assistant", cleaned);
+                        SpeakLastResponse(cleaned, assistantMessage);
                     }
-                    catch (OperationCanceledException)
-                    {
-                        // Stop/Esc during the code continuation: the outer catch ends the turn.
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        AppLog.Error("Code/SVG continuation failed", ex);
-                        Dispatcher.Invoke(() =>
-                        {
-                            assistantMessage.Body.Text = $"Error: {ex.Message}";
-                            AddSystemMessage($"Code/SVG continuation error: {ex.Message}");
-                            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
-                        });
-                    }
+
+                    break;
                 }
-            }
-            else
-            {
-                // Non-streaming
-                SetUIState("processing", "Generating...");
-                var response = await _ollama.ChatAsync(
-                    model,
-                    messagesForModel,
-                    systemPrompt,
-                    TempSlider.Value,
-                    maxTokens,
-                    ct,
-                    contextTokens
-                );
-                AddBackendFinishDiagnostic("Backend usage", response.Length, maxTokens, contextTokens);
-
-                response = await CompleteCodeArtifactIfNeededAsync(
-                    response,
-                    modelUserText,
-                    messagesForModel,
-                    systemPrompt,
-                    model,
-                    TempSlider.Value,
-                    maxTokens,
-                    contextTokens,
-                    ct);
-
-                var isCodeResponse = IsCodeOrScriptRequest(modelUserText) || ContainsFencedCodeBlock(response);
-                var cleaned = CleanDisplayText(response, preserveCodeBlocks: isCodeResponse);
-                if (IsPlanningNotesOnlyNotice(cleaned))
+                catch (ContextOverflowException overflow) when (!overflowRetry)
                 {
-                    // Only planning notes: show the note, but do not save or speak it.
-                    assistantMessage.Body.Text = cleaned;
-                    FinishTurn();
-                    return;
-                }
+                    var refit = await RefitAfterContextOverflowAsync(model, overflow, messagesForModel, systemPrompt,
+                        modelUserText, contextTokens, maxTokens, toolTurn: false, ct);
+                    if (refit is null)
+                        throw;
 
-                SetAssistantMessageText(assistantMessage, cleaned, isCodeResponse);
-                _history.Add("assistant", cleaned);
-                SpeakLastResponse(cleaned, assistantMessage);
+                    contextTokens = refit.ContextTokens;
+                    maxTokens = refit.MaxTokens;
+                    droppedContextMessages += refit.DroppedMessages;
+                    assistantMessage.Body.Text = "";
+                    AddSystemMessage(DescribeContextRefit(refit));
+                    AddTokenEstimateDiagnostic(userText, messagesForModel, systemPrompt, contextTokens, maxTokens, droppedContextMessages);
+                }
             }
         }
         catch (OperationCanceledException)
         {
             if (assistantMessage is not null)
                 assistantMessage.Body.Text += " [cancelled]";
+            CancelStreamingSpeechAndFinishTurn(streamingSpeech);
+        }
+        catch (ContextOverflowException ex)
+        {
+            // Still too long after the retry, or nothing left to leave out: say what the server takes.
+            AppLog.Warn("Chat request did not fit the server's context window", ex);
+            var message = DescribeContextOverflow(ex, _lastContextWindow);
+            if (assistantMessage is not null)
+                assistantMessage.Body.Text = message;
+            else
+                AddSystemMessage(message);
             CancelStreamingSpeechAndFinishTurn(streamingSpeech);
         }
         catch (Exception ex)
