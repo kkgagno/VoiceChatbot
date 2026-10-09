@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace VoiceChatbot;
 
@@ -68,6 +69,13 @@ public static class DocumentFileTypes
 {
     /// <summary>Scanned PDFs are OCR'd up to this many pages; later pages are left out and the user is told.</summary>
     public const int MaxOcrPages = 8;
+
+    /// <summary>
+    /// The knowledge folder OCRs scanned PDFs and multi-page TIFFs up to this many pages instead: it reads
+    /// in the background with progress, and a long scanned declaration or set of bylaws has to be
+    /// searchable past its first pages.
+    /// </summary>
+    public const int MaxKnowledgeOcrPages = 200;
 
     /// <summary>How many leading bytes <see cref="LooksLikeText"/> needs to classify a file.</summary>
     public const int TextSniffBytes = 8192;
@@ -401,6 +409,26 @@ public static class DocumentFileTypes
         }
 
         return control <= sample.Length / 100;
+    }
+
+    private static readonly Regex OcrPageLimitNotice = new(@"\(OCR is limited to (\d+) pages\)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The page limit at which OCR stopped, from the "[... (OCR is limited to 8 pages) ...]" notice that
+    /// starts a read with pages left out; 0 when the text does not start with such a notice.
+    /// </summary>
+    public static int OcrPageLimitIn(string? text)
+    {
+        if (string.IsNullOrEmpty(text) || text[0] != '[')
+            return 0;
+
+        var end = text.IndexOf(']');
+        var match = OcrPageLimitNotice.Match(end > 0 ? text[..end] : text);
+        return match.Success && int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var limit)
+            ? limit
+            : 0;
     }
 
     /// <summary>

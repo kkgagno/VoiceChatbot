@@ -26,11 +26,13 @@ public sealed class DocumentTextService
     /// through their Windows text filter when one is installed. Runs on a worker thread, so a UI
     /// caller stays responsive. Cancelling throws OperationCanceledException and kills any running
     /// pdftoppm/tesseract process. Failures come back as a result with an Error and a Problem.
+    /// Scans are OCR'd up to <paramref name="maxOcrPages"/> pages (the knowledge folder reads more).
     /// </summary>
-    public Task<DocumentTextResult> ExtractAsync(string path, CancellationToken ct = default, IProgress<string>? progress = null) =>
-        Task.Run(() => ExtractCoreAsync(path, progress, ct), CancellationToken.None);
+    public Task<DocumentTextResult> ExtractAsync(string path, CancellationToken ct = default, IProgress<string>? progress = null,
+        int maxOcrPages = DocumentFileTypes.MaxOcrPages) =>
+        Task.Run(() => ExtractCoreAsync(path, progress, Math.Max(1, maxOcrPages), ct), CancellationToken.None);
 
-    private static async Task<DocumentTextResult> ExtractCoreAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    private static async Task<DocumentTextResult> ExtractCoreAsync(string path, IProgress<string>? progress, int maxOcrPages, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             return Fail(path, "File not found.", DocumentReadProblem.NotFound);
@@ -40,7 +42,7 @@ public sealed class DocumentTextService
         DocumentTextResult result;
         try
         {
-            result = await ReadAsync(path, progress, ct);
+            result = await ReadAsync(path, progress, maxOcrPages, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -69,7 +71,7 @@ public sealed class DocumentTextService
         }
     }
 
-    private static async Task<DocumentTextResult> ReadAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    private static async Task<DocumentTextResult> ReadAsync(string path, IProgress<string>? progress, int maxOcrPages, CancellationToken ct)
     {
         var ext = Path.GetExtension(path).ToLowerInvariant();
         var reader = DocumentFileTypes.GetReader(ext);
@@ -78,9 +80,9 @@ public sealed class DocumentTextService
             case DocumentReader.Unsupported:
                 return Fail(path, DocumentFileTypes.GetUnsupportedTypeMessage(ext) ?? DocumentFileTypes.DescribeUnsupportedType(ext), DocumentReadProblem.Unsupported);
             case DocumentReader.Pdf:
-                return await ExtractPdfDocumentAsync(path, progress, ct);
+                return await ExtractPdfDocumentAsync(path, progress, maxOcrPages, ct);
             case DocumentReader.Image:
-                return await ExtractImageAsync(path, progress, ct);
+                return await ExtractImageAsync(path, progress, maxOcrPages, ct);
             case DocumentReader.Text:
                 return await ExtractTextFileAsync(path, ct);
             case DocumentReader.Html:
@@ -96,7 +98,7 @@ public sealed class DocumentTextService
         switch (DocumentFileTypes.Sniff(start))
         {
             case SniffedFormat.Pdf:
-                return await ExtractPdfDocumentAsync(path, progress, ct);
+                return await ExtractPdfDocumentAsync(path, progress, maxOcrPages, ct);
             case SniffedFormat.Rtf:
                 return await ExtractRtfAsync(path, ct);
             case SniffedFormat.Html:
@@ -297,7 +299,7 @@ public sealed class DocumentTextService
 
     // ==================== Pictures ====================
 
-    private static async Task<DocumentTextResult> ExtractImageAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    private static async Task<DocumentTextResult> ExtractImageAsync(string path, IProgress<string>? progress, int maxOcrPages, CancellationToken ct)
     {
         progress?.Report("reading the text in the picture...");
         var engine = WindowsOcr.TryCreateEngine(out var ocrError);
@@ -321,7 +323,7 @@ public sealed class DocumentTextService
 
         try
         {
-            var image = await WindowsOcr.RecognizeImageAsync(engine, path, progress, ct);
+            var image = await WindowsOcr.RecognizeImageAsync(engine, path, maxOcrPages, progress, ct);
             return string.IsNullOrWhiteSpace(image.Text)
                 ? Fail(path, image.Error, image.Problem)
                 : CreateResult(path, "[Text read from a picture with OCR]\n\n" + image.Text, "");
@@ -335,7 +337,7 @@ public sealed class DocumentTextService
 
     // ==================== PDF ====================
 
-    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, IProgress<string>? progress, int maxOcrPages, CancellationToken ct)
     {
         progress?.Report("reading PDF text...");
         List<string> pages;
@@ -361,12 +363,12 @@ public sealed class DocumentTextService
         // Pages whose text layer is (nearly) empty are scans; a garbled text layer means every page is.
         var scanned = readable
             ? Enumerable.Range(1, pages.Count).Where(p => DocumentFileTypes.PdfPageNeedsOcr(pages[p - 1])).ToList()
-            : Enumerable.Range(1, pageCount > 0 ? pageCount : DocumentFileTypes.MaxOcrPages).ToList();
+            : Enumerable.Range(1, pageCount > 0 ? pageCount : maxOcrPages).ToList();
         if (scanned.Count == 0)
             return CreateResult(path, text, "");
 
         var allScanned = !readable || scanned.Count == pages.Count;
-        var toRead = scanned.Take(DocumentFileTypes.MaxOcrPages).ToList();
+        var toRead = scanned.Take(maxOcrPages).ToList();
         var ocr = await OcrPdfPagesAsync(path, toRead, pageCount, allScanned, progress, ct);
         var ocrLetters = ocr.Texts.Values.Sum(DocumentFileTypes.CountLetters);
 
@@ -401,8 +403,8 @@ public sealed class DocumentTextService
 
         var ocrPagesRead = ocr.Texts.Count;
         var notice = allScanned
-            ? DocumentFileTypes.BuildOcrPageNotice(ocrPagesRead, pageCount)
-            : DocumentFileTypes.BuildScannedPagesNotice(ocrPagesRead, scanned.Skip(DocumentFileTypes.MaxOcrPages).ToList());
+            ? DocumentFileTypes.BuildOcrPageNotice(ocrPagesRead, pageCount, maxOcrPages)
+            : DocumentFileTypes.BuildScannedPagesNotice(ocrPagesRead, scanned.Skip(maxOcrPages).ToList(), maxOcrPages);
         // Put the page coverage in the text too, so the model (and the phone, which only keeps
         // Text) knows which pages were not read.
         var body = OcrText.JoinPages(merged);

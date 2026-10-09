@@ -292,6 +292,20 @@ public class DocumentFileTypesTests
     }
 
     [Fact]
+    public void OcrPageLimitIn_ReadsTheLimitFromANoticeAtTheStart()
+    {
+        Assert.Equal(8, DocumentFileTypes.OcrPageLimitIn($"[{DocumentFileTypes.BuildOcrPageNotice(8, 30, 8)}]\n\nPage 1 text"));
+        Assert.Equal(8, DocumentFileTypes.OcrPageLimitIn($"[{DocumentFileTypes.BuildScannedPagesNotice(8, new[] { 12, 13 }, 8)}]\n\nText"));
+        Assert.Equal(200, DocumentFileTypes.OcrPageLimitIn($"[{DocumentFileTypes.BuildOcrPageNotice(200, 450, 200)}] Text"));
+        Assert.Equal(8, DocumentFileTypes.OcrPageLimitIn("[OCR read the first 8 of 20 pages of this image (OCR is limited to 8 pages).]\n\nText"));
+        // Every page read, no notice, or the words somewhere in the document itself.
+        Assert.Equal(0, DocumentFileTypes.OcrPageLimitIn($"[{DocumentFileTypes.BuildOcrPageNotice(5, 5, 8)}]\n\nText"));
+        Assert.Equal(0, DocumentFileTypes.OcrPageLimitIn("Plain text"));
+        Assert.Equal(0, DocumentFileTypes.OcrPageLimitIn("[Draft] Our scanner (OCR is limited to 8 pages) is slow."));
+        Assert.Equal(0, DocumentFileTypes.OcrPageLimitIn(null));
+    }
+
+    [Fact]
     public void OcrNoticeForAFullyReadScan()
     {
         Assert.Equal("Scanned PDF: OCR read all 3 pages.", DocumentFileTypes.BuildOcrPageNotice(3, 3, 8));

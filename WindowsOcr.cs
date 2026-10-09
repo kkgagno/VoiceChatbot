@@ -63,8 +63,8 @@ internal static class WindowsOcr
         return null;
     }
 
-    /// <summary>Reads the text in a picture. Up to MaxOcrPages frames of a multi-page TIFF are read.</summary>
-    public static async Task<ImageText> RecognizeImageAsync(OcrEngine engine, string path, IProgress<string>? progress, CancellationToken ct)
+    /// <summary>Reads the text in a picture. Up to <paramref name="maxPages"/> frames of a multi-page TIFF are read.</summary>
+    public static async Task<ImageText> RecognizeImageAsync(OcrEngine engine, string path, int maxPages, IProgress<string>? progress, CancellationToken ct)
     {
         var extension = Path.GetExtension(path);
         using var stream = await OpenReadAsync(path, ct);
@@ -86,7 +86,7 @@ internal static class WindowsOcr
 
         // An animated GIF is one picture; a TIFF fax or scan can hold several pages.
         var isGif = extension.Equals(".gif", StringComparison.OrdinalIgnoreCase);
-        var frameCount = isGif ? 1 : (int)Math.Min(decoder.FrameCount, (uint)DocumentFileTypes.MaxOcrPages);
+        var frameCount = isGif ? 1 : (int)Math.Min(decoder.FrameCount, (uint)Math.Max(1, maxPages));
         var pages = new List<(int Page, string Text)>();
         for (var i = 0; i < frameCount; i++)
         {
@@ -106,7 +106,7 @@ internal static class WindowsOcr
             return new ImageText("", DocumentFileTypes.NoTextInImageMessage, DocumentReadProblem.NoTextInImage);
 
         if (decoder.FrameCount > frameCount && !isGif)
-            text = $"[OCR read the first {frameCount} of {decoder.FrameCount} pages of this image (OCR is limited to {DocumentFileTypes.MaxOcrPages} pages).]\n\n{text}";
+            text = $"[OCR read the first {frameCount} of {decoder.FrameCount} pages of this image (OCR is limited to {maxPages} pages).]\n\n{text}";
         return new ImageText(text, "", DocumentReadProblem.None);
     }
 

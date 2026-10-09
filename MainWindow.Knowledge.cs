@@ -81,7 +81,10 @@ public partial class MainWindow
         UpdateKnowledgeControls();
     }
 
-    private void KnowledgeFolderBox_LostFocus(object sender, RoutedEventArgs e) => CommitKnowledgeFolder(startIndexing: true);
+    // Pressing Reindex takes the focus on mouse-down; its Click then indexes the new folder. Starting here
+    // would turn the button into Stop before the click lands, and the click would stop the run.
+    private void KnowledgeFolderBox_LostFocus(object sender, RoutedEventArgs e) =>
+        CommitKnowledgeFolder(startIndexing: !ReferenceEquals(Keyboard.FocusedElement, KnowledgeReindexBtn));
 
     private void KnowledgeFolderBox_KeyDown(object sender, KeyEventArgs e)
     {
@@ -340,8 +343,12 @@ public partial class MainWindow
     /// whole folder when it fits about a third of the context window (Core/KnowledgeContext); the chat
     /// notes which files were used. Shared by the desktop chat and the phone remote and safe on any
     /// thread. Best effort: if anything goes wrong the request simply goes without it.
+    /// <paramref name="modelUserText"/> is the text the request sizes its reply for (a "continue" becomes
+    /// an instruction that reserves the longer code reply) and <paramref name="documentContext"/> the
+    /// attached-document text added to the same message after this; the budget leaves room for both.
     /// </summary>
-    private async Task AddKnowledgeContextAsync(List<ChatMessage> messages, string? userText, string model, CancellationToken ct)
+    private async Task AddKnowledgeContextAsync(List<ChatMessage> messages, string? userText, string? modelUserText,
+        string? documentContext, string model, CancellationToken ct)
     {
         if (!_settings.KnowledgeEnabled || messages.Count == 0 || string.IsNullOrWhiteSpace(userText) || IsLargePaste(userText))
             return;
@@ -360,8 +367,8 @@ public partial class MainWindow
 
             // The same (cached) detection the request itself uses right after this.
             var contextTokens = await GetContextTokensForRequestAsync(model, ct);
-            var budget = KnowledgeContext.BudgetTokens(contextTokens, GetMaxTokensForRequest(userText, contextTokens),
-                EstimateTextTokens(GetLastUserMessageContent(messages)));
+            var budget = KnowledgeContext.BudgetTokens(contextTokens, GetMaxTokensForRequest(modelUserText ?? userText, contextTokens),
+                EstimateTextTokens(GetLastUserMessageContent(messages)) + EstimateTextTokens(documentContext));
 
             var context = await Task.Run(() => _knowledge.BuildContext(folder, query, followUp, minExcerpts, budget), ct);
             if (context.Mode == KnowledgeContextMode.None || !AppendToCurrentUserMessage(messages, context.Text))

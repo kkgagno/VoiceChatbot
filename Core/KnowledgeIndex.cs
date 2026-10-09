@@ -33,6 +33,14 @@ public sealed class KnowledgeFileRecord
     /// </summary>
     [JsonIgnore]
     public bool HasNoText => Chunks.Count == 0 && Problem is DocumentReadProblem.NoText or DocumentReadProblem.NoTextInImage;
+
+    /// <summary>
+    /// True when OCR left pages out at a lower page limit than the knowledge folder now uses (a scan
+    /// indexed when only its first 8 pages were read), so a manual reindex reads it again.
+    /// </summary>
+    [JsonIgnore]
+    public bool OcrCutShort => Chunks.Count > 0 &&
+                               DocumentFileTypes.OcrPageLimitIn(Chunks[0]) is > 0 and < DocumentFileTypes.MaxKnowledgeOcrPages;
 }
 
 /// <summary>A supported file found by a folder scan.</summary>
@@ -166,8 +174,9 @@ public sealed class KnowledgeIndex
     /// <summary>
     /// Compares a folder scan with the index: new files and files whose size or write time changed must
     /// be read, indexed files missing from the scan are gone. With <paramref name="retryFailed"/>, files
-    /// that could not be read last time are read again too (e.g. after installing an OCR language);
-    /// files that were read and have no text (<see cref="KnowledgeFileRecord.HasNoText"/>) are not.
+    /// that could not be read last time are read again too (e.g. after installing an OCR language), and
+    /// so are scans whose OCR stopped early (<see cref="KnowledgeFileRecord.OcrCutShort"/>); files that
+    /// were read and have no text (<see cref="KnowledgeFileRecord.HasNoText"/>) are not.
     /// </summary>
     public KnowledgeIndexPlan Plan(IEnumerable<KnowledgeFileStamp> scannedFiles, bool retryFailed = false)
     {
@@ -182,7 +191,7 @@ public sealed class KnowledgeIndex
                     continue;
 
                 if (_files.TryGetValue(file.Path, out var record) && IsCurrent(record, file) &&
-                    !(retryFailed && record.Chunks.Count == 0 && !record.HasNoText))
+                    !(retryFailed && ((record.Chunks.Count == 0 && !record.HasNoText) || record.OcrCutShort)))
                     unchanged++;
                 else
                     toRead.Add(file);

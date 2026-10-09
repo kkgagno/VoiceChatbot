@@ -196,6 +196,23 @@ public class KnowledgeIndexTests
     }
 
     [Fact]
+    public void Plan_RereadsScansWhoseOcrStoppedAtALowerPageLimitOnRequest()
+    {
+        var index = new KnowledgeIndex(Root);
+        KnowledgeFileRecord Scan(string name, string notice) =>
+            Record(P(name), KnowledgeIndex.ChunkText($"[{notice}]\n\nArticle 1. Pets are allowed.").ToArray());
+        index.Upsert(Scan("declaration.pdf", DocumentFileTypes.BuildOcrPageNotice(8, 40, DocumentFileTypes.MaxOcrPages)));
+        index.Upsert(Scan("huge.pdf", DocumentFileTypes.BuildOcrPageNotice(
+            DocumentFileTypes.MaxKnowledgeOcrPages, 900, DocumentFileTypes.MaxKnowledgeOcrPages)));
+        index.Upsert(Scan("short.pdf", DocumentFileTypes.BuildOcrPageNotice(5, 5, DocumentFileTypes.MaxOcrPages)));
+        var scan = index.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc)).ToList();
+
+        Assert.False(index.Plan(scan).HasChanges);
+        // Read again only when the knowledge folder's limit reads more of it.
+        Assert.Equal(new[] { P("declaration.pdf") }, index.Plan(scan, retryFailed: true).ToRead.Select(f => f.Path));
+    }
+
+    [Fact]
     public void UpsertRemoveAndCounts()
     {
         var index = SampleIndex();

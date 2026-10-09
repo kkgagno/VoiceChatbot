@@ -447,7 +447,7 @@ public sealed class KnowledgeService
         DocumentTextResult result;
         try
         {
-            result = await _extractor.ExtractAsync(file.Path, ct, progress).ConfigureAwait(false);
+            result = await _extractor.ExtractAsync(file.Path, ct, progress, DocumentFileTypes.MaxKnowledgeOcrPages).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
