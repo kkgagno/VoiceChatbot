@@ -144,7 +144,7 @@ public sealed class KnowledgeFileRow
             KnowledgeFileState.Indexed => "good",
             KnowledgeFileState.Unreadable => "bad",
             KnowledgeFileState.TooLarge => "warn",
-            KnowledgeFileState.Unsupported => "muted",
+            KnowledgeFileState.Unsupported or KnowledgeFileState.NoText => "muted",
             _ => ""
         };
     }

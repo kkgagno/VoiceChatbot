@@ -9,7 +9,8 @@ namespace VoiceChatbot;
 
 /// <summary>
 /// What a knowledge folder scan found out about one file. The order is the "by status" sort order:
-/// problems first, then files that were skipped on purpose, then indexed files.
+/// problems first, then files that were skipped on purpose, files that have no text (a photo without
+/// words), then indexed files.
 /// </summary>
 public enum KnowledgeFileState
 {
@@ -17,6 +18,7 @@ public enum KnowledgeFileState
     TooLarge,
     Pending,
     Unsupported,
+    NoText,
     Indexed
 }
 
@@ -29,8 +31,11 @@ public sealed record KnowledgeFileEntry(string Path, KnowledgeFileState State, i
 /// </summary>
 public sealed record KnowledgeFileList(string Folder, IReadOnlyList<KnowledgeFileEntry> Entries, int UnlistedSkipped = 0, bool Scanned = true);
 
-/// <summary>How many skipped files have one extension (".jpg"); "" for files without one.</summary>
-public readonly record struct KnowledgeExtensionCount(string Extension, int Count);
+/// <summary>
+/// How many skipped files have one type (<see cref="KnowledgeReport.SkippedTypeOf"/>: "video", "archive",
+/// "DAT"); "" for files without an extension.
+/// </summary>
+public readonly record struct KnowledgeTypeCount(string Type, int Count);
 
 public enum KnowledgeReindexOutcome
 {
@@ -62,9 +67,11 @@ public sealed record KnowledgeReindexResult
     public int FailedThisRun { get; init; }
     /// <summary>Indexed files that are no longer in the folder.</summary>
     public int Removed { get; init; }
-    /// <summary>Every file in the index that gave no text (not only this run's), with its reason.</summary>
+    /// <summary>Every file in the index that could not be read (not only this run's), with its reason.</summary>
     public IReadOnlyList<KnowledgeFileEntry> Unreadable { get; init; } = Array.Empty<KnowledgeFileEntry>();
-    public IReadOnlyList<KnowledgeExtensionCount> Skipped { get; init; } = Array.Empty<KnowledgeExtensionCount>();
+    /// <summary>Every file in the index that was read and has no text: photos without words, empty files.</summary>
+    public IReadOnlyList<KnowledgeFileEntry> NoText { get; init; } = Array.Empty<KnowledgeFileEntry>();
+    public IReadOnlyList<KnowledgeTypeCount> Skipped { get; init; } = Array.Empty<KnowledgeTypeCount>();
     public IReadOnlyList<KnowledgeFileEntry> TooLarge { get; init; } = Array.Empty<KnowledgeFileEntry>();
     public bool ScanTruncated { get; init; }
     public bool IndexFull { get; init; }
@@ -86,8 +93,8 @@ public static class KnowledgeReport
     public const int MaxFiles = 10_000;
     public const int MaxTotalChunks = 50_000;
 
-    /// <summary>Extensions named in the status line and chat summary; the rest are counted as "other".</summary>
-    public const int MaxExtensionGroups = 3;
+    /// <summary>File types named in the status line and chat summary; the rest are counted as "other".</summary>
+    public const int MaxTypeGroups = 3;
     /// <summary>Unreadable files named in the chat summary.</summary>
     public const int MaxNamedUnreadable = 3;
 
@@ -95,34 +102,52 @@ public static class KnowledgeReport
 
     // ==================== Skipped files ====================
 
-    /// <summary>Skipped files counted per lowercased extension, most common first (then alphabetical).</summary>
-    public static IReadOnlyList<KnowledgeExtensionCount> CountByExtension(IEnumerable<string>? paths)
+    // Type names of the indexed extensions ("Excel", "text", "image"...). A skipped type with one of
+    // these names is named by its extension instead, so a skipped .xlsb is not "1 Excel" next to the
+    // Excel files that were indexed.
+    private static readonly HashSet<string> IndexedTypeNames = new(
+        DocumentFileTypes.KnowledgeExtensions.Select(DocumentFileTypes.GetTypeName), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The type a skipped file is counted under: <see cref="DocumentFileTypes.GetTypeName"/> ("video",
+    /// "archive", "Pages", "DAT" for an unknown .dat), or the extension in capitals ("XLSB", "PY") when
+    /// that name is also the name of an indexed type. "" for a file without an extension.
+    /// </summary>
+    public static string SkippedTypeOf(string? path)
+    {
+        var extension = ExtensionOf(path);
+        if (extension.Length == 0)
+            return "";
+
+        var name = DocumentFileTypes.GetTypeName(extension);
+        return IndexedTypeNames.Contains(name) ? extension.TrimStart('.').ToUpperInvariant() : name;
+    }
+
+    /// <summary>Skipped files counted per <see cref="SkippedTypeOf"/>, most common first (then alphabetical).</summary>
+    public static IReadOnlyList<KnowledgeTypeCount> CountByType(IEnumerable<string>? paths)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var path in paths ?? Enumerable.Empty<string>())
-        {
-            var extension = ExtensionOf(path);
-            counts[extension] = counts.TryGetValue(extension, out var n) ? n + 1 : 1;
-        }
+            AddToCounts(counts, path);
 
         return SortCounts(counts);
     }
 
-    /// <summary>Adds one file to a running per-extension count (a scan counts without keeping every path).</summary>
+    /// <summary>Adds one file to a running per-type count (a scan counts without keeping every path).</summary>
     public static void AddToCounts(Dictionary<string, int> counts, string path)
     {
         ArgumentNullException.ThrowIfNull(counts);
-        var extension = ExtensionOf(path);
-        counts[extension] = counts.TryGetValue(extension, out var n) ? n + 1 : 1;
+        var type = SkippedTypeOf(path);
+        counts[type] = counts.TryGetValue(type, out var n) ? n + 1 : 1;
     }
 
-    public static IReadOnlyList<KnowledgeExtensionCount> SortCounts(IReadOnlyDictionary<string, int> counts) =>
+    public static IReadOnlyList<KnowledgeTypeCount> SortCounts(IReadOnlyDictionary<string, int> counts) =>
         counts
             .Where(c => c.Value > 0)
-            .Select(c => new KnowledgeExtensionCount(c.Key, c.Value))
+            .Select(c => new KnowledgeTypeCount(c.Key, c.Value))
             .OrderByDescending(c => c.Count)
-            .ThenBy(c => c.Extension.Length == 0 ? 1 : 0)
-            .ThenBy(c => c.Extension, StringComparer.Ordinal)
+            .ThenBy(c => c.Type.Length == 0 ? 1 : 0)
+            .ThenBy(c => c.Type, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
     /// <summary>The lowercased extension (".pdf"), or "" when the name has none.</summary>
@@ -132,8 +157,8 @@ public static class KnowledgeReport
         return string.IsNullOrEmpty(extension) || extension == "." ? "" : extension.ToLowerInvariant();
     }
 
-    /// <summary>"12 .jpg, 6 .xlsx, 5 .doc", with the rest as "4 other" past <paramref name="maxGroups"/> extensions.</summary>
-    public static string FormatExtensionCounts(IReadOnlyList<KnowledgeExtensionCount>? counts, int maxGroups = MaxExtensionGroups)
+    /// <summary>"12 video, 6 archive, 5 DAT", with the rest as "4 other" past <paramref name="maxGroups"/> types.</summary>
+    public static string FormatTypeCounts(IReadOnlyList<KnowledgeTypeCount>? counts, int maxGroups = MaxTypeGroups)
     {
         if (counts == null || counts.Count == 0)
             return "";
@@ -141,27 +166,51 @@ public static class KnowledgeReport
         maxGroups = Math.Max(1, maxGroups);
         // "4 other" is only worth it for two or more groups; otherwise name the last one too.
         var shown = counts.Count <= maxGroups + 1 ? counts.Count : maxGroups;
-        var parts = counts.Take(shown).Select(c => $"{c.Count:N0} {ExtensionLabel(c.Extension)}").ToList();
+        var parts = counts.Take(shown).Select(c => $"{c.Count:N0} {TypeLabel(c.Type)}").ToList();
         var other = counts.Skip(shown).Sum(c => c.Count);
         if (other > 0)
             parts.Add($"{other:N0} other");
         return string.Join(", ", parts);
     }
 
-    /// <summary>The status line part for skipped files: "23 skipped: 12 .jpg, 6 .xlsx, 5 .doc".</summary>
-    public static string FormatSkippedStatus(IReadOnlyList<KnowledgeExtensionCount>? counts)
+    /// <summary>The status line part for skipped files: "23 skipped: 12 video, 6 archive, 5 DAT".</summary>
+    public static string FormatSkippedStatus(IReadOnlyList<KnowledgeTypeCount>? counts)
     {
         var total = counts?.Sum(c => c.Count) ?? 0;
-        return total == 0 ? "" : $"{total:N0} skipped: {FormatExtensionCounts(counts)}";
+        return total == 0 ? "" : $"{total:N0} skipped: {FormatTypeCounts(counts)}";
     }
 
-    private static string ExtensionLabel(string extension) => extension.Length == 0 ? "without extension" : extension;
+    private static string TypeLabel(string type) => type.Length == 0 ? "without extension" : type;
+
+    // ==================== Files without text ====================
+
+    /// <summary>"40 pictures without text" when they are all pictures, else "3 without text"; "" for none.</summary>
+    public static string FormatNoTextStatus(IReadOnlyCollection<KnowledgeFileEntry>? noText)
+    {
+        var count = noText?.Count ?? 0;
+        if (count == 0)
+            return "";
+        return AllPictures(noText!) ? $"{Plural(count, "picture")} without text" : $"{count:N0} without text";
+    }
+
+    /// <summary>"40 image files", or "5 files (3 image, 2 PDF)" for several types (DocumentFileTypes.GetTypeName).</summary>
+    public static string DescribeNoTextFiles(IReadOnlyCollection<KnowledgeFileEntry>? noText)
+    {
+        var list = noText ?? Array.Empty<KnowledgeFileEntry>();
+        var types = list.Select(f => DocumentFileTypes.GetTypeName(f.Path)).Distinct(StringComparer.Ordinal).ToList();
+        return types.Count == 1
+            ? $"{list.Count:N0} {types[0]} {(list.Count == 1 ? "file" : "files")}"
+            : $"{Plural(list.Count, "file")} ({DocumentFileTypes.DescribeTypeCounts(list.Select(f => f.Path), MaxTypeGroups)})";
+    }
+
+    private static bool AllPictures(IEnumerable<KnowledgeFileEntry> entries) =>
+        entries.All(e => DocumentFileTypes.IsImageExtension(System.IO.Path.GetExtension(e.Path)));
 
     // ==================== Status line and tooltip ====================
 
     /// <summary>
     /// The status line after a reindex (or for a saved index): "18 files, 412 chunks · checked today
-    /// 11:52 PM · 1 could not be read · 23 skipped: 12 .jpg, 6 .xlsx, 5 .doc".
+    /// 11:52 PM · 1 could not be read · 40 pictures without text · 5 skipped: 3 video, 2 archive".
     /// </summary>
     public static string FormatStatus(KnowledgeReindexResult result, DateTime nowLocal)
     {
@@ -172,6 +221,9 @@ public static class KnowledgeReport
 
         if (result.Unreadable.Count > 0)
             text += $" · {result.Unreadable.Count:N0} could not be read";
+        var noText = FormatNoTextStatus(result.NoText);
+        if (noText.Length > 0)
+            text += " · " + noText;
         var skipped = FormatSkippedStatus(result.Skipped);
         if (skipped.Length > 0)
             text += " · " + skipped;
@@ -206,8 +258,20 @@ public static class KnowledgeReport
             sections.Add("Could not read (Reindex tries these again):\n" + string.Join("\n", lines));
         }
 
+        if (result.NoText.Count > 0)
+        {
+            var names = result.NoText
+                .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+                .Take(maxListed)
+                .Select(f => KnowledgeIndex.DisplayName(f.Path, result.Folder))
+                .ToList();
+            if (result.NoText.Count > maxListed)
+                names.Add($"...and {result.NoText.Count - maxListed:N0} more");
+            sections.Add($"No text found in {DescribeNoTextFiles(result.NoText)}:\n" + string.Join(", ", names));
+        }
+
         if (result.SkippedCount > 0)
-            sections.Add("Skipped, type not supported: " + FormatExtensionCounts(result.Skipped, maxGroups: 8));
+            sections.Add("Skipped, type not supported: " + FormatTypeCounts(result.Skipped, maxGroups: 8));
 
         if (result.TooLarge.Count > 0)
         {
@@ -239,9 +303,9 @@ public static class KnowledgeReport
 
     /// <summary>
     /// The one-line chat message after a reindex the user asked for, e.g. "Knowledge folder: 18 files
-    /// indexed (412 chunks), 2 new or changed. Skipped 23 (12 .jpg, 6 .xlsx, 5 .doc: not supported).
-    /// Could not read 1: scan.pdf (no text)." or "Knowledge folder is up to date: 18 files (412 chunks),
-    /// checked 11:52 PM.". "" for a reindex without a folder.
+    /// indexed (412 chunks), 2 new or changed. Skipped 5 (3 video, 2 archive: not supported).
+    /// Could not read 1: scan.pdf (no text). No text found in 40 image files." or "Knowledge folder is
+    /// up to date: 18 files (412 chunks), checked 11:52 PM.". "" for a reindex without a folder.
     /// </summary>
     public static string FormatChatSummary(KnowledgeReindexResult result)
     {
@@ -285,7 +349,7 @@ public static class KnowledgeReport
 
         var skippedParts = new List<string>();
         if (result.SkippedCount > 0)
-            skippedParts.Add($"{result.SkippedCount:N0} ({FormatExtensionCounts(result.Skipped)}: not supported)");
+            skippedParts.Add($"{result.SkippedCount:N0} ({FormatTypeCounts(result.Skipped)}: not supported)");
         if (result.TooLarge.Count > 0)
             skippedParts.Add($"{result.TooLarge.Count:N0} over {MaxFileSizeText}");
         if (skippedParts.Count > 0)
@@ -304,6 +368,9 @@ public static class KnowledgeReport
                 sb.Append($" and {more:N0} more");
             sb.Append('.');
         }
+
+        if (result.NoText.Count > 0)
+            sb.Append($" No text found in {DescribeNoTextFiles(result.NoText)}.");
 
         if (result.ScanTruncated)
             sb.Append($" Stopped at {MaxFiles:N0} files: pick a smaller folder to include the rest.");
@@ -326,15 +393,31 @@ public static class KnowledgeReport
         var end = text.IndexOf(". ", StringComparison.Ordinal);
         if (end > 0)
             text = text[..end];
+        // So does the part before a colon in the reader's "cause: advice" errors ("Old Excel format (.xls)
+        // and no Windows text filter is installed: save it as .xlsx..."), but not in "OCR unavailable: ...".
+        var colon = text.IndexOf(": ", StringComparison.Ordinal);
+        if (colon >= MinCauseChars)
+            text = text[..colon];
         text = text.TrimEnd('.', ' ');
 
         if (text.Length > maxChars)
             text = text[..Math.Max(1, maxChars - 3)].TrimEnd() + "...";
-        // "File not found" -> "file not found", but keep "OCR unavailable".
-        if (text.Length > 1 && char.IsUpper(text[0]) && char.IsLower(text[1]))
+        // "File not found" -> "file not found", but keep "OCR unavailable" and "Windows can't open...".
+        if (text.Length > 1 && char.IsUpper(text[0]) && char.IsLower(text[1]) &&
+            !ProductNames.Contains(new string(text.TakeWhile(char.IsLetter).ToArray())))
             text = char.ToLowerInvariant(text[0]) + text[1..];
         return text;
     }
+
+    // A cause shorter than this before ": " is a label ("OCR unavailable: could not find tesseract.exe").
+    private const int MinCauseChars = 20;
+
+    // Names that keep their capital at the start of a short reason.
+    private static readonly HashSet<string> ProductNames = new(StringComparer.Ordinal)
+    {
+        "Windows", "Microsoft", "Office", "OneDrive", "OneNote", "Word", "WordPerfect", "Excel", "PowerPoint",
+        "Outlook", "Publisher", "Visio", "Apple", "Poppler", "Tesseract"
+    };
 
     // ==================== Files list ====================
 
@@ -348,13 +431,16 @@ public static class KnowledgeReport
             KnowledgeFileState.Unreadable => $"Could not read - {ShortReason(entry.Reason)}",
             KnowledgeFileState.TooLarge => $"Too large - {FormatSize(entry.Size)} (limit {MaxFileSizeText})",
             KnowledgeFileState.Pending => string.IsNullOrWhiteSpace(entry.Reason) ? "Not read yet" : $"Not read yet - {entry.Reason}",
+            KnowledgeFileState.NoText => DocumentFileTypes.IsImageExtension(System.IO.Path.GetExtension(entry.Path))
+                ? "No text - no words in the picture"
+                : "No text - nothing to index",
             _ => "Skipped - type not supported"
         };
     }
 
     /// <summary>
     /// Sorts the Files list. By status: problems first (could not read, too large, not read yet), then
-    /// skipped, then indexed, each by name. By type: by extension, then name. Descending reverses it.
+    /// skipped, then files without text, then indexed, each by name. By type: by extension, then name. Descending reverses it.
     /// </summary>
     public static IReadOnlyList<KnowledgeFileEntry> Sort(IEnumerable<KnowledgeFileEntry>? entries, KnowledgeFileSort sort,
         bool descending = false, string? folder = null)
@@ -377,7 +463,7 @@ public static class KnowledgeReport
     }
 
     /// <summary>
-    /// The Files list entries: each file in the index (indexed, or could not be read with its reason),
+    /// The Files list entries: each file in the index (indexed, no text, or could not be read with its reason),
     /// then the scan's other files (<paramref name="scanEntries"/>: unsupported, too large, not read
     /// yet) that are not in the index.
     /// </summary>
@@ -393,7 +479,8 @@ public static class KnowledgeReport
                     continue;
                 entries.Add(file.Chunks.Count > 0
                     ? new KnowledgeFileEntry(file.Path, KnowledgeFileState.Indexed, file.Chunks.Count, file.Size)
-                    : new KnowledgeFileEntry(file.Path, KnowledgeFileState.Unreadable, 0, file.Size, ReasonOrDefault(file.Error)));
+                    : new KnowledgeFileEntry(file.Path, file.HasNoText ? KnowledgeFileState.NoText : KnowledgeFileState.Unreadable,
+                        0, file.Size, ReasonOrDefault(file.Error)));
             }
         }
 
@@ -419,6 +506,9 @@ public static class KnowledgeReport
         var skipped = Count(KnowledgeFileState.Unsupported) + Math.Max(0, unlistedSkipped);
         if (skipped > 0)
             parts.Add($"{skipped:N0} skipped (type not supported)");
+        var noText = Count(KnowledgeFileState.NoText);
+        if (noText > 0)
+            parts.Add($"{noText:N0} without text");
         var tooLarge = Count(KnowledgeFileState.TooLarge);
         if (tooLarge > 0)
             parts.Add($"{tooLarge:N0} too large");

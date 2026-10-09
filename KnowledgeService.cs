@@ -15,9 +15,9 @@ public sealed record KnowledgeStatus(bool IsIndexing, string Message, string Det
 /// Keeps the knowledge folder index (Core/KnowledgeIndex) up to date and searchable. A reindex runs on
 /// the thread pool, reads only new or changed files with DocumentTextService, skips files over 25 MB
 /// and saves the index to %APPDATA%\VoiceChatbot\knowledge-index.json. Every file the scan sees is
-/// accounted for (indexed, unreadable, unsupported type, too large) for the status line and the Files
-/// list. BuildContext can be called from any thread, also while a reindex runs; it uses the last
-/// published index, which is never changed again.
+/// accounted for (indexed, unreadable, no text, unsupported type, too large) for the status line and
+/// the Files list. BuildContext can be called from any thread, also while a reindex runs; it uses the
+/// last published index, which is never changed again.
 /// </summary>
 public sealed class KnowledgeService
 {
@@ -211,7 +211,8 @@ public sealed class KnowledgeService
                 working.Upsert(record);
                 changed = true;
                 run.Read++;
-                if (record.Chunks.Count == 0)
+                // A photo without words was read fine; only real failures make a background run speak up.
+                if (record.Chunks.Count == 0 && !record.HasNoText)
                     run.Failed++;
 
                 if (sincePublish.Elapsed >= PublishInterval)
@@ -278,12 +279,15 @@ public sealed class KnowledgeService
     private static KnowledgeReindexResult BuildResult(KnowledgeReindexOutcome outcome, string root, KnowledgeIndex? index,
         ScanReport? scan, RunCounts run)
     {
-        var unreadable = index == null
-            ? new List<KnowledgeFileEntry>()
-            : index.Files
-                .Where(f => f.Chunks.Count == 0)
-                .Select(f => new KnowledgeFileEntry(f.Path, KnowledgeFileState.Unreadable, 0, f.Size, f.Error ?? ""))
-                .ToList();
+        var unreadable = new List<KnowledgeFileEntry>();
+        var noText = new List<KnowledgeFileEntry>();
+        foreach (var f in index?.Files.Where(f => f.Chunks.Count == 0) ?? Enumerable.Empty<KnowledgeFileRecord>())
+        {
+            if (f.HasNoText)
+                noText.Add(new KnowledgeFileEntry(f.Path, KnowledgeFileState.NoText, 0, f.Size, f.Error ?? ""));
+            else
+                unreadable.Add(new KnowledgeFileEntry(f.Path, KnowledgeFileState.Unreadable, 0, f.Size, f.Error ?? ""));
+        }
 
         return new KnowledgeReindexResult
         {
@@ -296,7 +300,8 @@ public sealed class KnowledgeService
             FailedThisRun = run.Failed,
             Removed = run.Removed,
             Unreadable = unreadable,
-            Skipped = scan?.SkippedCounts ?? Array.Empty<KnowledgeExtensionCount>(),
+            NoText = noText,
+            Skipped = scan?.SkippedCounts ?? Array.Empty<KnowledgeTypeCount>(),
             TooLarge = scan?.TooLarge ?? Array.Empty<KnowledgeFileEntry>(),
             ScanTruncated = scan?.Truncated ?? false,
             IndexFull = run.IndexFull,
@@ -364,7 +369,7 @@ public sealed class KnowledgeService
         IReadOnlyList<KnowledgeFileStamp> Files,
         IReadOnlyList<KnowledgeFileEntry> Skipped,
         int SkippedTotal,
-        IReadOnlyList<KnowledgeExtensionCount> SkippedCounts,
+        IReadOnlyList<KnowledgeTypeCount> SkippedCounts,
         IReadOnlyList<KnowledgeFileEntry> TooLarge,
         bool Truncated)
     {
@@ -447,6 +452,7 @@ public sealed class KnowledgeService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             record.Error = ex.Message;
+            record.Problem = DocumentReadProblem.Failed;
             return record;
         }
 
@@ -459,7 +465,12 @@ public sealed class KnowledgeService
 
         record.Chunks = KnowledgeIndex.ChunkText(text);
         if (record.Chunks.Count == 0)
+        {
             record.Error = string.IsNullOrWhiteSpace(result.Error) ? "No readable text." : result.Error;
+            // The reader says why ("NoTextInImage" for a photo without words), so the status can tell a
+            // file without text from one that failed. A read that "worked" but left only blanks has no text.
+            record.Problem = result.Problem == DocumentReadProblem.None ? DocumentReadProblem.NoText : result.Problem;
+        }
         return record;
     }
 

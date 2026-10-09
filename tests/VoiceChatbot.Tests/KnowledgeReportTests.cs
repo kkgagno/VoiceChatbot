@@ -9,11 +9,15 @@ public class KnowledgeReportTests
 
     private static string P(params string[] parts) => Path.Combine(new[] { Root }.Concat(parts).ToArray());
 
-    private static IReadOnlyList<KnowledgeExtensionCount> TownhouseSkipped() =>
-        KnowledgeReport.CountByExtension(
-            Enumerable.Repeat(P("photo.JPG"), 12)
-                .Concat(Enumerable.Repeat(P("budget.xlsx"), 6))
-                .Concat(Enumerable.Repeat(P("old.doc"), 5)));
+    private static IReadOnlyList<KnowledgeTypeCount> TownhouseSkipped() =>
+        KnowledgeReport.CountByType(
+            Enumerable.Repeat(P("walkthrough.MP4"), 8)
+                .Concat(Enumerable.Repeat(P("leak.mov"), 4))
+                .Concat(Enumerable.Repeat(P("photos.zip"), 6))
+                .Concat(Enumerable.Repeat(P("meter.dat"), 5)));
+
+    private static KnowledgeFileEntry NoText(string name) =>
+        new(P(name), KnowledgeFileState.NoText, Reason: "No text was found in this picture.");
 
     private static KnowledgeReindexResult Result(int filesRead = 2) => new()
     {
@@ -33,46 +37,84 @@ public class KnowledgeReportTests
     // ==================== Skipped files ====================
 
     [Fact]
-    public void CountByExtension_GroupsLowercasedMostCommonFirst()
+    public void CountByType_GroupsByTypeNameMostCommonFirst()
     {
-        var counts = KnowledgeReport.CountByExtension(new[] { "a.JPG", "b.jpg", "c.xlsx", "README", "d.zip", "e.zip", "f.jpg" });
+        var counts = KnowledgeReport.CountByType(new[] { "a.MP4", "b.mov", "c.pages", "README", "d.zip", "e.7z", "f.mkv" });
 
         Assert.Equal(new[]
         {
-            new KnowledgeExtensionCount(".jpg", 3),
-            new KnowledgeExtensionCount(".zip", 2),
-            new KnowledgeExtensionCount(".xlsx", 1),
-            new KnowledgeExtensionCount("", 1),
+            new KnowledgeTypeCount("video", 3),
+            new KnowledgeTypeCount("archive", 2),
+            new KnowledgeTypeCount("Pages", 1),
+            new KnowledgeTypeCount("", 1),
         }, counts);
-        Assert.Empty(KnowledgeReport.CountByExtension(null));
+        Assert.Empty(KnowledgeReport.CountByType(null));
     }
 
+    [Theory]
+    [InlineData("clip.mp4", "video")]
+    [InlineData("song.MP3", "audio")]
+    [InlineData("photos.zip", "archive")]
+    [InlineData("budget.numbers", "Numbers")]
+    [InlineData("flyer.pub", "Publisher")]
+    [InlineData("meter.dat", "DAT")]
+    // Readable types the folder does not index are named by extension, not as "Excel", "text" or "image".
+    [InlineData("big.xlsb", "XLSB")]
+    [InlineData("script.py", "PY")]
+    [InlineData("download.jfif", "JFIF")]
+    [InlineData("README", "")]
+    [InlineData(null, "")]
+    public void SkippedTypeOf(string? path, string expected) => Assert.Equal(expected, KnowledgeReport.SkippedTypeOf(path));
+
     [Fact]
-    public void AddToCounts_MatchesCountByExtension()
+    public void AddToCounts_MatchesCountByType()
     {
+        var paths = new[] { "a.mp4", "b.MOV", "c.zip", "d.dat" };
         var running = new Dictionary<string, int>();
-        foreach (var path in new[] { "a.png", "b.PNG", "c.mov" })
+        foreach (var path in paths)
             KnowledgeReport.AddToCounts(running, path);
 
-        Assert.Equal(KnowledgeReport.CountByExtension(new[] { "a.png", "b.PNG", "c.mov" }), KnowledgeReport.SortCounts(running));
+        Assert.Equal(KnowledgeReport.CountByType(paths), KnowledgeReport.SortCounts(running));
     }
 
     [Fact]
-    public void FormatExtensionCounts_NamesTheTopThreeAndCountsTheRest()
+    public void FormatTypeCounts_NamesTheTopThreeAndCountsTheRest()
     {
-        Assert.Equal("12 .jpg, 6 .xlsx, 5 .doc", KnowledgeReport.FormatExtensionCounts(TownhouseSkipped()));
-        Assert.Equal("23 skipped: 12 .jpg, 6 .xlsx, 5 .doc", KnowledgeReport.FormatSkippedStatus(TownhouseSkipped()));
+        Assert.Equal("12 video, 6 archive, 5 DAT", KnowledgeReport.FormatTypeCounts(TownhouseSkipped()));
+        Assert.Equal("23 skipped: 12 video, 6 archive, 5 DAT", KnowledgeReport.FormatSkippedStatus(TownhouseSkipped()));
 
         // A fourth group is named rather than called "1 other".
-        var four = TownhouseSkipped().Append(new KnowledgeExtensionCount(".zip", 1)).ToList();
-        Assert.Equal("12 .jpg, 6 .xlsx, 5 .doc, 1 .zip", KnowledgeReport.FormatExtensionCounts(four));
+        var four = TownhouseSkipped().Append(new KnowledgeTypeCount("audio", 1)).ToList();
+        Assert.Equal("12 video, 6 archive, 5 DAT, 1 audio", KnowledgeReport.FormatTypeCounts(four));
 
-        var five = four.Append(new KnowledgeExtensionCount("", 2)).ToList();
-        Assert.Equal("12 .jpg, 6 .xlsx, 5 .doc, 3 other", KnowledgeReport.FormatExtensionCounts(five));
-        Assert.Equal("1 without extension", KnowledgeReport.FormatExtensionCounts(new[] { new KnowledgeExtensionCount("", 1) }));
+        var five = four.Append(new KnowledgeTypeCount("", 2)).ToList();
+        Assert.Equal("12 video, 6 archive, 5 DAT, 3 other", KnowledgeReport.FormatTypeCounts(five));
+        Assert.Equal("1 without extension", KnowledgeReport.FormatTypeCounts(new[] { new KnowledgeTypeCount("", 1) }));
 
-        Assert.Equal("", KnowledgeReport.FormatExtensionCounts(null));
-        Assert.Equal("", KnowledgeReport.FormatSkippedStatus(Array.Empty<KnowledgeExtensionCount>()));
+        Assert.Equal("", KnowledgeReport.FormatTypeCounts(null));
+        Assert.Equal("", KnowledgeReport.FormatSkippedStatus(Array.Empty<KnowledgeTypeCount>()));
+    }
+
+    // ==================== Files without text ====================
+
+    [Fact]
+    public void FormatNoTextStatus_SaysPicturesWhenTheyAreAllPictures()
+    {
+        var photos = Enumerable.Range(1, 40).Select(i => NoText($"IMG_{i:0000}.jpg")).ToList();
+
+        Assert.Equal("40 pictures without text", KnowledgeReport.FormatNoTextStatus(photos));
+        Assert.Equal("1 picture without text", KnowledgeReport.FormatNoTextStatus(new[] { NoText("deck.HEIC") }));
+        Assert.Equal("2 without text", KnowledgeReport.FormatNoTextStatus(new[] { NoText("deck.png"), NoText("empty.txt") }));
+        Assert.Equal("", KnowledgeReport.FormatNoTextStatus(null));
+    }
+
+    [Fact]
+    public void DescribeNoTextFiles_UsesTheTypeNames()
+    {
+        Assert.Equal("40 image files", KnowledgeReport.DescribeNoTextFiles(Enumerable.Range(1, 40).Select(i => NoText($"{i}.jpg")).ToList()));
+        Assert.Equal("1 PDF file", KnowledgeReport.DescribeNoTextFiles(new[] { NoText("blank scan.pdf") }));
+        Assert.Equal("3 files (2 image, 1 PDF)",
+            KnowledgeReport.DescribeNoTextFiles(new[] { NoText("a.png"), NoText("b.jpg"), NoText("c.pdf") }));
     }
 
     // ==================== Status line and tooltip ====================
@@ -88,7 +130,9 @@ public class KnowledgeReportTests
         var status = KnowledgeReport.FormatStatus(result, Checked.ToLocalTime());
 
         Assert.Equal($"18 files, 412 chunks · checked today {LocalTime(Checked)} · 1 could not be read · " +
-                     "23 skipped: 12 .jpg, 6 .xlsx, 5 .doc · 1 over 25 MB skipped", status);
+                     "23 skipped: 12 video, 6 archive, 5 DAT · 1 over 25 MB skipped", status);
+        var photos = Result() with { NoText = new[] { NoText("deck.jpg"), NoText("roof.png") } };
+        Assert.Contains(" · 1 could not be read · 2 pictures without text · 23 skipped", KnowledgeReport.FormatStatus(photos, DateTime.Now));
         Assert.StartsWith("1 file, 1 chunk", KnowledgeReport.FormatStatus(new KnowledgeReindexResult { IndexedFiles = 1, Chunks = 1 }, DateTime.Now));
         Assert.Contains("index full", KnowledgeReport.FormatStatus(Result() with { IndexFull = true }, DateTime.Now));
         Assert.Contains("stopped at 10,000 files", KnowledgeReport.FormatStatus(Result() with { ScanTruncated = true }, DateTime.Now));
@@ -100,7 +144,15 @@ public class KnowledgeReportTests
         var details = KnowledgeReport.FormatDetails(Result());
 
         Assert.Contains("Could not read (Reindex tries these again):\n" + Path.Combine("Scans", "scan.pdf") + ": No readable text.", details);
-        Assert.Contains("Skipped, type not supported: 12 .jpg, 6 .xlsx, 5 .doc", details);
+        Assert.Contains("Skipped, type not supported: 12 video, 6 archive, 5 DAT", details);
+        Assert.DoesNotContain("No text found", details);
+
+        var photos = KnowledgeReport.FormatDetails(new KnowledgeReindexResult
+        {
+            Folder = Root,
+            NoText = new[] { NoText("roof.png"), NoText(Path.Combine("Deck", "deck.jpg")) }
+        });
+        Assert.Equal("No text found in 2 image files:\n" + Path.Combine("Deck", "deck.jpg") + ", roof.png\n\nClick Files for the full list.", photos);
         Assert.EndsWith("Click Files for the full list.", details);
         Assert.Equal("", KnowledgeReport.FormatDetails(new KnowledgeReindexResult { IndexedFiles = 3, Chunks = 9 }));
     }
@@ -132,23 +184,27 @@ public class KnowledgeReportTests
     public void FormatChatSummary_AfterChanges()
     {
         Assert.Equal(
-            "Knowledge folder: 18 files indexed (412 chunks), 2 new or changed. Skipped 23 (12 .jpg, 6 .xlsx, 5 .doc: not supported). " +
+            "Knowledge folder: 18 files indexed (412 chunks), 2 new or changed. Skipped 23 (12 video, 6 archive, 5 DAT: not supported). " +
             "Could not read 1: scan.pdf (no text).",
             KnowledgeReport.FormatChatSummary(Result()));
 
-        var removed = Result() with { Removed = 3, Unreadable = Array.Empty<KnowledgeFileEntry>(), Skipped = Array.Empty<KnowledgeExtensionCount>() };
+        // Photos without words are not failures: they get their own sentence.
+        var photos = Result() with { NoText = new[] { NoText("deck.jpg"), NoText("roof.png"), NoText("blank.pdf") } };
+        Assert.EndsWith("Could not read 1: scan.pdf (no text). No text found in 3 files (2 image, 1 PDF).", KnowledgeReport.FormatChatSummary(photos));
+
+        var removed = Result() with { Removed = 3, Unreadable = Array.Empty<KnowledgeFileEntry>(), Skipped = Array.Empty<KnowledgeTypeCount>() };
         Assert.Equal("Knowledge folder: 18 files indexed (412 chunks), 2 new or changed, 3 removed.", KnowledgeReport.FormatChatSummary(removed));
     }
 
     [Fact]
     public void FormatChatSummary_WhenNothingChanged()
     {
-        var upToDate = Result(filesRead: 0) with { Unreadable = Array.Empty<KnowledgeFileEntry>(), Skipped = Array.Empty<KnowledgeExtensionCount>() };
+        var upToDate = Result(filesRead: 0) with { Unreadable = Array.Empty<KnowledgeFileEntry>(), Skipped = Array.Empty<KnowledgeTypeCount>() };
 
         Assert.Equal($"Knowledge folder is up to date: 18 files (412 chunks), checked {LocalTime(Checked)}.",
             KnowledgeReport.FormatChatSummary(upToDate));
         // What was left out is repeated, so the reason the model knows little stays visible.
-        Assert.Contains("Skipped 23 (12 .jpg, 6 .xlsx, 5 .doc: not supported).", KnowledgeReport.FormatChatSummary(Result(filesRead: 0)));
+        Assert.Contains("Skipped 23 (12 video, 6 archive, 5 DAT: not supported).", KnowledgeReport.FormatChatSummary(Result(filesRead: 0)));
     }
 
     [Fact]
@@ -162,7 +218,7 @@ public class KnowledgeReportTests
             new KnowledgeFileEntry(P("b.pdf"), KnowledgeFileState.Unreadable),
         };
 
-        var summary = KnowledgeReport.FormatChatSummary(Result() with { Unreadable = unreadable, Skipped = Array.Empty<KnowledgeExtensionCount>() });
+        var summary = KnowledgeReport.FormatChatSummary(Result() with { Unreadable = unreadable, Skipped = Array.Empty<KnowledgeTypeCount>() });
 
         Assert.EndsWith("Could not read 4: a.pdf (no text), b.pdf (no text), c.docx (file not found) and 1 more.", summary);
     }
@@ -188,7 +244,7 @@ public class KnowledgeReportTests
             KnowledgeReport.FormatChatSummary(stopped));
 
         var nothing = new KnowledgeReindexResult { Outcome = KnowledgeReindexOutcome.Completed, Skipped = TownhouseSkipped() };
-        Assert.Equal("Knowledge folder is up to date: 0 files (0 chunks). Skipped 23 (12 .jpg, 6 .xlsx, 5 .doc: not supported). Nothing in this folder can be searched yet.",
+        Assert.Equal("Knowledge folder is up to date: 0 files (0 chunks). Skipped 23 (12 video, 6 archive, 5 DAT: not supported). Nothing in this folder can be searched yet.",
             KnowledgeReport.FormatChatSummary(nothing));
     }
 
@@ -200,6 +256,20 @@ public class KnowledgeReportTests
     [InlineData("OCR unavailable: could not find pdftoppm.exe from Poppler.", "OCR unavailable: could not find pdftoppm.exe from Poppler")]
     [InlineData("Old .doc files are not supported yet. Save it as .docx and attach that.", "old .doc files are not supported yet")]
     public void ShortReason(string? error, string expected) => Assert.Equal(expected, KnowledgeReport.ShortReason(error));
+
+    [Fact]
+    public void ShortReason_KeepsTheCauseOfTheReadersErrors()
+    {
+        Assert.Equal("old Excel format (.xls) and no Windows text filter is installed",
+            KnowledgeReport.ShortReason(DocumentFileTypes.GetNoFilterMessage(".xls")));
+        Assert.Equal("this OneDrive file is online-only and could not be downloaded",
+            KnowledgeReport.ShortReason(DocumentFileTypes.OneDriveOnlineOnlyMessage));
+        Assert.Equal("Windows can't open this .heic photo", KnowledgeReport.ShortReason(DocumentFileTypes.GetImageDecodeMessage(".heic")));
+        Assert.Equal("Windows text recognition (OCR) has no language installed",
+            KnowledgeReport.ShortReason(DocumentFileTypes.OcrLanguageMissingMessage));
+        Assert.Equal("this Word file is password-protected", KnowledgeReport.ShortReason(DocumentFileTypes.GetPasswordMessage("lease.docx")));
+        Assert.StartsWith("Outlook message (.msg)", KnowledgeReport.ShortReason(DocumentFileTypes.GetNoFilterMessage(".msg")));
+    }
 
     [Fact]
     public void ShortReason_CutsLongErrors()
@@ -221,6 +291,8 @@ public class KnowledgeReportTests
         Assert.Equal("Skipped - type not supported", KnowledgeReport.DescribeEntry(new(P("a.jpg"), KnowledgeFileState.Unsupported)));
         Assert.Equal("Too large - 30 MB (limit 25 MB)", KnowledgeReport.DescribeEntry(new(P("a.pdf"), KnowledgeFileState.TooLarge, Size: 30L * 1024 * 1024)));
         Assert.Equal("Not read yet - indexing stopped", KnowledgeReport.DescribeEntry(new(P("a.pdf"), KnowledgeFileState.Pending, Reason: "indexing stopped")));
+        Assert.Equal("No text - no words in the picture", KnowledgeReport.DescribeEntry(NoText("deck.jpg")));
+        Assert.Equal("No text - nothing to index", KnowledgeReport.DescribeEntry(new(P("empty.txt"), KnowledgeFileState.NoText)));
     }
 
     [Fact]
@@ -234,14 +306,15 @@ public class KnowledgeReportTests
             new KnowledgeFileEntry(P("big.pdf"), KnowledgeFileState.TooLarge),
             new KnowledgeFileEntry(P("scan.pdf"), KnowledgeFileState.Unreadable),
             new KnowledgeFileEntry(P("c.xlsx"), KnowledgeFileState.Unsupported),
+            new KnowledgeFileEntry(P("photo.jpg"), KnowledgeFileState.NoText),
         };
 
         string Names(IEnumerable<KnowledgeFileEntry> sorted) => string.Join(" ", sorted.Select(e => Path.GetFileName(e.Path)));
 
-        Assert.Equal("scan.pdf big.pdf c.xlsx z.jpg a.md b.md", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Status, folder: Root)));
-        Assert.Equal("b.md a.md z.jpg c.xlsx big.pdf scan.pdf", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Status, descending: true, folder: Root)));
-        Assert.Equal("a.md b.md big.pdf c.xlsx scan.pdf z.jpg", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Name, folder: Root)));
-        Assert.Equal("z.jpg a.md b.md big.pdf scan.pdf c.xlsx", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Type, folder: Root)));
+        Assert.Equal("scan.pdf big.pdf c.xlsx z.jpg photo.jpg a.md b.md", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Status, folder: Root)));
+        Assert.Equal("b.md a.md photo.jpg z.jpg c.xlsx big.pdf scan.pdf", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Status, descending: true, folder: Root)));
+        Assert.Equal("a.md b.md big.pdf c.xlsx photo.jpg scan.pdf z.jpg", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Name, folder: Root)));
+        Assert.Equal("photo.jpg z.jpg a.md b.md big.pdf scan.pdf c.xlsx", Names(KnowledgeReport.Sort(entries, KnowledgeFileSort.Type, folder: Root)));
         Assert.Empty(KnowledgeReport.Sort(null, KnowledgeFileSort.Status));
     }
 
@@ -251,21 +324,23 @@ public class KnowledgeReportTests
         var index = new KnowledgeIndex(Root);
         index.Upsert(new KnowledgeFileRecord { Path = P("a.md"), Size = 10, Chunks = new List<string> { "one", "two" } });
         index.Upsert(new KnowledgeFileRecord { Path = P("scan.pdf"), Size = 20, Error = "OCR unavailable" });
+        index.Upsert(new KnowledgeFileRecord { Path = P("deck.jpg"), Size = 30, Error = "No text was found in this picture.", Problem = DocumentReadProblem.NoTextInImage });
         var scan = new[]
         {
-            new KnowledgeFileEntry(P("photo.jpg"), KnowledgeFileState.Unsupported, Size: 5),
+            new KnowledgeFileEntry(P("clip.mp4"), KnowledgeFileState.Unsupported, Size: 5),
             new KnowledgeFileEntry(P("a.md"), KnowledgeFileState.Pending), // already in the index
         };
 
         var list = KnowledgeReport.BuildFileList(index, scan);
 
-        Assert.Equal(3, list.Count);
+        Assert.Equal(4, list.Count);
         Assert.Contains(list, e => e.Path == P("a.md") && e.State == KnowledgeFileState.Indexed && e.Chunks == 2);
         Assert.Contains(list, e => e.Path == P("scan.pdf") && e.State == KnowledgeFileState.Unreadable && e.Reason == "OCR unavailable");
-        Assert.Contains(list, e => e.Path == P("photo.jpg") && e.State == KnowledgeFileState.Unsupported);
+        Assert.Contains(list, e => e.Path == P("deck.jpg") && e.State == KnowledgeFileState.NoText && e.Reason == "No text was found in this picture.");
+        Assert.Contains(list, e => e.Path == P("clip.mp4") && e.State == KnowledgeFileState.Unsupported);
         Assert.Empty(KnowledgeReport.BuildFileList(null, null));
 
-        Assert.Equal("1 indexed · 1 could not be read · 4 skipped (type not supported)", KnowledgeReport.FormatFileCounts(list, unlistedSkipped: 3));
+        Assert.Equal("1 indexed · 1 could not be read · 4 skipped (type not supported) · 1 without text", KnowledgeReport.FormatFileCounts(list, unlistedSkipped: 3));
     }
 
     [Theory]

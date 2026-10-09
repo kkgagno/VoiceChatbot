@@ -173,6 +173,29 @@ public class KnowledgeIndexTests
     }
 
     [Fact]
+    public void Plan_DoesNotRetryFilesThatHaveNoText()
+    {
+        var index = new KnowledgeIndex(Root);
+        KnowledgeFileRecord Empty(string name, DocumentReadProblem? problem) =>
+            new() { Path = P(name), Size = 100, LastWriteUtc = Time1, Error = "No text.", Problem = problem };
+        index.Upsert(Empty("photo.jpg", DocumentReadProblem.NoTextInImage));
+        index.Upsert(Empty("empty.txt", DocumentReadProblem.NoText));
+        index.Upsert(Empty("scan.pdf", DocumentReadProblem.NeedsOcr));
+        index.Upsert(Empty("old.xls", DocumentReadProblem.NeedsFilter));
+        index.Upsert(Empty("saved-before.pdf", null)); // an index saved before problems were recorded
+        var scan = index.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc)).ToList();
+
+        var manual = index.Plan(scan, retryFailed: true);
+
+        Assert.Equal(new[] { P("old.xls"), P("saved-before.pdf"), P("scan.pdf") },
+            manual.ToRead.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal));
+        Assert.Equal(2, manual.Unchanged);
+        Assert.True(index.Files.Single(f => f.Path == P("photo.jpg")).HasNoText);
+        // A file with text never counts as having none, whatever its problem says.
+        Assert.False(new KnowledgeFileRecord { Chunks = new List<string> { "x" }, Problem = DocumentReadProblem.NoText }.HasNoText);
+    }
+
+    [Fact]
     public void UpsertRemoveAndCounts()
     {
         var index = SampleIndex();
@@ -508,10 +531,28 @@ public class KnowledgeIndexTests
         Assert.Equal("OCR unavailable", scan.Error);
         Assert.Equal(7, scan.Size);
         Assert.Empty(scan.Chunks);
+        Assert.Null(scan.Problem);
 
         var plan = loaded.Plan(index.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc)));
         Assert.False(plan.HasChanges);
         Assert.Equal(index.Search("engine oil")[0].Text, loaded.Search("engine oil")[0].Text);
+    }
+
+    [Fact]
+    public void Json_KeepsWhyAFileHasNoText()
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(new KnowledgeFileRecord { Path = P("photo.jpg"), Error = "No text was found in this picture.", Problem = DocumentReadProblem.NoTextInImage });
+        index.Upsert(Record(P("notes.txt"), "pool hours"));
+
+        var json = index.ToJson();
+        var loaded = KnowledgeIndex.FromJson(json);
+
+        Assert.Contains("\"problem\":\"NoTextInImage\"", json);
+        Assert.Equal(DocumentReadProblem.NoTextInImage, loaded.Files.Single(f => f.Path == P("photo.jpg")).Problem);
+        Assert.True(loaded.Files.Single(f => f.Path == P("photo.jpg")).HasNoText);
+        Assert.Null(loaded.Files.Single(f => f.Path == P("notes.txt")).Problem);
+        Assert.DoesNotContain("hasNoText", json);
     }
 
     [Theory]

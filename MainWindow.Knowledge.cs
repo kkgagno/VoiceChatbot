@@ -135,7 +135,8 @@ public partial class MainWindow
             return;
         }
 
-        // A manual reindex also retries files that could not be read last time (e.g. after installing OCR).
+        // A manual reindex also retries files that could not be read last time (e.g. after adding an OCR
+        // language); files that were read and have no text are not read again until they change.
         StartKnowledgeReindex(retryFailed: true, TimeSpan.Zero, announce: true);
     }
 

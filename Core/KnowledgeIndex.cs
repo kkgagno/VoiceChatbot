@@ -19,9 +19,20 @@ public sealed class KnowledgeFileRecord
     public long Size { get; set; }
     public DateTime LastWriteUtc { get; set; }
     // Why no text was indexed (unreadable, scanned PDF without OCR, ...). Kept so an unchanged file is
-    // not re-read on every automatic reindex; a manual reindex retries it.
+    // not re-read on every automatic reindex; a manual reindex retries it unless it has no text at all.
     public string? Error { get; set; }
+    // Why there is no text, as DocumentTextService classified it ("NoTextInImage" for a photo without
+    // words); null for files with text and for indexes saved before this was recorded.
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public DocumentReadProblem? Problem { get; set; }
     public List<string> Chunks { get; set; } = new();
+
+    /// <summary>
+    /// True when the file was read and simply has no text: a picture or scan where OCR found no words,
+    /// an empty file. That is not a failure, and reading the unchanged file again would not help.
+    /// </summary>
+    [JsonIgnore]
+    public bool HasNoText => Chunks.Count == 0 && Problem is DocumentReadProblem.NoText or DocumentReadProblem.NoTextInImage;
 }
 
 /// <summary>A supported file found by a folder scan.</summary>
@@ -155,7 +166,8 @@ public sealed class KnowledgeIndex
     /// <summary>
     /// Compares a folder scan with the index: new files and files whose size or write time changed must
     /// be read, indexed files missing from the scan are gone. With <paramref name="retryFailed"/>, files
-    /// that produced no text last time are read again too (e.g. after installing OCR tools).
+    /// that could not be read last time are read again too (e.g. after installing an OCR language);
+    /// files that were read and have no text (<see cref="KnowledgeFileRecord.HasNoText"/>) are not.
     /// </summary>
     public KnowledgeIndexPlan Plan(IEnumerable<KnowledgeFileStamp> scannedFiles, bool retryFailed = false)
     {
@@ -170,7 +182,7 @@ public sealed class KnowledgeIndex
                     continue;
 
                 if (_files.TryGetValue(file.Path, out var record) && IsCurrent(record, file) &&
-                    !(retryFailed && record.Chunks.Count == 0))
+                    !(retryFailed && record.Chunks.Count == 0 && !record.HasNoText))
                     unchanged++;
                 else
                     toRead.Add(file);
@@ -268,7 +280,7 @@ public sealed class KnowledgeIndex
     public IReadOnlyList<KnowledgeFileRecord> IndexedFilesInOrder() =>
         GetSearchCache().OrderedFiles.Where(f => f.Chunks.Count > 0).ToList();
 
-    /// <summary>The files that gave no text, in folder order.</summary>
+    /// <summary>The files that gave no text (could not be read, or have none), in folder order.</summary>
     public IReadOnlyList<KnowledgeFileRecord> UnreadableFilesInOrder() =>
         GetSearchCache().OrderedFiles.Where(f => f.Chunks.Count == 0).ToList();
 

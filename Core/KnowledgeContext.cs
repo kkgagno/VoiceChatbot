@@ -120,7 +120,7 @@ public static class KnowledgeContext
         var budgetChars = (long)budgetTokens * CharsPerToken;
         if (files.Count == 0)
         {
-            // Only unreadable files (scans without OCR, say): the model can at least say they exist.
+            // Only files without text (photos without words, scans OCR could not read): the model can at least say they exist.
             var unreadableOnly = FitCatalog(folderName, names, unreadable, KnowledgeContextMode.Catalog, budgetChars);
             return unreadableOnly.Length == 0
                 ? KnowledgeContextResult.None
@@ -244,7 +244,7 @@ public static class KnowledgeContext
         if (files.Count == 0)
         {
             sb.Append($"The owner's knowledge folder '{folderName}' has documents, but no text could be read from any of them yet, so their contents are unknown. ");
-            sb.Append("If asked about them, say that they could not be read (a scanned PDF needs OCR), and do not invent contents.");
+            sb.Append("If asked about them, say that they could not be read (the Files button in the Knowledge Folder panel shows why for each file), and do not invent contents.");
             if (unreadable is { Count: > 0 })
             {
                 var listed = unreadable.Take(Math.Max(1, maxNames)).ToList();
