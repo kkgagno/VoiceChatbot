@@ -27,7 +27,9 @@ public sealed record TranscriptNotesSection(string Label, string Body);
 /// </code>
 /// <see cref="Parse"/> tolerates edits: everything before the "NOTES BY TIME" line is the top block, every
 /// "[start–end]" (or "[Part n]") line starts a section, and any other text stays in the section it is in.
-/// Text without this layout (older notes, or notes a user typed) is kept verbatim as the top block.
+/// The top block has a heading only when its first line is exactly one of the app's own headings; a line that only
+/// looks like one ("Meeting notes:" a user typed, or "Meeting Notes" in older notes) is text a user wrote. Text
+/// without this layout (older notes, or notes a user typed) is kept verbatim as the top block.
 /// </summary>
 public sealed class TranscriptNotes
 {
@@ -85,7 +87,7 @@ public sealed class TranscriptNotes
     public bool HasFullSummary(string? style) =>
         Top.Length > 0 && string.Equals(Heading, TranscriptSummaryStyles.GetHeading(style), StringComparison.Ordinal);
 
-    /// <summary>The headings recognized on the first line of the top block.</summary>
+    /// <summary>The headings the app writes on the first line of the top block.</summary>
     public static IReadOnlyList<string> KnownHeadings { get; } =
         new[] { SummarySoFarHeading }.Concat(TranscriptSummaryStyles.Names.Select(TranscriptSummaryStyles.GetHeading)).ToList();
 
@@ -96,11 +98,12 @@ public sealed class TranscriptNotes
         var notesByTime = Array.FindIndex(lines, IsNotesByTimeLine);
         var topEnd = notesByTime >= 0 ? notesByTime : lines.Length;
 
-        // The heading is the first non-blank line, when it is one of the known headings.
+        // The heading is the first non-blank line, when it is exactly one of the app's own headings. Anything else
+        // is text a user wrote: kept on the next update and then sent to the model as earlier notes.
         var first = 0;
         while (first < topEnd && lines[first].Trim().Length == 0)
             first++;
-        var heading = first < topEnd ? AsKnownHeading(lines[first]) : null;
+        var heading = first < topEnd ? AsAppHeading(lines[first]) : null;
 
         if (notesByTime < 0 && heading == null)
         {
@@ -271,6 +274,14 @@ public sealed class TranscriptNotes
 
     private static bool IsLayoutLine(string line) => IsNotesByTimeLine(line) || TryReadHeader(line, out _);
 
+    // A heading as the app writes it ("SUMMARY SO FAR", "ACTION ITEMS"...): the whole line, same case, no colon.
+    private static string? AsAppHeading(string line)
+    {
+        var text = line.Trim();
+        return KnownHeadings.FirstOrDefault(h => string.Equals(h, text, StringComparison.Ordinal));
+    }
+
+    // Also a heading a model repeated in its reply ("Summary so far:"), which CleanTop drops.
     private static string? AsKnownHeading(string line)
     {
         var text = line.Trim().TrimEnd(':').Trim();

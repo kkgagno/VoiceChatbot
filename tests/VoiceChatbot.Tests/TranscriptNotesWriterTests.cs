@@ -135,6 +135,27 @@ public class TranscriptNotesWriterTests
     }
 
     [Fact]
+    public async Task TypedTextThatStartsLikeAHeadingIsKeptAndThenSentAsEarlierNotes()
+    {
+        var model = new FakeModel(Reply);
+        var typed = "Meeting notes:\n- Attendees: Bob, Alice\n- Agenda: budget";
+
+        var first = await TranscriptNotesWriter.UpdateAsync(typed, "[00:05] Hello.", TimeSpan.FromMinutes(5), null, model.Summarize);
+        Assert.Equal(typed + "\n\nNOTES BY TIME\n[00:05–05:00]\n- point one\n- point two\n- point three", first.Notes);
+        Assert.Single(model.Requests);
+
+        var second = await TranscriptNotesWriter.UpdateAsync(first.Notes, "[05:02] More.", TimeSpan.FromMinutes(10), null, model.Summarize);
+        Assert.StartsWith("SUMMARY SO FAR\nThey are planning the launch.", second.Notes);
+        Assert.Contains("EARLIER NOTES:\n" + typed, model.Requests[^1].UserMessage);
+
+        // On Stop the typed text is kept as well.
+        var stop = new FakeModel(Reply);
+        var finished = await TranscriptNotesWriter.FinishAsync(typed, "[00:05] Hello.", "[00:05] Hello.", TimeSpan.FromMinutes(1), null, stop.Summarize);
+        Assert.StartsWith(typed + "\n\nNOTES BY TIME\n", finished.Notes);
+        Assert.Single(stop.Requests);
+    }
+
+    [Fact]
     public async Task NewTextWithoutATimestampStartsWhereTheLastSectionEnded()
     {
         var model = new FakeModel(Reply);

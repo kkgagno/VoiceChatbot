@@ -110,8 +110,10 @@ public partial class TranscriptionWindow : Window
     private CancellationTokenSource? _liveNotesCts;
     private Task<bool>? _liveNotesTask;
     private DateTime? _notesUpdatedAt; // local time of the last notes update shown
-    private bool _liveNotesFailed;
+    private bool _liveNotesFailed; // the last update added nothing (the previous notes are kept)
+    private bool _summaryNotRefreshed; // the last update added a section but could not refresh the summary at the top
     private string? _notesProblem; // the summary at the top could not be refreshed by the last update
+    private bool _finalNotesAfterSummary; // Stop came while Summarize ran: the final notes run once it ends
 
     public TranscriptionWindow(
         SpeechEngine speech,
@@ -841,7 +843,9 @@ public partial class TranscriptionWindow : Window
         else if (_liveNotesCts != null)
             detail = "Updating notes...";
         else if (_liveNotesFailed)
-            detail = updated.Length > 0 ? $"Summary not refreshed · {updated}" : "Notes update failed";
+            detail = updated.Length > 0 ? $"Notes update failed · {updated}" : "Notes update failed";
+        else if (_summaryNotRefreshed)
+            detail = updated.Length > 0 ? $"Summary not refreshed · {updated}" : "Summary not refreshed";
         else
             detail = updated;
 
@@ -944,7 +948,9 @@ public partial class TranscriptionWindow : Window
         _liveNotes.Reset(DateTime.UtcNow);
         _notesUpdatedAt = null;
         _liveNotesFailed = false;
+        _summaryNotRefreshed = false;
         _notesProblem = null;
+        _finalNotesAfterSummary = false;
 
         TranscriptBox.Clear();
         SummaryBox.Clear();
@@ -1086,6 +1092,7 @@ public partial class TranscriptionWindow : Window
             _summaryStyleUsed = style;
             _notesUpdatedAt = DateTime.Now;
             _liveNotesFailed = false;
+            _summaryNotRefreshed = false;
             _notesProblem = null;
             SummaryBox.Text = notes;
             SummaryBox.ScrollToHome();
@@ -1119,7 +1126,25 @@ public partial class TranscriptionWindow : Window
                 SummaryStyleCombo.IsEnabled = true;
                 UpdateNotesControls();
                 UpdateSummaryHeader();
+                _ = FinishSkippedFinalNotesAsync();
             }
+        }
+    }
+
+    /// <summary>
+    /// Recording was started and stopped while Summarize / Re-summarize all ran, so the final notes waited for it:
+    /// they run now (a section for the words recorded meanwhile and the full summary), then the session is saved.
+    /// </summary>
+    private async Task FinishSkippedFinalNotesAsync()
+    {
+        if (!_finalNotesAfterSummary || _closed || _isRecording || _isFinishing || _summaryCts != null)
+            return;
+
+        _finalNotesAfterSummary = false;
+        if (await FinishLiveNotesAsync("Stopped.") && !_closed)
+        {
+            AutoSave();
+            SaveSessionState();
         }
     }
 
@@ -1191,6 +1216,8 @@ public partial class TranscriptionWindow : Window
             return false;
 
         var ticket = _liveNotes.TryBeginFinal(_summaryCts != null, TranscriptBox.Text, SummaryBox.Text, SelectedSummaryStyle);
+        // A running Summarize blocks the final notes; they run when it ends (FinishSkippedFinalNotesAsync).
+        _finalNotesAfterSummary = ticket == null && _summaryCts != null;
         if (ticket == null)
             return updated;
 
@@ -1235,7 +1262,8 @@ public partial class TranscriptionWindow : Window
 
             _liveNotes.Complete(ticket, DateTime.UtcNow);
             _notesUpdatedAt = DateTime.Now;
-            _liveNotesFailed = result.SummaryFailed;
+            _liveNotesFailed = false;
+            _summaryNotRefreshed = result.SummaryFailed;
             _notesProblem = result.SummaryError is { } error
                 ? $"The summary at the top was not refreshed: {Shorten(FriendlyErrors.Describe(error), 120)}"
                 : null;

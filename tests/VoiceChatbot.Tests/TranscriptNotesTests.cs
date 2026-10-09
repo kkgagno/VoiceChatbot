@@ -35,7 +35,7 @@ public class TranscriptNotesTests
     public void ToleratesEditsAndWindowsLineEndings()
     {
         var edited =
-            "  key points:\r\n" +
+            "  KEY POINTS \r\n" +
             "- First.\r\n\r\n" +
             "notes by time:\r\n" +
             "My own line before any section.\r\n" +
@@ -129,6 +129,27 @@ public class TranscriptNotesTests
         Assert.Equal("All done.", notes.Top);
         Assert.True(notes.HasFullSummary("summary"));
         Assert.Equal("SUMMARY\nAll done.", notes.Render());
+    }
+
+    [Theory]
+    [InlineData("Meeting notes:\n- Attendees: Bob, Alice\n- Agenda: budget")]
+    [InlineData("Meeting Notes\n- Attendees: Bob, Alice")]
+    [InlineData("Summary\nWe talked.")]
+    [InlineData("action items:\n- Bob: slides")]
+    public void ALineThatOnlyLooksLikeAHeadingIsUserText(string text)
+    {
+        var notes = TranscriptNotes.Parse(text);
+        Assert.False(notes.IsStructured);
+        Assert.Null(notes.Heading);
+        Assert.Equal(text, notes.Top);
+        Assert.True(notes.TopIsUserText);
+
+        // After the first section it is still the user's text, not a summary to replace.
+        var withSection = TranscriptNotes.Parse(notes.AddSection(new TranscriptNotesSection("00:00–05:00", "- Hi.")).Render());
+        Assert.True(withSection.IsStructured);
+        Assert.Null(withSection.Heading);
+        Assert.Equal(text, withSection.Top);
+        Assert.True(withSection.TopIsUserText);
     }
 
     [Fact]

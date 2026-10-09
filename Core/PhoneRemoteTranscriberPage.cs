@@ -255,9 +255,10 @@ const SECTION_HEADER = /^\s*\[\s*(?:\d{1,3}:\d{2}(?::\d{2})?\s*[\u2013\u2014-]\s
 const KNOWN_HEADINGS = [CFG.notes.summarySoFarHeading].concat(CFG.notes.styleHeadings);
 
 function headingText(line) { return String(line || '').trim().replace(/:+$/, '').trim().toLowerCase(); }
+// Only a heading as the app writes it (whole line, same case): "Meeting notes:" a user typed is user text.
 function knownHeading(line) {
-  const text = headingText(line);
-  return KNOWN_HEADINGS.find(heading => heading.toLowerCase() === text) || null;
+  const text = String(line || '').trim();
+  return KNOWN_HEADINGS.find(heading => heading === text) || null;
 }
 function isNotesByTimeLine(line) { return headingText(line) === CFG.notes.notesByTimeHeading.toLowerCase(); }
 function styleHeading(style) { return CFG.notes.styleHeadings[CFG.styles.indexOf(normalizeStyle(style))] || ''; }
@@ -620,7 +621,8 @@ const state = {
   saveId: '',           // the PC's id for this session's file
   notesStyle: CFG.defaultStyle,  // the style the notes were last written in
   notesUpdatedAt: null,
-  liveNotesFailed: false,
+  liveNotesFailed: false,      // the last update added nothing (the previous notes are kept)
+  summaryNotRefreshed: false,  // the last update added a section but could not refresh the summary at the top
   notesProblem: ''      // why the summary at the top was not refreshed by the last update
 };
 const settings = { fontSize: DEFAULT_FONT, liveNotes: false, intervalMinutes: CFG.defaultInterval, style: CFG.defaultStyle, source: 'mic', split: DEFAULT_SPLIT };
@@ -633,6 +635,7 @@ let clearPending = false;  // Clear was pressed: it runs once the chunks recorde
 let capture = null, chunker = null, timelineOriginMs = 0, peakLevel = 0;
 // summaryJob: Summarize / Re-summarize all on the PC; liveJob: a live-notes update or the notes on Stop.
 let pumping = false, summaryJob = null, liveJob = null, stopPromise = null;
+let finalAfterSummary = false; // Stop came while Summarize ran: the final notes run once it ends
 let liveTimer = 0, statusUntil = 0, persistTimer = 0, persistWarned = false, wordsTimer = 0;
 let wakeLock = null, wakeLockPending = false;
 let saveChain = Promise.resolve();
@@ -957,7 +960,8 @@ function updateNotesHeader() {
   let detail = updated;
   if (summaryJob) detail = summaryJob.progress || 'Summarizing...';
   else if (liveJob) detail = 'Updating notes...';
-  else if (state.liveNotesFailed) detail = updated ? 'Summary not refreshed · ' + updated : 'Notes update failed';
+  else if (state.liveNotesFailed) detail = updated ? 'Notes update failed · ' + updated : 'Notes update failed';
+  else if (state.summaryNotRefreshed) detail = updated ? 'Summary not refreshed · ' + updated : 'Summary not refreshed';
   el.notesUpdated.textContent = detail;
   el.notesUpdated.title = state.notesProblem && !summaryJob && !liveJob ? state.notesProblem : '';
 }
@@ -1493,6 +1497,7 @@ async function rebuildNotes() {
     state.notesStyle = style;
     state.notesUpdatedAt = new Date();
     state.liveNotesFailed = false;
+    state.summaryNotRefreshed = false;
     state.notesProblem = '';
     if (summaryJob === job) summaryJob = null;
     setNotes(notes);
@@ -1511,11 +1516,23 @@ async function rebuildNotes() {
     if (summaryJob === job) summaryJob = null;
     updateNotesControls();
     updateNotesHeader();
+    if (!done) finishSkippedFinalNotes();
   }
   if (!done) return;
 
   const saved = state.recording ? null : await autoSave();
   if (gen === state.sessionGen) setStatus(style + ' ready.' + savedNote(saved), !state.recording);
+  finishSkippedFinalNotes();
+}
+
+// Recording was started and stopped while Summarize / Re-summarize all ran, so the final notes waited for it:
+// they run now (a section for the words recorded meanwhile and the full summary), then the session is saved.
+async function finishSkippedFinalNotes() {
+  if (!finalAfterSummary || summaryJob || state.recording || state.finishing) return;
+  finalAfterSummary = false;
+  if (!(await finishLiveNotes('Stopped.'))) return;
+  await autoSave();
+  persistNow();
 }
 
 // ---------- Live notes ----------
@@ -1569,7 +1586,8 @@ async function runLiveNotes(job) {
     const warning = String(data.warning || '');
     policy.complete(ticket, Date.now());
     state.notesUpdatedAt = new Date();
-    state.liveNotesFailed = !!warning;
+    state.liveNotesFailed = false;
+    state.summaryNotRefreshed = !!warning;
     state.notesProblem = warning;
     state.notesStyle = style;
     if (!sameText(notes, notesBefore)) replaceNotesKeepingScroll(notes);
@@ -1601,6 +1619,8 @@ async function finishLiveNotes(stopped) {
   let updated = false;
   if (liveJob) updated = await liveJob.promise;
   const ticket = policy.tryBeginFinal(!!summaryJob, el.transcript.value, el.notes.value, normalizeStyle(el.style.value));
+  // A running Summarize blocks the final notes; they run when it ends (finishSkippedFinalNotes).
+  finalAfterSummary = !ticket && !!summaryJob;
   if (!ticket) return updated;
   if (!state.recording) setStatus(stopped + ' Writing the final notes and summary...', true);
   return (await startLiveNotes(ticket)) || updated;
@@ -1748,6 +1768,7 @@ async function finishClear(mark) {
     state.sessionGen++;
     cancelSummary();
     cancelLiveNotes();
+    finalAfterSummary = false;
     policy.reset(Date.now());
     // Chunks recorded after the click belong to the new session, whose clock started at the click.
     for (const item of queue) {
@@ -1760,6 +1781,7 @@ async function finishClear(mark) {
     state.notesStyle = CFG.defaultStyle;
     state.notesUpdatedAt = null;
     state.liveNotesFailed = false;
+    state.summaryNotRefreshed = false;
     state.notesProblem = '';
     state.saveId = '';
     state.changeVersion = 0;
