@@ -789,6 +789,12 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     .commandChoice { width: 100%; background: #2d3436; color: white; text-align: left; padding: 9px 10px; }
     .commandChoice:active { background: #00a884; }
     .controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 5px; }
+    #micMeter { display: none; align-items: center; gap: 8px; margin: 0 0 6px; color: #aeb3bd; font-size: 11px; }
+    #micMeter.on { display: flex; }
+    #micBar { flex: 1; height: 6px; background: #2d3436; border-radius: 3px; overflow: hidden; position: relative; }
+    #micLevel { height: 100%; width: 0; background: #636e72; transition: width 80ms linear; }
+    #micLevel.voice { background: #00a884; }
+    #micMark { position: absolute; top: 0; bottom: 0; width: 2px; background: #fdcb6e; left: 0; }
     #talk { width: 100%; background: #6c5ce7; }
     #live { width: 100%; background: #2d3436; }
     #live.on { background: #d63031; }
@@ -813,6 +819,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     <button id="live">Live Mode Off</button>
     <button id="longTalk">Long Talk Off</button>
   </div>
+  <div id="micMeter" title="How loud the phone's microphone hears you. The yellow mark is where Live mode starts recording."><span>Mic</span><div id="micBar"><div id="micLevel"></div><div id="micMark"></div></div></div>
   <div class="bar">
     <button id="stopAudio">Stop Audio</button>
   </div>
@@ -880,8 +887,37 @@ let livePlayer, liveAudioUnlocked = false;
 let liveMode = false, liveSending = false, liveArmed = false, liveSpeechStarted = false;
 let longTalkMode = false;
 let liveSilenceMs = 0, liveVoiceMs = 0, liveLastTick = 0;
-const liveStartThreshold = 0.012;
-const liveStopThreshold = 0.007;
+// Live mode starts recording when the level rises well above the room's own noise. Phones with strong
+// noise suppression deliver quiet speech, so a fixed threshold could miss it: the threshold follows the
+// measured noise floor, between these bounds.
+const liveMinStartThreshold = 0.004;
+const liveMaxStartThreshold = 0.02;
+let liveNoiseFloor = 0.002, liveCalibrateUntil = 0;
+let lastAudioFrameAt = 0, silentSinceAt = 0, micWarned = false;
+const micMeter = document.getElementById('micMeter');
+const micLevel = document.getElementById('micLevel');
+const micMark = document.getElementById('micMark');
+function liveStartThreshold() {
+  return Math.min(liveMaxStartThreshold, Math.max(liveMinStartThreshold, liveNoiseFloor * 3 + 0.002));
+}
+function liveStopThreshold() {
+  return Math.max(0.0025, liveStartThreshold() * 0.55);
+}
+// The meter is logarithmic so quiet speech still moves it: 0% at -60 dBFS, 100% at -10 dBFS.
+function levelPercent(rms) {
+  if (rms <= 0) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.max(0, Math.min(100, (db + 60) * 2));
+}
+function showMicLevel(rms) {
+  micLevel.style.width = levelPercent(rms) + '%';
+  micLevel.classList.toggle('voice', rms > liveStartThreshold());
+  micMark.style.left = levelPercent(liveStartThreshold()) + '%';
+}
+function setMicMeter(on) {
+  micMeter.classList.toggle('on', on);
+  if (!on) micLevel.style.width = '0';
+}
 const liveMinVoiceMs = 100;
 const shortUtteranceMaxVoiceMs = 800;
 const shortSilenceToSendMs = 500;
@@ -1158,12 +1194,32 @@ function unlockLiveAudio() {
 
 async function ensureMic() {
   if (stream) return;
-  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
   source = audioContext.createMediaStreamSource(stream);
   processor = audioContext.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = e => {
     const input = e.inputBuffer.getChannelData(0);
+    const now = performance.now();
+    lastAudioFrameAt = now;
+    let sum = 0, peak = 0;
+    for (let i = 0; i < input.length; i++) {
+      const v = input[i];
+      sum += v * v;
+      if (v > peak) peak = v; else if (-v > peak) peak = -v;
+    }
+    const rms = Math.sqrt(sum / input.length);
+    if (liveMode || recording) showMicLevel(rms);
+    // Exact zeros for seconds: the microphone is muted, blocked or held by another app.
+    if (peak === 0) {
+      if (!silentSinceAt) silentSinceAt = now;
+      if ((liveMode || recording) && !micWarned && now - silentSinceAt > 3000) {
+        micWarned = true;
+        add('sys', 'The microphone is giving complete silence. It may be muted, used by another app (a call or voice assistant), or blocked for this page in the browser or app settings.');
+      }
+    } else {
+      silentSinceAt = 0;
+    }
     if (recording) {
       chunks.push(new Float32Array(input));
       recordedSamples += input.length;
@@ -1252,6 +1308,8 @@ async function start() {
     await audioContext.resume();
     clearSpeechChunks();
     recording = true;
+    micWarned = false;
+    setMicMeter(true);
     statusEl.textContent = 'Listening';
     talk.textContent = 'Release to Send';
   } catch (e) {
@@ -1262,6 +1320,7 @@ async function start() {
 async function stop() {
   if (!recording) return;
   recording = false;
+  if (!liveMode) setMicMeter(false);
   talk.textContent = 'Hold to Talk';
   await sendChunks(false);
 }
@@ -1493,7 +1552,16 @@ function handleLiveAudio(input) {
 
   if (!liveSpeechStarted) {
     statusEl.textContent = 'Live: listening';
-    if (rms > liveStartThreshold) {
+    // The first moment after Live mode turns on only measures the room, so steady noise (a fan, a TV)
+    // sets the threshold instead of starting a recording.
+    if (now < liveCalibrateUntil) {
+      liveNoiseFloor = liveNoiseFloor * 0.7 + rms * 0.3;
+      return;
+    }
+    // Follow the room's noise: down quickly, up slowly (speech must not raise it).
+    if (rms < liveNoiseFloor) liveNoiseFloor = liveNoiseFloor * 0.7 + rms * 0.3;
+    else if (rms < liveStartThreshold()) liveNoiseFloor = liveNoiseFloor * 0.98 + rms * 0.02;
+    if (rms > liveStartThreshold()) {
       clearSpeechChunks();
       recording = true;
       liveSpeechStarted = true;
@@ -1504,7 +1572,7 @@ function handleLiveAudio(input) {
     return;
   }
 
-  if (rms > liveStopThreshold) {
+  if (rms > liveStopThreshold()) {
     liveVoiceMs += dt;
     liveSilenceMs = 0;
   } else {
@@ -1569,9 +1637,15 @@ async function setLiveMode(on) {
     liveSpeechStarted = false;
     liveLastTick = 0;
     liveArmed = true;
-    add('sys', 'Live mode on.');
+    micWarned = false;
+    liveNoiseFloor = 0.002;
+    liveCalibrateUntil = performance.now() + 800;
+    setMicMeter(true);
+    add('sys', 'Live mode on. The Mic bar shows what the phone hears; speak and it turns green when it starts recording.');
     statusEl.textContent = 'Live: listening';
+    checkAudioArrives();
   } else {
+    setMicMeter(false);
     liveArmed = false;
     liveSpeechStarted = false;
     recording = false;
@@ -1579,6 +1653,20 @@ async function setLiveMode(on) {
     statusEl.textContent = 'Ready';
     add('sys', 'Live mode off.');
   }
+}
+
+// Some phones start the microphone (its indicator shows) but never pass audio to the page, for example
+// when the audio engine stayed suspended. Wake it, and say so if that does not help.
+function checkAudioArrives() {
+  const startedAt = performance.now();
+  setTimeout(async () => {
+    if (!liveMode || lastAudioFrameAt > startedAt) return;
+    try { if (audioContext) await audioContext.resume(); } catch {}
+    setTimeout(() => {
+      if (!liveMode || lastAudioFrameAt > startedAt) return;
+      add('sys', 'The phone turned the microphone on but is not passing its sound to this page. Turn Live mode off and on, or reload the page. If you use it as a home-screen app, try it once in the Chrome browser.');
+    }, 2500);
+  }, 2500);
 }
 
 function setLongTalkMode(on) {
