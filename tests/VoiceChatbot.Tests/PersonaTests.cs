@@ -101,6 +101,31 @@ public class PersonaTests
     }
 
     [Fact]
+    public void Temperature_IsClampedRoundedAndCopied()
+    {
+        var list = PersonaCatalog.Normalize(new[]
+        {
+            new Persona { Name = "Hot", Temperature = 5 },
+            new Persona { Name = "Exact", Temperature = 0.333 },
+            new Persona { Name = "Old" },
+            new Persona { Name = "Broken", Temperature = double.NaN }
+        });
+
+        Assert.Equal(Persona.MaxTemperature, list[0].Temperature);
+        Assert.Equal(0.33, list[1].Temperature);
+        Assert.Null(list[2].Temperature);
+        Assert.Null(list[3].Temperature);
+        Assert.Equal(0.33, list[1].Clone().Temperature);
+    }
+
+    [Fact]
+    public void EnsureDefault_TakesTheCurrentTemperature()
+    {
+        Assert.Equal(0.7, Assert.Single(PersonaCatalog.EnsureDefault(null, "p", "v", 0, 0.7)).Temperature);
+        Assert.Null(Assert.Single(PersonaCatalog.EnsureDefault(null, "p", "v", 0)).Temperature);
+    }
+
+    [Fact]
     public void Find_IgnoresCaseAndWhitespace()
     {
         var list = new List<Persona> { P("Story Teller"), P("Coach") };

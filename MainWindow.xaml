@@ -211,7 +211,7 @@
                                               ToolTip="On: Save and Update also store the model selected above, and picking the persona switches to it. Off: picking the persona keeps whatever model is selected."/>
                                 <TextBox x:Name="PersonaNameBox" local:Ui.Placeholder="New persona name" MaxLength="40" Margin="0,0,0,6"
                                          KeyDown="PersonaNameBox_KeyDown"
-                                         ToolTip="Name for a new persona made from the current prompt, voice and speech rate. Press Enter to save."/>
+                                         ToolTip="Name for a new persona made from the current prompt, voice, speech rate and temperature. Press Enter to save."/>
                                 <Button x:Name="SavePersonaBtn" Content="Save as new persona" local:Ui.Icon="&#xE710;"
                                         Style="{StaticResource ActionButton}" Click="SavePersona_Click" Margin="0,0,0,6"
                                         ToolTip="Save the system prompt, voice and speech rate as a new persona"/>

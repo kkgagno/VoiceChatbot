@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace VoiceChatbot;
 
 /// <summary>
-/// A named preset for the system prompt, voice, speech rate and, optionally, the model.
+/// A named preset for the system prompt, voice, speech rate, temperature and, optionally, the model.
 /// Stored in AppSettings.Personas.
 /// </summary>
 public sealed class Persona
@@ -16,6 +16,9 @@ public sealed class Persona
     // Same range as the Speech rate slider.
     public const int MinSpeechRate = -5;
     public const int MaxSpeechRate = 5;
+    // Same range as the Temperature slider.
+    public const double MinTemperature = 0;
+    public const double MaxTemperature = 2;
 
     public string Name { get; set; } = "";
     public string SystemPrompt { get; set; } = "";
@@ -23,6 +26,11 @@ public sealed class Persona
     public int SpeechRate { get; set; }
     /// <summary>Blank keeps whatever model is selected when the persona is picked.</summary>
     public string Model { get; set; } = "";
+    /// <summary>
+    /// The chat temperature. Null (personas saved before temperature was part of them) keeps the
+    /// current temperature when the persona is picked.
+    /// </summary>
+    public double? Temperature { get; set; }
 
     public Persona Clone() => new()
     {
@@ -30,7 +38,8 @@ public sealed class Persona
         SystemPrompt = SystemPrompt,
         VoiceName = VoiceName,
         SpeechRate = SpeechRate,
-        Model = Model
+        Model = Model,
+        Temperature = Temperature
     };
 }
 
@@ -47,6 +56,12 @@ public static class PersonaCatalog
     }
 
     public static int ClampSpeechRate(int rate) => Math.Clamp(rate, Persona.MinSpeechRate, Persona.MaxSpeechRate);
+
+    /// <summary>The temperature in the slider's range, rounded to two decimals; null stays null and NaN becomes null.</summary>
+    public static double? ClampTemperature(double? temperature) =>
+        temperature is double t && !double.IsNaN(t)
+            ? Math.Round(Math.Clamp(t, Persona.MinTemperature, Persona.MaxTemperature), 2)
+            : null;
 
     /// <summary>
     /// Copy of the list that is safe to use: no null entries, clean names, no blank or duplicate
@@ -73,7 +88,8 @@ public static class PersonaCatalog
                 SystemPrompt = persona.SystemPrompt ?? "",
                 VoiceName = (persona.VoiceName ?? "").Trim(),
                 SpeechRate = ClampSpeechRate(persona.SpeechRate),
-                Model = (persona.Model ?? "").Trim()
+                Model = (persona.Model ?? "").Trim(),
+                Temperature = ClampTemperature(persona.Temperature)
             });
         }
 
@@ -82,9 +98,10 @@ public static class PersonaCatalog
 
     /// <summary>
     /// Normalizes the list and, when it is empty (first run or a damaged settings file), adds
-    /// "Default" made from the current prompt, voice and rate. Never returns an empty list.
+    /// "Default" made from the current prompt, voice, rate and temperature. Never returns an empty list.
     /// </summary>
-    public static List<Persona> EnsureDefault(IEnumerable<Persona?>? personas, string? systemPrompt, string? voiceName, int speechRate)
+    public static List<Persona> EnsureDefault(IEnumerable<Persona?>? personas, string? systemPrompt, string? voiceName, int speechRate,
+        double? temperature = null)
     {
         var result = Normalize(personas);
         if (result.Count == 0)
@@ -94,7 +111,8 @@ public static class PersonaCatalog
                 Name = Persona.DefaultName,
                 SystemPrompt = systemPrompt ?? "",
                 VoiceName = (voiceName ?? "").Trim(),
-                SpeechRate = ClampSpeechRate(speechRate)
+                SpeechRate = ClampSpeechRate(speechRate),
+                Temperature = ClampTemperature(temperature)
             });
         }
 

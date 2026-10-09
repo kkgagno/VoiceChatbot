@@ -7,7 +7,7 @@ using System.Windows.Threading;
 
 namespace VoiceChatbot;
 
-// Personas: named presets for the system prompt, voice, speech rate and (optionally) model
+// Personas: named presets for the system prompt, voice, speech rate, temperature and (optionally) model
 // (Core/Persona). Picked from the top-bar combo; saved, updated and deleted from the Personas
 // section of the Chat Backend expander. Saved conversations remember the persona they used.
 public partial class MainWindow
@@ -27,7 +27,7 @@ public partial class MainWindow
         // Startup only shows the active persona. The prompt, voice and rate already hold the values
         // saved last time, which may include edits not yet stored in the persona.
         _settings.Personas = PersonaCatalog.EnsureDefault(
-            _settings.Personas, _settings.SystemPrompt, _settings.VoiceName, _settings.SpeechRate);
+            _settings.Personas, _settings.SystemPrompt, _settings.VoiceName, _settings.SpeechRate, _settings.Temperature);
         var active = PersonaCatalog.ResolveActive(_settings.Personas, _settings.ActivePersona);
         _settings.ActivePersona = active?.Name ?? "";
         PersonaModelToggle.IsChecked = !string.IsNullOrWhiteSpace(active?.Model);
@@ -60,7 +60,7 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Applies the persona's prompt, voice, rate and model (if set) and makes it active.</summary>
+    /// <summary>Applies the persona's prompt, voice, rate, temperature and model (if set) and makes it active.</summary>
     private bool SwitchPersona(string? name)
     {
         var persona = PersonaCatalog.Find(_settings.Personas, name);
@@ -84,6 +84,9 @@ public partial class MainWindow
         SelectPersonaVoice(persona.VoiceName);
         // The slider's ValueChanged handler passes the rate on to the speech engine.
         RateSlider.Value = PersonaCatalog.ClampSpeechRate(persona.SpeechRate);
+        // Personas saved before temperature was part of them keep the current temperature.
+        if (PersonaCatalog.ClampTemperature(persona.Temperature) is double temperature)
+            TempSlider.Value = temperature;
         if (persona.Model.Length > 0)
             SelectPersonaModel(persona);
     }
@@ -265,6 +268,7 @@ public partial class MainWindow
         var voice = VoiceCombo.SelectedItem?.ToString() ?? VoiceCombo.Text;
         persona.VoiceName = string.IsNullOrWhiteSpace(voice) ? _settings.VoiceName ?? "" : voice.Trim();
         persona.SpeechRate = PersonaCatalog.ClampSpeechRate((int)Math.Round(RateSlider.Value));
+        persona.Temperature = PersonaCatalog.ClampTemperature(TempSlider.Value);
         persona.Model = PersonaModelToggle.IsChecked == true ? (ModelCombo.Text ?? "").Trim() : "";
     }
 

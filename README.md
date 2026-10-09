@@ -236,10 +236,10 @@ Attached documents and the knowledge folder use the same reader (`DocumentTextSe
 
 ### Personas
 
-A persona is a named preset for the system prompt, the voice, the speech rate and, optionally, the model. Pick one from the **Persona** box in the top bar, left of the voice buttons: the system prompt, voice and speech rate switch to it, and so does the model if the persona has one.
+A persona is a named preset for the system prompt, the voice, the speech rate, the temperature and, optionally, the model. Pick one from the **Persona** box in the top bar, left of the voice buttons: the system prompt, voice, speech rate and temperature switch to it, and so does the model if the persona has one. A persona saved before temperature was part of personas keeps the current temperature until you click **Update persona** on it once.
 
-- On first run a **Default** persona is made from your current prompt, voice and rate.
-- Under **Personas** in the **Chat Backend** expander, type a name and click **Save as new persona** (or press Enter) to save the current prompt, voice and rate as a new persona. **Update persona** saves them into the active persona. Turn on **Include the current model** before saving or updating to make the persona also switch models; leave it off to keep whatever model is selected.
+- On first run a **Default** persona is made from your current prompt, voice, rate and temperature.
+- Under **Personas** in the **Chat Backend** expander, type a name and click **Save as new persona** (or press Enter) to save the current prompt, voice, rate and temperature as a new persona. **Update persona** saves them into the active persona. Turn on **Include the current model** before saving or updating to make the persona also switch models; leave it off to keep whatever model is selected.
 - **Delete persona** deletes the active persona after a second click to confirm, then switches to the first remaining one. The last persona cannot be deleted.
 - Changes you make to the prompt, voice or speed are kept, but are not saved into the persona until you click **Update persona**.
 - Saved conversations remember their persona. Reopening a conversation switches back to that persona if it still exists.
