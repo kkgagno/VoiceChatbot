@@ -115,15 +115,34 @@ public class KnowledgeContextTests
     // ==================== Build ====================
 
     [Fact]
-    public void Build_SmallTalkGetsOnlyTheCatalog()
+    public void Build_SmallTalkGetsNothing()
     {
-        var result = KnowledgeContext.Build(SmallIndex(), "Tell me a joke", null, 4, 5000);
+        // Even a bare file list makes the model steer the chat towards the documents.
+        Assert.Equal(KnowledgeContextResult.None, KnowledgeContext.Build(SmallIndex(), "Tell me a joke", null, 4, 5000));
+        Assert.Equal(KnowledgeContextResult.None, KnowledgeContext.Build(SmallIndex(), "What's the weather like tomorrow?", null, 4, 5000));
+    }
 
-        Assert.Equal(KnowledgeContextMode.Catalog, result.Mode);
-        Assert.Equal("", result.Note);
-        Assert.Contains("knowledge folder 'townhouse' (3 files)", result.Text);
-        Assert.Contains(Path.Combine("HOA", "Bylaws.md"), result.Text);
-        Assert.DoesNotContain("leashed", result.Text);
+    [Fact]
+    public void Build_AQuestionNamingAFileGetsTheDocuments()
+    {
+        var result = KnowledgeContext.Build(SmallIndex(), "Who is my insurance with?", null, 4, 5000);
+
+        Assert.NotEqual(KnowledgeContextMode.None, result.Mode);
+        Assert.Contains("Insurance policy.md", result.Text);
+        Assert.Contains(KnowledgeContext.IgnoreWhenUnrelated, result.Text);
+    }
+
+    [Theory]
+    [InlineData("What does my deed say?", true)]
+    [InlineData("anything about the inspection?", true)]
+    [InlineData("can you scan this for me", false)]
+    [InlineData("tell me a joke", false)]
+    [InlineData("what happened in 2015", false)]
+    public void MentionsFileNames_UsesTellingWordsOnly(string message, bool expected)
+    {
+        var names = new[] { Path.Combine("Scans", "Deed scan final.pdf"), Path.Combine("Closing", "Inspection report 2015.md") };
+
+        Assert.Equal(expected, KnowledgeContext.MentionsFileNames(message, names));
     }
 
     [Fact]

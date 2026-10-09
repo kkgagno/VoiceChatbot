@@ -35,6 +35,8 @@ public partial class MainWindow
     // SaveSettings copies the text box whenever another setting is saved.
     private string _knowledgeFolder = "";
     private bool _knowledgeStatusHooked;
+    // True once this chat sent document text to the model; cleared when a new chat starts (ResetKnowledgeChatState).
+    private volatile bool _knowledgeUsedInChat;
 
     // ==================== Settings ====================
 
@@ -350,7 +352,18 @@ public partial class MainWindow
     private async Task AddKnowledgeContextAsync(List<ChatMessage> messages, string? userText, string? modelUserText,
         string? documentContext, string model, CancellationToken ct)
     {
-        if (!_settings.KnowledgeEnabled || messages.Count == 0 || string.IsNullOrWhiteSpace(userText) || IsLargePaste(userText))
+        if (messages.Count == 0 || string.IsNullOrWhiteSpace(userText))
+            return;
+
+        if (!_settings.KnowledgeEnabled)
+        {
+            // Earlier answers in this chat still talk about the documents; without this the model keeps going back to them.
+            if (_knowledgeUsedInChat)
+                AppendToCurrentUserMessage(messages, KnowledgeContext.DocumentsOffNote);
+            return;
+        }
+
+        if (IsLargePaste(userText))
             return;
 
         try
@@ -373,6 +386,8 @@ public partial class MainWindow
             var context = await Task.Run(() => _knowledge.BuildContext(folder, query, followUp, minExcerpts, budget), ct);
             if (context.Mode == KnowledgeContextMode.None || !AppendToCurrentUserMessage(messages, context.Text))
                 return;
+
+            _knowledgeUsedInChat = true;
 
             AppLog.Info($"Knowledge folder: {context.Mode}, ~{KnowledgeContext.EstimateTokens(context.Text):N0} of {budget:N0} tokens, " +
                         $"{context.DocumentsUsed} document(s).");
@@ -429,6 +444,9 @@ public partial class MainWindow
 
         return null;
     }
+
+    /// <summary>A new or different chat starts: it has not used the documents yet.</summary>
+    private void ResetKnowledgeChatState() => _knowledgeUsedInChat = false;
 
     // The excerpts ride along in the user's turn, like attached documents. A system message in the
     // middle of the chat breaks strict chat templates (Gemma under llama.cpp --jinja rejects roles

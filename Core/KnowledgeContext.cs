@@ -118,8 +118,15 @@ public static class KnowledgeContext
         var folderName = FolderName(folder);
         var names = files.Select(f => KnowledgeIndex.DisplayName(f.Path, folder)).ToList();
         var budgetChars = (long)budgetTokens * CharsPerToken;
+        var allNames = names.Concat(unreadable).ToList();
+        bool Mentions(string? text) => MentionsDocuments(text, folderName) || MentionsFileNames(text, allNames);
+        var mentioned = Mentions(query) || (KnowledgeIndex.IsShortFollowUp(query) && Mentions(followUp));
         if (files.Count == 0)
         {
+            // A message about something else gets nothing: even a bare file list pulls the model towards the documents.
+            if (!mentioned)
+                return KnowledgeContextResult.None;
+
             // Only files without text (photos without words, scans OCR could not read): the model can at least say they exist.
             var unreadableOnly = FitCatalog(folderName, names, unreadable, KnowledgeContextMode.Catalog, budgetChars);
             return unreadableOnly.Length == 0
@@ -128,15 +135,9 @@ public static class KnowledgeContext
         }
 
         var hits = index.Search(query, MaxCandidates, followUpContext: followUp);
-        var aboutDocuments = hits.Count > 0 || MentionsDocuments(query, folderName) ||
-                             (KnowledgeIndex.IsShortFollowUp(query) && MentionsDocuments(followUp, folderName));
-        if (!aboutDocuments)
-        {
-            var catalogOnly = FitCatalog(folderName, names, unreadable, KnowledgeContextMode.Catalog, budgetChars);
-            return catalogOnly.Length == 0
-                ? KnowledgeContextResult.None
-                : new KnowledgeContextResult(KnowledgeContextMode.Catalog, catalogOnly, "", Array.Empty<KnowledgeHit>(), 0);
-        }
+        // A message about something else gets nothing: even a bare file list pulls the model towards the documents.
+        if (hits.Count == 0 && !mentioned)
+            return KnowledgeContextResult.None;
 
         // The catalogs differ only in their instruction; the text gets what the longest one leaves.
         var room = budgetChars - 2 - new[] { KnowledgeContextMode.WholeFolder, KnowledgeContextMode.Excerpts, KnowledgeContextMode.Overview }
@@ -278,7 +279,7 @@ public static class KnowledgeContext
         return sb.ToString().TrimEnd();
     }
 
-    private static string Instruction(KnowledgeContextMode mode) => mode switch
+    private static string Instruction(KnowledgeContextMode mode) => (mode switch
     {
         KnowledgeContextMode.WholeFolder =>
             "The full text of every document is below. Use it when relevant and say which file you used; if it does not contain the answer, say so, and do not invent contents.",
@@ -288,7 +289,48 @@ public static class KnowledgeContext
             "No passage matched the message's words, so the beginning of each document is below. If they do not contain the answer, say which documents might, and do not invent contents.",
         _ =>
             "No passage matched this message, so only the file names are listed. If the question is about these documents, say which ones might have the answer, and do not invent their contents."
-    };
+    }) + " " + IgnoreWhenUnrelated;
+
+    /// <summary>Added to every knowledge text: the documents ride along on a guess, so the model must be free to ignore them.</summary>
+    public const string IgnoreWhenUnrelated =
+        "If the message is actually about something else, ignore these documents and do not mention them.";
+
+    /// <summary>
+    /// Added to the current message when the owner turned the knowledge folder off after this chat used it,
+    /// so earlier answers about the documents do not keep steering the conversation back to them.
+    /// </summary>
+    public const string DocumentsOffNote =
+        "[Note from the app: the owner has turned off access to their documents. Do not bring up the documents, " +
+        "or anything taken from them earlier in this chat, unless the owner asks about them. Answer this message on its own.]";
+
+    // Words in file names that say nothing about the contents ("Deed scan final.pdf" is about the deed).
+    private static readonly HashSet<string> GenericNameWords = new(
+        TextRanker.Tokenize("scan scanned copy final draft doc docs document file page pages img image photo pic picture new old version signed misc untitled"),
+        StringComparer.Ordinal);
+
+    /// <summary>
+    /// True when the message uses a telling word from a file or folder name in the knowledge folder
+    /// ("what does my deed say" with Deed.pdf, "insurance" with Insurance policy.pdf). Generic words such
+    /// as "scan" or "final" and numbers do not count.
+    /// </summary>
+    public static bool MentionsFileNames(string? text, IEnumerable<string>? displayNames)
+    {
+        if (string.IsNullOrWhiteSpace(text) || displayNames == null)
+            return false;
+
+        var nameWords = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in displayNames)
+        {
+            var withoutExtension = Path.ChangeExtension(name ?? "", null) ?? "";
+            foreach (var word in TextRanker.Tokenize(withoutExtension))
+            {
+                if (word.Length >= 3 && !word.All(char.IsDigit) && !GenericNameWords.Contains(word))
+                    nameWords.Add(word);
+            }
+        }
+
+        return nameWords.Count > 0 && TextRanker.Tokenize(text).Any(nameWords.Contains);
+    }
 
     // Fewer names until the catalog takes at most MaxCatalogShare of the budget; "" when not even that fits.
     private static string FitCatalog(string folderName, IReadOnlyList<string> files, IReadOnlyList<string> unreadable,

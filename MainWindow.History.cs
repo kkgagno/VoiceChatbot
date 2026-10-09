@@ -347,6 +347,7 @@ public partial class MainWindow
         _currentConversation = null;
         _pendingUserImagePaths = new List<string>();
         _recentWebSearchContexts.Clear();
+        ResetKnowledgeChatState();
     }
 
     private void StartNewChat()
