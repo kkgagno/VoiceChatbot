@@ -15,8 +15,12 @@ public enum TranscriptSummaryKind
     Part,
     /// <summary>Combining the notes on the parts of a long transcript into the chosen style.</summary>
     Combine,
-    /// <summary>Merging the words said since the last update into the running live notes.</summary>
+    /// <summary>Merging the words said since the last update into the running live notes (older web page).</summary>
     LiveNotes,
+    /// <summary>Detailed notes on one stretch of a live transcript: a "[start–end]" section of the notes.</summary>
+    SectionNotes,
+    /// <summary>The brief "SUMMARY SO FAR" at the top of the notes, written from the section notes.</summary>
+    SummarySoFar,
 }
 
 /// <summary>
@@ -26,6 +30,10 @@ public enum TranscriptSummaryKind
 public sealed record TranscriptSummaryRequest(TranscriptSummaryKind Kind, string Style, string UserMessage)
 {
     public bool IsFinal { get; init; } = true;
+
+    /// <summary>Part of a live-notes update while recording (not a summary the user asked for).</summary>
+    public bool IsLiveUpdate =>
+        Kind is TranscriptSummaryKind.LiveNotes or TranscriptSummaryKind.SectionNotes or TranscriptSummaryKind.SummarySoFar;
 }
 
 /// <summary>
@@ -51,14 +59,76 @@ public static class TranscriptSummaryPrompts
     public static string ComposeUserMessage(string instruction, string label, string? text) =>
         $"{instruction.Trim()}\n\n{label}:\n{(text ?? "").Trim()}";
 
-    /// <summary>The whole transcript in one request, in the style's own words.</summary>
-    public static TranscriptSummaryRequest Summary(string? transcript, string? style)
+    /// <summary>
+    /// The whole transcript in one request, in the style's own words. <paramref name="earlierNotes"/> is text a
+    /// user wrote in the notes before they were kept by time; it is sent along so the summary covers it too.
+    /// </summary>
+    public static TranscriptSummaryRequest Summary(string? transcript, string? style, string? earlierNotes = null)
     {
         var name = TranscriptSummaryStyles.Normalize(style);
-        return new TranscriptSummaryRequest(
-            TranscriptSummaryKind.Summary,
-            name,
-            ComposeUserMessage(TranscriptSummaryStyles.GetInstruction(name), "TRANSCRIPT", transcript));
+        var instruction = TranscriptSummaryStyles.GetInstruction(name);
+        if (string.IsNullOrWhiteSpace(earlierNotes))
+            return new TranscriptSummaryRequest(TranscriptSummaryKind.Summary, name, ComposeUserMessage(instruction, "TRANSCRIPT", transcript));
+
+        instruction += " The EARLIER NOTES were written on this session before; include what matters from them too.";
+        var message = $"{instruction.Trim()}\n\nEARLIER NOTES:\n{earlierNotes.Trim()}\n\nTRANSCRIPT:\n{(transcript ?? "").Trim()}";
+        return new TranscriptSummaryRequest(TranscriptSummaryKind.Summary, name, message);
+    }
+
+    /// <summary>
+    /// Detailed notes on one stretch of a live transcript (only the text said in it): the body of the section
+    /// labeled <paramref name="label"/> ("05:12–10:20" or "Part 3"). A stretch too long for one request is sent
+    /// in parts (<paramref name="part"/> of <paramref name="parts"/>), whose notes are joined.
+    /// </summary>
+    public static TranscriptSummaryRequest SectionNotes(string? text, string? label, string? style, int part = 1, int parts = 1)
+    {
+        var name = TranscriptSummaryStyles.Normalize(style);
+        var range = (label ?? "").Trim();
+        var what = TranscriptNotes.TryParseRange(range, out var start, out var end)
+            ? $"Below is what was said from {LiveTranscriptText.FormatTimestamp(start)} to {LiveTranscriptText.FormatTimestamp(end)} of a live transcript"
+            : range.Length > 0 ? $"Below is {range.ToLowerInvariant()} of a live transcript" : "Below is a stretch of a live transcript";
+        if (parts > 1)
+            what += $" (piece {part} of {parts} of it)";
+
+        var instruction =
+            $"{what}. Write detailed notes on this text only, as bullet points starting with \"- \": a bullet for every " +
+            "topic, fact, decision, action item (with the owner and due date when they are stated), question, name, date " +
+            "and number, in the order they came up. Usually write 3 to 10 bullets, depending on how much was said. " +
+            "Never compress it into one sentence. If it was only small talk, write one bullet saying so. " +
+            "Keep names, dates and numbers exact and do not invent details. " +
+            "Return only the bullets, with no heading, no preamble and no closing remarks.";
+
+        var heading = range.Length > 0 ? $"TRANSCRIPT {range}" : "TRANSCRIPT";
+        if (parts > 1)
+            heading += $" (PIECE {part} OF {parts})";
+        return new TranscriptSummaryRequest(TranscriptSummaryKind.SectionNotes, name, ComposeUserMessage(instruction, heading, text))
+        {
+            IsFinal = false
+        };
+    }
+
+    /// <summary>
+    /// The brief summary at the top of the live notes ("SUMMARY SO FAR"), written in the style's format from the
+    /// section notes (each "[start–end]" line with its bullets), not from the transcript. <paramref name="earlierNotes"/>
+    /// is text a user wrote in the notes before they were kept by time.
+    /// </summary>
+    public static TranscriptSummaryRequest SummarySoFar(IReadOnlyList<string> sectionNotes, string? style, string? earlierNotes = null)
+    {
+        var name = TranscriptSummaryStyles.Normalize(style);
+        var hasEarlier = !string.IsNullOrWhiteSpace(earlierNotes);
+        var instruction =
+            "Below are notes by time on a live transcript that is still going on, in order" +
+            (hasEarlier ? ", after EARLIER NOTES written on it before" : "") + ". " +
+            $"Write a brief summary of the session so far, written as {TranscriptSummaryStyles.GetFormat(name)}. " +
+            "Keep it brief: the main topics, decisions, action items and open questions so far, not a copy of the notes. " +
+            "Keep names, dates and numbers exact and do not invent details. " +
+            "Return only the summary, with no heading, no preamble and no closing remarks.";
+
+        var body = string.Join("\n\n", sectionNotes.Select(n => n.Trim()).Where(n => n.Length > 0));
+        var message = hasEarlier
+            ? $"{instruction}\n\nEARLIER NOTES:\n{earlierNotes!.Trim()}\n\nSECTION NOTES:\n{body}"
+            : ComposeUserMessage(instruction, "SECTION NOTES", body);
+        return new TranscriptSummaryRequest(TranscriptSummaryKind.SummarySoFar, name, message);
     }
 
     /// <summary>Notes on part <paramref name="number"/> of <paramref name="count"/> of a long transcript.</summary>
@@ -104,8 +174,9 @@ public static class TranscriptSummaryPrompts
     }
 
     /// <summary>
-    /// Live notes: the current notes plus only the words said since they were last updated. The model returns
-    /// the full updated notes, keeping earlier points and merging the new ones in.
+    /// Live notes as the older web page asks for them: the current notes plus only the words said since they were
+    /// last updated, merged into full updated notes. The transcribers now use <see cref="SectionNotes"/> and
+    /// <see cref="SummarySoFar"/> (see <see cref="TranscriptNotesWriter"/>) instead.
     /// </summary>
     public static TranscriptSummaryRequest LiveNotes(string? currentNotes, string? newTranscript, string? style, bool isFinal = true)
     {

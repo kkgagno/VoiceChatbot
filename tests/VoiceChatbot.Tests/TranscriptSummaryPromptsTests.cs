@@ -113,4 +113,62 @@ public class TranscriptSummaryPromptsTests
         Assert.Equal(formats.Count, formats.Distinct().Count());
         Assert.Equal(TranscriptSummaryStyles.GetFormat(TranscriptSummaryStyles.Summary), TranscriptSummaryStyles.GetFormat("unknown"));
     }
+
+    [Fact]
+    public void SectionNotesAskForDetailedBulletsOnOnlyThatStretch()
+    {
+        var request = TranscriptSummaryPrompts.SectionNotes("[05:14] We moved the date.", "05:14–10:20", "Action items");
+
+        Assert.Equal(TranscriptSummaryKind.SectionNotes, request.Kind);
+        Assert.Equal(TranscriptSummaryStyles.ActionItems, request.Style);
+        Assert.False(request.IsFinal);
+        Assert.True(request.IsLiveUpdate);
+        Assert.Contains("from 05:14 to 10:20", request.UserMessage);
+        Assert.Contains("this text only", request.UserMessage);
+        Assert.Contains("action item (with the owner and due date", request.UserMessage);
+        Assert.Contains("3 to 10 bullets", request.UserMessage);
+        Assert.Contains("Never compress it into one sentence", request.UserMessage);
+        Assert.Contains("only small talk, write one bullet", request.UserMessage);
+        Assert.EndsWith("TRANSCRIPT 05:14–10:20:\n[05:14] We moved the date.", request.UserMessage);
+
+        var part = TranscriptSummaryPrompts.SectionNotes("text", "Part 3", null, part: 2, parts: 4);
+        Assert.Contains("Below is part 3 of a live transcript (piece 2 of 4 of it).", part.UserMessage);
+        Assert.Contains("TRANSCRIPT Part 3 (PIECE 2 OF 4):\ntext", part.UserMessage);
+    }
+
+    [Fact]
+    public void SummarySoFarIsWrittenFromTheSectionNotesInTheStyleFormat()
+    {
+        var request = TranscriptSummaryPrompts.SummarySoFar(new[] { "[00:00–05:00]\n- a", " [05:00–10:00]\n- b " }, "Meeting notes");
+
+        Assert.Equal(TranscriptSummaryKind.SummarySoFar, request.Kind);
+        Assert.True(request.IsLiveUpdate);
+        Assert.Contains(TranscriptSummaryStyles.GetFormat(TranscriptSummaryStyles.MeetingNotes), request.UserMessage);
+        Assert.Contains("brief", request.UserMessage);
+        Assert.EndsWith("SECTION NOTES:\n[00:00–05:00]\n- a\n\n[05:00–10:00]\n- b", request.UserMessage);
+        Assert.DoesNotContain("EARLIER NOTES", request.UserMessage);
+
+        var withEarlier = TranscriptSummaryPrompts.SummarySoFar(new[] { "[00:00–05:00]\n- a" }, null, " typed ");
+        Assert.Contains("EARLIER NOTES:\ntyped\n\nSECTION NOTES:\n[00:00–05:00]\n- a", withEarlier.UserMessage);
+    }
+
+    [Fact]
+    public void SummaryCanCarryEarlierNotes()
+    {
+        Assert.Equal(TranscriptSummaryPrompts.Summary("[00:00] Hi.", null).UserMessage,
+            TranscriptSummaryPrompts.Summary("[00:00] Hi.", null, "  ").UserMessage);
+
+        var request = TranscriptSummaryPrompts.Summary("[00:00] Hi.", "Key points", "Ask about the budget.");
+        Assert.Equal(TranscriptSummaryKind.Summary, request.Kind);
+        Assert.False(request.IsLiveUpdate);
+        Assert.Contains("EARLIER NOTES:\nAsk about the budget.\n\nTRANSCRIPT:\n[00:00] Hi.", request.UserMessage);
+    }
+
+    [Fact]
+    public void StylesHaveHeadings()
+    {
+        Assert.Equal(new[] { "SUMMARY", "ACTION ITEMS", "MEETING NOTES", "KEY POINTS" },
+            TranscriptSummaryStyles.Names.Select(TranscriptSummaryStyles.GetHeading));
+        Assert.Equal("SUMMARY", TranscriptSummaryStyles.GetHeading("unknown"));
+    }
 }

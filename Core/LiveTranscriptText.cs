@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,6 +11,8 @@ namespace VoiceChatbot;
 public static class LiveTranscriptText
 {
     private static readonly Regex TimestampPrefix = new(@"^[ \t]*\[\d{1,3}:\d{2}(?::\d{2})?\][ \t]?", RegexOptions.Multiline);
+    private static readonly Regex Timestamp = new(@"^(\d{1,3}):(\d{2})(?::(\d{2}))?$");
+    private static readonly Regex LineTimestamp = new(@"^[ \t]*\[(\d{1,3}:\d{2}(?::\d{2})?)\]");
     private static readonly Regex Word = new(@"\b[\w']+\b");
 
     /// <summary>"03:07" under an hour, "1:02:03" from an hour on. Negative times count as zero.</summary>
@@ -22,6 +25,66 @@ public static class LiveTranscriptText
         return totalHours > 0
             ? $"{totalHours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
             : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+    }
+
+    /// <summary>
+    /// Reads a time written by <see cref="FormatTimestamp"/>: "03:07" (minutes and seconds) or "1:02:03"
+    /// (hours, minutes and seconds). False for anything else.
+    /// </summary>
+    public static bool TryParseTimestamp(string? text, out TimeSpan value)
+    {
+        value = TimeSpan.Zero;
+        var match = Timestamp.Match((text ?? "").Trim());
+        if (!match.Success)
+            return false;
+
+        var first = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        var second = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+        if (second > 59)
+            return false;
+
+        if (!match.Groups[3].Success)
+        {
+            value = new TimeSpan(0, first, second);
+            return true;
+        }
+
+        var third = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+        if (third > 59)
+            return false;
+        value = new TimeSpan(first, second, third);
+        return true;
+    }
+
+    /// <summary>The "[mm:ss]" time at the start of a transcript line; false for a line without one.</summary>
+    public static bool TryReadLineTimestamp(string? line, out TimeSpan value)
+    {
+        value = TimeSpan.Zero;
+        var match = LineTimestamp.Match(line ?? "");
+        return match.Success && TryParseTimestamp(match.Groups[1].Value, out value);
+    }
+
+    /// <summary>The time of the first line in <paramref name="transcript"/> that starts with "[mm:ss]", or null.</summary>
+    public static TimeSpan? FirstTimestamp(string? transcript)
+    {
+        foreach (var line in (transcript ?? "").Replace("\r\n", "\n").Split('\n'))
+        {
+            if (TryReadLineTimestamp(line, out var at))
+                return at;
+        }
+        return null;
+    }
+
+    /// <summary>The latest "[mm:ss]" line time in <paramref name="transcript"/>, or null when no line has one.</summary>
+    public static TimeSpan? LastTimestamp(string? transcript)
+    {
+        TimeSpan? latest = null;
+        foreach (var line in (transcript ?? "").Replace("\r\n", "\n").Split('\n'))
+        {
+            if (TryReadLineTimestamp(line, out var at) && (latest == null || at > latest))
+                latest = at;
+        }
+        return latest;
     }
 
     /// <summary>

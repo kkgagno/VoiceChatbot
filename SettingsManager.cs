@@ -161,10 +161,10 @@ public class TranscriberSettings
     public string Source { get; set; } = SourceMicrophone;
     public string SummaryStyle { get; set; } = TranscriptSummaryStyles.Summary;
     public string SystemPrompt { get; set; } = DefaultSystemPrompt;
-    // Live notes: while recording, the summary pane is updated with what was said since the last update.
+    // Live notes: while recording, notes on what was said since the last update are added to the notes pane.
     // Settings files from before this option load with it off and the default interval.
     public bool LiveNotes { get; set; } = false;
-    // One of LiveNotesPolicy.IntervalChoicesMinutes (2, 5, 10); other values are rounded to the nearest.
+    // One of LiveNotesPolicy.IntervalChoicesMinutes (5, 10, 15); other values are rounded to the nearest (2 becomes 5).
     public int LiveNotesIntervalMinutes { get; set; } = LiveNotesPolicy.DefaultIntervalMinutes;
 }
 

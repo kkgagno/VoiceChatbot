@@ -129,4 +129,41 @@ public class LiveTranscriptTextTests
         Assert.Equal(expected, TranscriptSummaryStyles.Normalize(name));
         Assert.Equal(TranscriptSummaryStyles.GetInstruction(expected), TranscriptSummaryStyles.GetInstruction(name));
     }
+
+    [Theory]
+    [InlineData("03:07", 0, 3, 7)]
+    [InlineData("00:00", 0, 0, 0)]
+    [InlineData("1:02:03", 1, 2, 3)]
+    [InlineData(" 125:59 ", 2, 5, 59)]
+    public void ReadsTimestamps(string text, int hours, int minutes, int seconds)
+    {
+        Assert.True(LiveTranscriptText.TryParseTimestamp(text, out var value));
+        Assert.Equal(new TimeSpan(hours, minutes, seconds), value);
+    }
+
+    [Theory]
+    [InlineData("3:7")]
+    [InlineData("03:60")]
+    [InlineData("1:02:61")]
+    [InlineData("abc")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void RejectsOtherTimes(string? text)
+    {
+        Assert.False(LiveTranscriptText.TryParseTimestamp(text, out _));
+    }
+
+    [Fact]
+    public void FindsTheFirstAndLastLineTimes()
+    {
+        var transcript = "typed\r\n[00:05] a\n  [12:30] b\n[03:00] c\nnot [09:00] at the start";
+
+        Assert.True(LiveTranscriptText.TryReadLineTimestamp("[1:00:02] hello", out var at));
+        Assert.Equal(new TimeSpan(1, 0, 2), at);
+        Assert.False(LiveTranscriptText.TryReadLineTimestamp("hello [00:01]", out _));
+        Assert.Equal(TimeSpan.FromSeconds(5), LiveTranscriptText.FirstTimestamp(transcript));
+        Assert.Equal(new TimeSpan(0, 12, 30), LiveTranscriptText.LastTimestamp(transcript));
+        Assert.Null(LiveTranscriptText.FirstTimestamp("no times"));
+        Assert.Null(LiveTranscriptText.LastTimestamp(null));
+    }
 }

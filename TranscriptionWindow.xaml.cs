@@ -20,8 +20,10 @@ namespace VoiceChatbot;
 /// <summary>
 /// Live Transcriber: records the microphone or PC audio, cuts it into chunks at pauses (SpeechChunker),
 /// transcribes the chunks one at a time with the app's Whisper backend and appends them as "[mm:ss]" lines.
-/// The chat model can summarize the transcript (TranscriptSummarizer splits a long one into parts), or keep
-/// live notes up to date while recording (LiveNotesPolicy decides when), and the main chat gets both as context.
+/// The chat model keeps notes by time while recording (LiveNotesPolicy decides when, TranscriptNotesWriter
+/// writes them in the TranscriptNotes layout), finishes them with a full summary on Stop, and can rebuild them
+/// from the whole transcript. The main chat gets the transcript and notes as context. The session is kept in
+/// current-session.json, so closing the window (or the app) and opening it again continues where it was.
 /// </summary>
 public partial class TranscriptionWindow : Window
 {
@@ -31,10 +33,15 @@ public partial class TranscriptionWindow : Window
     // After the assistant stops speaking its voice can still echo for a moment.
     private static readonly TimeSpan SpeechEchoTail = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan StatusMessageTime = TimeSpan.FromSeconds(6);
+    // The session state is written this long after a change (and right away on stop, clear and close).
+    private static readonly TimeSpan SessionStateDelay = TimeSpan.FromSeconds(2);
 
     /// <summary>%APPDATA%\VoiceChatbot\transcripts: where each session is saved when it stops.</summary>
     public static string TranscriptsFolder { get; } = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceChatbot", "transcripts");
+
+    /// <summary>The current session (transcript, notes, time so far), restored when the window opens again.</summary>
+    private static string SessionStatePath => TranscriberSessionStore.PathIn(TranscriptsFolder);
 
     // Chunk == null marks where Clear was pressed while recording (see Clear_Click).
     private sealed record PendingChunk(SpeechChunk? Chunk, TimeSpan At);
@@ -67,8 +74,12 @@ public partial class TranscriptionWindow : Window
     private Task? _queueWorker;
     private int _pendingChunks;
 
-    // Session (UI thread).
+    // Session (UI thread). The session time is _elapsedOffset (time recorded before this window, for a restored
+    // session) plus _elapsed.
     private readonly Stopwatch _elapsed = new();
+    private TimeSpan _elapsedOffset;
+    private string? _autoSaveFileName; // the session's file in the transcripts folder, once chosen
+    private readonly DispatcherTimer _sessionStateTimer;
     private readonly DispatcherTimer _uiTimer;
     private bool _initializing = true;
     private bool _isRecording;
@@ -80,7 +91,9 @@ public partial class TranscriptionWindow : Window
     private bool _unsavedChanges;
     private DateTime _statusMessageUntil = DateTime.MinValue;
     private string _summaryStyleUsed = TranscriptSummaryStyles.Summary;
+    // Summarize / Re-summarize all in progress (the button reads Cancel).
     private CancellationTokenSource? _summaryCts;
+    private string? _summaryProgress;
     private int _clearCount;
     // Clear pressed while recording: the old session is saved and cleared once its last chunks are transcribed.
     private bool _clearPending;
@@ -91,13 +104,14 @@ public partial class TranscriptionWindow : Window
     private bool _closeRequested;
     private bool _closed;
 
-    // Live notes (UI thread): the summary pane is updated with what was said since the last update.
+    // Live notes (UI thread): notes on what was said since the last update are added to the notes pane.
     private readonly LiveNotesPolicy _liveNotes = new();
     private readonly DispatcherTimer _liveNotesTimer;
     private CancellationTokenSource? _liveNotesCts;
     private Task<bool>? _liveNotesTask;
-    private DateTime? _notesUpdatedAt; // local time of the last live-notes update shown
+    private DateTime? _notesUpdatedAt; // local time of the last notes update shown
     private bool _liveNotesFailed;
+    private string? _notesProblem; // the summary at the top could not be refreshed by the last update
 
     public TranscriptionWindow(
         SpeechEngine speech,
@@ -121,8 +135,11 @@ public partial class TranscriptionWindow : Window
         _uiTimer.Tick += (_, _) => RefreshLiveStatus();
         _liveNotesTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = LiveNotesPolicy.CheckEvery };
         _liveNotesTimer.Tick += (_, _) => LiveNotesTick();
+        _sessionStateTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = SessionStateDelay };
+        _sessionStateTimer.Tick += (_, _) => SaveSessionState();
 
         ApplySettings();
+        var restoredFrom = RestoreSession();
         _initializing = false;
 
         _assistantSpeaking = _speech.CurrentState == VoiceState.Speaking;
@@ -130,10 +147,22 @@ public partial class TranscriptionWindow : Window
 
         UpdateRecordingUi();
         UpdateStats();
-        ShowStatus("Ready. Choose Microphone or PC audio and press Start (Ctrl+R).", sticky: true);
+        UpdateSummaryHeader();
+        if (restoredFrom is { } from)
+        {
+            _contextUpdated(TranscriptBox.Text, SummaryBox.Text);
+            ShowStatus($"Restored your last session from {from:g}. Clear starts a new one.", sticky: true);
+        }
+        else
+        {
+            ShowStatus("Ready. Choose Microphone or PC audio and press Start (Ctrl+R).", sticky: true);
+        }
     }
 
     public bool IsTranscribing => _isRecording;
+
+    /// <summary>Recording time of this session, including the time recorded before a restore.</summary>
+    private TimeSpan SessionElapsed => _elapsedOffset + _elapsed.Elapsed;
 
     public void ActivateExisting()
     {
@@ -297,7 +326,7 @@ public partial class TranscriptionWindow : Window
             {
                 SpeechThreshold = SpeechChunkerOptions.ThresholdForNoiseGate(_speech.NoiseGate)
             });
-            _timelineOrigin = _elapsed.Elapsed;
+            _timelineOrigin = SessionElapsed;
         }
 
         if (!StartSource(SelectedSource))
@@ -415,15 +444,19 @@ public partial class TranscriptionWindow : Window
         var stopped = reason ?? "Stopped.";
         ShowStatus(stopped + SavedNote(savedPath), sticky: true);
 
-        // Live notes: one last update with the words added since the previous one, then the same session
-        // file is saved again so it has the final notes.
+        // Final notes (live notes on, or notes by time already there): a last section for the words added since
+        // the previous update and a full summary at the top; then the same session file is saved again.
         var notesUpdated = await FinishLiveNotesAsync(stopped);
         if (_closed)
             return;
 
         var resavedPath = AutoSave();
+        SaveSessionState();
         if (notesUpdated && !_isRecording && _notesUpdatedAt is { } at)
-            ShowStatus($"{stopped} {LiveNotesPolicy.FormatUpdated(at)}.{SavedNote(resavedPath ?? savedPath)}", sticky: true);
+        {
+            var problem = _notesProblem != null ? $" {_notesProblem}" : "";
+            ShowStatus($"{stopped} {LiveNotesPolicy.FormatUpdated(at)}.{problem}{SavedNote(resavedPath ?? savedPath)}", sticky: true);
+        }
     }
 
     private static string SavedNote(string? path) =>
@@ -498,7 +531,7 @@ public partial class TranscriptionWindow : Window
         {
             // Re-align timestamps with the clock: the switch itself took a moment without audio.
             if (_chunker != null)
-                _timelineOrigin = _elapsed.Elapsed - _chunker.Position;
+                _timelineOrigin = SessionElapsed - _chunker.Position;
         }
 
         if (!StartSource(SelectedSource))
@@ -691,7 +724,7 @@ public partial class TranscriptionWindow : Window
     /// <summary>Timer tick while recording or finishing: elapsed time, level meter and the live status line.</summary>
     private void RefreshLiveStatus()
     {
-        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(_elapsed.Elapsed);
+        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(SessionElapsed);
 
         double level;
         bool paused;
@@ -736,7 +769,7 @@ public partial class TranscriptionWindow : Window
         StartStopBtn.IsEnabled = !finishing;
         RecordDot.SetResourceReference(Shape.FillProperty,
             _isRecording ? "ErrorBrush" : finishing ? "WarningBrush" : "TextMutedBrush");
-        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(_elapsed.Elapsed);
+        ElapsedText.Text = LiveTranscriptText.FormatTimestamp(SessionElapsed);
         if (!_isRecording)
             LevelMeter.Value = 0;
 
@@ -744,6 +777,52 @@ public partial class TranscriptionWindow : Window
         TranscriptBox.IsReadOnly = _isRecording || finishing;
         EditHintText.Text = TranscriptBox.IsReadOnly ? "Read-only while recording" : "Editable";
         ClearBtn.IsEnabled = !finishing;
+        UpdateNotesControls();
+    }
+
+    /// <summary>
+    /// The notes pane is read-only while recording and while notes are being written (updates only add to it then);
+    /// editable when stopped. The Summarize button reads "Update notes now" while recording, "Summarize" for
+    /// empty notes, "Re-summarize all" otherwise, and "Cancel" while a summary is being written.
+    /// </summary>
+    private void UpdateNotesControls()
+    {
+        var notesBusy = _liveNotesCts != null || _summaryCts != null;
+        SummaryBox.IsReadOnly = _isRecording || _isFinishing || notesBusy;
+
+        string label;
+        string icon;
+        string tip;
+        if (_summaryCts != null)
+        {
+            label = "Cancel";
+            icon = "\uE711";
+            tip = "Stop writing the notes; the previous notes are kept";
+        }
+        else if (_isRecording)
+        {
+            label = "Update notes now";
+            icon = "\uE72C";
+            tip = "Add notes on what was said since the last update now, without waiting for the live-notes interval";
+        }
+        else if (string.IsNullOrWhiteSpace(SummaryBox.Text))
+        {
+            label = "Summarize";
+            icon = "\uE9D5";
+            tip = "Write notes by time and a summary in the chosen style from the whole transcript; a long transcript is written section by section";
+        }
+        else
+        {
+            label = "Re-summarize all";
+            icon = "\uE72C";
+            tip = "Replace the notes with fresh notes by time and a summary in the chosen style, written from the whole transcript";
+        }
+
+        SummarizeBtn.Content = label;
+        Ui.SetIcon(SummarizeBtn, icon);
+        SummarizeBtn.ToolTip = tip;
+        // While an update or the final notes are being written, wait for them.
+        SummarizeBtn.IsEnabled = _summaryCts != null || (!_isFinishing && _liveNotesCts == null);
     }
 
     private void UpdateStats()
@@ -755,14 +834,14 @@ public partial class TranscriptionWindow : Window
     private void UpdateSummaryHeader()
     {
         var hasSummary = !string.IsNullOrWhiteSpace(SummaryBox.Text);
-        SummaryHeaderText.Text = hasSummary ? _summaryStyleUsed.ToUpperInvariant() : "SUMMARY";
-
         var updated = hasSummary && _notesUpdatedAt is { } at ? LiveNotesPolicy.FormatUpdated(at) : "";
         string detail;
-        if (_liveNotesCts != null)
+        if (_summaryCts != null)
+            detail = _summaryProgress ?? "Summarizing...";
+        else if (_liveNotesCts != null)
             detail = "Updating notes...";
         else if (_liveNotesFailed)
-            detail = updated.Length > 0 ? $"Update failed · {updated}" : "Notes update failed";
+            detail = updated.Length > 0 ? $"Summary not refreshed · {updated}" : "Notes update failed";
         else
             detail = updated;
 
@@ -780,6 +859,7 @@ public partial class TranscriptionWindow : Window
         _unsavedChanges = true;
         UpdateStats();
         _contextUpdated(TranscriptBox.Text, SummaryBox.Text);
+        ScheduleSessionStateSave();
     }
 
     private void SummaryBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -789,7 +869,9 @@ public partial class TranscriptionWindow : Window
 
         _unsavedChanges = true;
         UpdateSummaryHeader();
+        UpdateNotesControls();
         _contextUpdated(TranscriptBox.Text, SummaryBox.Text);
+        ScheduleSessionStateSave();
     }
 
     private void Clear_Click(object sender, RoutedEventArgs e)
@@ -805,7 +887,7 @@ public partial class TranscriptionWindow : Window
 
         // The words already spoken belong to the old session: they are transcribed first (the queue runs in
         // order) and saved with it, while what is said from now on starts the new session at 00:00.
-        var length = _elapsed.Elapsed;
+        var length = SessionElapsed;
         bool marked;
         lock (_audioSync)
         {
@@ -815,6 +897,7 @@ public partial class TranscriptionWindow : Window
             _timelineOrigin = _chunker != null ? TimeSpan.Zero - _chunker.Position : TimeSpan.Zero;
         }
         _elapsed.Restart();
+        _elapsedOffset = TimeSpan.Zero;
         ElapsedText.Text = LiveTranscriptText.FormatTimestamp(TimeSpan.Zero);
 
         if (!marked)
@@ -861,6 +944,7 @@ public partial class TranscriptionWindow : Window
         _liveNotes.Reset(DateTime.UtcNow);
         _notesUpdatedAt = null;
         _liveNotesFailed = false;
+        _notesProblem = null;
 
         TranscriptBox.Clear();
         SummaryBox.Clear();
@@ -868,11 +952,14 @@ public partial class TranscriptionWindow : Window
         UpdateSummaryHeader();
         _unsavedChanges = false;
         _sessionStarted = newSessionStarted;
+        _autoSaveFileName = null;
+        DeleteSessionState();
 
         // A new session starts at 00:00.
         if (newSessionStarted == null)
         {
             _elapsed.Reset();
+            _elapsedOffset = TimeSpan.Zero;
             ElapsedText.Text = LiveTranscriptText.FormatTimestamp(TimeSpan.Zero);
         }
 
@@ -883,7 +970,11 @@ public partial class TranscriptionWindow : Window
 
     // ==================== Summary ====================
 
-    private async void Summarize_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// While recording: "Update notes now". When stopped: Summarize / Re-summarize all (fresh notes from the
+    /// whole transcript). While that runs the button cancels it.
+    /// </summary>
+    private void Summarize_Click(object sender, RoutedEventArgs e)
     {
         if (_summaryCts != null)
         {
@@ -891,6 +982,45 @@ public partial class TranscriptionWindow : Window
             return;
         }
 
+        if (_isRecording)
+        {
+            UpdateNotesNow();
+            return;
+        }
+
+        if (_isFinishing || _liveNotesCts != null)
+        {
+            ShowStatus("The notes are still being written. Try again in a moment.");
+            return;
+        }
+
+        _ = RebuildNotesAsync();
+    }
+
+    /// <summary>Starts a live-notes update right away, whatever the interval and the Live notes switch.</summary>
+    private void UpdateNotesNow()
+    {
+        switch (_liveNotes.CheckNow(_summaryCts != null, TranscriptBox.Text))
+        {
+            case LiveNotesCheck.AlreadyRunning:
+                ShowStatus("The notes are already being updated.");
+                return;
+            case LiveNotesCheck.TooFewNewWords:
+                ShowStatus("Nothing new to add to the notes yet.");
+                return;
+        }
+
+        if (_liveNotes.TryBeginNow(_summaryCts != null, TranscriptBox.Text) is { } ticket)
+            StartLiveNotesUpdate(ticket);
+    }
+
+    /// <summary>
+    /// Summarize (empty notes) or Re-summarize all (asks first): notes by time for each interval of the whole
+    /// transcript, then a full summary at the top. The previous notes stay until the new ones are ready, so a
+    /// cancel or an error keeps them.
+    /// </summary>
+    private async Task RebuildNotesAsync()
+    {
         var transcriptSnapshot = TranscriptBox.Text;
         var transcript = transcriptSnapshot.Trim();
         if (transcript.Length == 0)
@@ -899,69 +1029,96 @@ public partial class TranscriptionWindow : Window
             return;
         }
 
-        // The full summary replaces the notes, so a live-notes update in progress gives way to it.
-        CancelLiveNotes();
+        var replacing = !string.IsNullOrWhiteSpace(SummaryBox.Text);
+        if (replacing &&
+            MessageBox.Show(this, "Replace the current notes with a fresh summary of the whole transcript?", "Re-summarize all",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+
+        // Things may have moved on while the question was open.
+        if (_closed || _summaryCts != null || _isRecording || _isFinishing || _liveNotesCts != null ||
+            !string.Equals(TranscriptBox.Text, transcriptSnapshot, StringComparison.Ordinal))
+            return;
 
         var style = SelectedSummaryStyle;
         var systemPrompt = SystemPromptBox.Text;
         var clearCount = _clearCount;
+        var window = TimeSpan.FromMinutes(SelectedIntervalMinutes);
+        var length = SessionElapsed;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         _summaryCts = cts;
-        SummarizeBtn.Content = "Cancel";
-        Ui.SetIcon(SummarizeBtn, "\uE711");
+        _summaryProgress = null;
         SummaryStyleCombo.IsEnabled = false;
-        ShowStatus($"Writing {style.ToLowerInvariant()}...", sticky: true);
+        UpdateNotesControls();
+        UpdateSummaryHeader();
+        ShowStatus(replacing ? "Re-summarizing the whole transcript..." : $"Writing {style.ToLowerInvariant()}...", sticky: true);
 
-        // A long transcript is summarized in parts; show which one is being written.
+        // Section by section; show which one is being written.
         var progress = new Progress<string>(message =>
         {
-            if (!_closed && ReferenceEquals(_summaryCts, cts) && !cts.IsCancellationRequested)
-                ShowStatus(message, sticky: true);
+            if (_closed || !ReferenceEquals(_summaryCts, cts) || cts.IsCancellationRequested)
+                return;
+            _summaryProgress = message;
+            ShowStatus(message, sticky: true);
+            UpdateSummaryHeader();
         });
 
         try
         {
-            var summary = await TranscriptSummarizer.SummarizeAsync(
-                transcript, style, (request, ct) => _summarizeAsync(request, systemPrompt, ct), progress, cts.Token);
+            var notes = await TranscriptNotesWriter.RebuildAsync(
+                transcript,
+                style,
+                window,
+                length > TimeSpan.Zero ? length : null,
+                (request, ct) => _summarizeAsync(request, systemPrompt, ct),
+                progress,
+                cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             if (_closed)
                 return;
 
-            if (summary.Length == 0)
+            if (notes.Length == 0)
             {
-                ShowStatus("The chat model returned an empty summary; the previous one is kept.", sticky: !_isRecording);
+                ShowStatus("The chat model returned no notes; the previous notes are kept.", sticky: !_isRecording);
                 return;
             }
 
             _summaryStyleUsed = style;
-            _notesUpdatedAt = null;
+            _notesUpdatedAt = DateTime.Now;
             _liveNotesFailed = false;
-            SummaryBox.Text = summary;
+            _notesProblem = null;
+            SummaryBox.Text = notes;
             SummaryBox.ScrollToHome();
-            UpdateSummaryHeader();
-            // Live notes carry on from this summary with the words added after it.
+            // Live notes carry on from here with the words added after it.
             _liveNotes.MarkSummarized(transcriptSnapshot, DateTime.UtcNow);
-            ShowStatus($"{style} ready.");
+            var saved = _isRecording ? null : AutoSave();
+            SaveSessionState();
+            ShowStatus($"{style} ready.{SavedNote(saved)}", sticky: !_isRecording);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             if (!_closed && clearCount == _clearCount)
-                ShowStatus("Summary cancelled.");
+                ShowStatus(replacing ? "Re-summarize cancelled; the previous notes are kept." : "Summary cancelled.");
         }
         catch (Exception ex)
         {
             AppLog.Warn("Live transcriber: summary failed.", ex);
             if (!_closed)
-                ShowStatus($"Summary failed: {ex.Message}", sticky: !_isRecording);
+            {
+                var kept = replacing ? " The previous notes are kept." : "";
+                ShowStatus($"Summary failed: {Shorten(FriendlyErrors.Describe(ex), 160)}{kept}", sticky: !_isRecording);
+            }
         }
         finally
         {
-            _summaryCts = null;
+            if (ReferenceEquals(_summaryCts, cts))
+                _summaryCts = null;
+            _summaryProgress = null;
             if (!_closed)
             {
-                SummarizeBtn.Content = "Summarize";
-                Ui.SetIcon(SummarizeBtn, "\uE9D5");
                 SummaryStyleCombo.IsEnabled = true;
+                UpdateNotesControls();
+                UpdateSummaryHeader();
             }
         }
     }
@@ -976,14 +1133,14 @@ public partial class TranscriptionWindow : Window
         if (!on)
         {
             CancelLiveNotes();
-            ShowStatus("Live notes off. Summarize still writes a summary of the whole transcript.");
+            ShowStatus("Live notes off. Update notes now still adds notes while recording, and Summarize works when stopped.");
             return;
         }
 
         var every = IntervalText(SelectedIntervalMinutes);
         ShowStatus(_isRecording
-            ? $"Live notes on: the notes below are updated every {every} while recording."
-            : $"Live notes on: while recording, the notes below are updated every {every}.", sticky: !_isRecording);
+            ? $"Live notes on: every {every}, notes on what was said are added by time and the summary at the top is refreshed."
+            : $"Live notes on: while recording, notes are added by time every {every}; Stop writes the full summary.", sticky: !_isRecording);
     }
 
     private void LiveNotesIntervalCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1006,7 +1163,7 @@ public partial class TranscriptionWindow : Window
         if (_closed)
             return;
 
-        // A running manual Summarize skips this tick; the next one checks again.
+        // A running Summarize skips this tick; the next one checks again.
         var ticket = _liveNotes.TryBegin(DateTime.UtcNow, _isRecording, _summaryCts != null, TranscriptBox.Text);
         if (ticket != null)
             StartLiveNotesUpdate(ticket);
@@ -1020,8 +1177,9 @@ public partial class TranscriptionWindow : Window
     }
 
     /// <summary>
-    /// After Stop (the last chunks are transcribed): waits for an update in progress, then runs the final one
-    /// when words were added since. True when either put new notes in the summary pane.
+    /// After Stop (the last chunks are transcribed): waits for an update in progress, then writes the final notes
+    /// when they are due (live notes on or notes by time there: a last section and the full summary). True when
+    /// either put new notes in the notes pane.
     /// </summary>
     private async Task<bool> FinishLiveNotesAsync(string stoppedMessage)
     {
@@ -1032,50 +1190,61 @@ public partial class TranscriptionWindow : Window
         if (_closed)
             return false;
 
-        var ticket = _liveNotes.TryBeginFinal(_summaryCts != null, TranscriptBox.Text);
+        var ticket = _liveNotes.TryBeginFinal(_summaryCts != null, TranscriptBox.Text, SummaryBox.Text, SelectedSummaryStyle);
         if (ticket == null)
             return updated;
 
         if (!_isRecording)
-            ShowStatus($"{stoppedMessage} Writing the final notes...", sticky: true);
+            ShowStatus($"{stoppedMessage} Writing the final notes and summary...", sticky: true);
         return await StartLiveNotesUpdate(ticket) || updated;
     }
 
     /// <summary>
-    /// Sends the current notes and only the text added since the last update; on success the reply replaces
-    /// the summary pane. Errors keep the previous notes. Never throws.
+    /// A live update (or, for the final ticket, the notes on Stop): notes on only the text added since the last
+    /// update become a new section, then the summary at the top is rewritten. Errors keep the previous notes; when
+    /// only the summary fails, the new section is kept. Never throws.
     /// </summary>
     private async Task<bool> RunLiveNotesAsync(LiveNotesTicket ticket)
     {
-        var notesBefore = SummaryBox.Text.Trim();
+        var notesBefore = SummaryBox.Text;
         var style = SelectedSummaryStyle;
         var systemPrompt = SystemPromptBox.Text;
+        var elapsed = SessionElapsed;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         _liveNotesCts = cts;
         UpdateSummaryHeader();
+        UpdateNotesControls();
 
         try
         {
-            var notes = await TranscriptSummarizer.UpdateNotesAsync(
-                notesBefore, ticket.NewText, style, (request, ct) => _summarizeAsync(request, systemPrompt, ct), null, cts.Token);
+            Task<string> Summarize(TranscriptSummaryRequest request, CancellationToken ct) => _summarizeAsync(request, systemPrompt, ct);
+            var result = ticket.IsFinal
+                ? await TranscriptNotesWriter.FinishAsync(notesBefore, ticket.NewText, ticket.Transcript, elapsed, style, Summarize, null, cts.Token)
+                : await TranscriptNotesWriter.UpdateAsync(notesBefore, ticket.NewText, elapsed, style, Summarize, null, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             if (_closed || !_liveNotes.IsCurrent(ticket))
                 return false; // cleared meanwhile
 
-            if (!string.Equals(SummaryBox.Text.Trim(), notesBefore, StringComparison.Ordinal))
+            if (!SameText(SummaryBox.Text, notesBefore))
             {
-                // The summary was edited while the notes were written: keep the edit, merge on the next check.
+                // The notes were edited while the update was written: keep the edit, add to it on the next check.
                 _liveNotes.Abandon(ticket);
-                ShowStatus("Live notes not applied because the summary was edited meanwhile. They update on the next check.");
+                ShowStatus("Live notes not applied because the notes were edited meanwhile. They update on the next check.");
                 return false;
             }
 
             _liveNotes.Complete(ticket, DateTime.UtcNow);
             _notesUpdatedAt = DateTime.Now;
-            _liveNotesFailed = false;
+            _liveNotesFailed = result.SummaryFailed;
+            _notesProblem = result.SummaryError is { } error
+                ? $"The summary at the top was not refreshed: {Shorten(FriendlyErrors.Describe(error), 120)}"
+                : null;
             _summaryStyleUsed = style;
-            SummaryBox.Text = notes;
-            ShowStatus(LiveNotesPolicy.FormatUpdated(_notesUpdatedAt.Value) + ".");
+            if (!SameText(result.Notes, notesBefore))
+                ReplaceNotesKeepingScroll(result.Notes);
+            if (result.SummaryError != null)
+                AppLog.Warn("Live transcriber: the summary at the top of the notes could not be refreshed.", result.SummaryError);
+            ShowStatus(LiveNotesPolicy.FormatUpdated(_notesUpdatedAt.Value) + "." + (_notesProblem != null ? $" {_notesProblem}" : ""));
             return true;
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -1087,7 +1256,7 @@ public partial class TranscriptionWindow : Window
         {
             AppLog.Warn("Live transcriber: the live notes could not be updated.", ex);
             _liveNotes.Fail(ticket, DateTime.UtcNow);
-            if (!_closed && _liveNotes.Enabled)
+            if (!_closed)
             {
                 _liveNotesFailed = true;
                 ShowStatus($"Live notes not updated, the previous notes are kept: {Shorten(FriendlyErrors.Describe(ex), 120)}");
@@ -1099,11 +1268,30 @@ public partial class TranscriptionWindow : Window
             if (ReferenceEquals(_liveNotesCts, cts))
                 _liveNotesCts = null;
             if (!_closed)
+            {
                 UpdateSummaryHeader();
+                UpdateNotesControls();
+            }
         }
     }
 
     private void CancelLiveNotes() => _liveNotesCts?.Cancel();
+
+    // New sections are added at the end: a reader at the end keeps following them, one who scrolled back stays put.
+    private void ReplaceNotesKeepingScroll(string notes)
+    {
+        var box = SummaryBox;
+        var atEnd = box.ExtentHeight > box.ViewportHeight && box.VerticalOffset + box.ViewportHeight >= box.ExtentHeight - 6;
+        var offset = box.VerticalOffset;
+        box.Text = notes;
+        if (atEnd)
+            box.ScrollToEnd();
+        else
+            box.ScrollToVerticalOffset(offset);
+    }
+
+    private static bool SameText(string? a, string? b) =>
+        string.Equals((a ?? "").Replace("\r\n", "\n").Trim(), (b ?? "").Replace("\r\n", "\n").Trim(), StringComparison.Ordinal);
 
     private static string Shorten(string text, int max)
     {
@@ -1115,7 +1303,7 @@ public partial class TranscriptionWindow : Window
 
     private void CopyTranscript_Click(object sender, RoutedEventArgs e) => CopyText(TranscriptBox.Text, "Transcript");
 
-    private void CopySummary_Click(object sender, RoutedEventArgs e) => CopyText(SummaryBox.Text, "Summary");
+    private void CopySummary_Click(object sender, RoutedEventArgs e) => CopyText(SummaryBox.Text, "Notes");
 
     private void CopyText(string text, string what)
     {
@@ -1171,7 +1359,7 @@ public partial class TranscriptionWindow : Window
 
     /// <summary>
     /// Saves the session to %APPDATA%\VoiceChatbot\transcripts\transcript_yyyyMMdd_HHmmss.md (one file per
-    /// session, rewritten as it grows). Returns the path, or null when there was nothing new to save.
+    /// session, rewritten as it grows, also after a restore). Returns the path, or null when there was nothing new to save.
     /// </summary>
     private string? AutoSave(TimeSpan? length = null)
     {
@@ -1182,7 +1370,8 @@ public partial class TranscriptionWindow : Window
         {
             Directory.CreateDirectory(TranscriptsFolder);
             var started = _sessionStarted ??= DateTime.Now;
-            var path = System.IO.Path.Combine(TranscriptsFolder, LiveTranscriptText.AutoSaveFileName(started));
+            _autoSaveFileName ??= LiveTranscriptText.AutoSaveFileName(started);
+            var path = System.IO.Path.Combine(TranscriptsFolder, _autoSaveFileName);
             File.WriteAllText(path, BuildDocument(started, markdown: true, length));
             _unsavedChanges = false;
             AppLog.Info($"Live transcript saved to {path}.");
@@ -1201,11 +1390,90 @@ public partial class TranscriptionWindow : Window
         LiveTranscriptText.BuildDocument(
             LiveTranscriptText.DocumentTitle,
             started,
-            length ?? _elapsed.Elapsed,
+            length ?? SessionElapsed,
             TranscriptBox.Text,
             SummaryBox.Text,
-            _summaryStyleUsed,
+            TranscriptNotes.DocumentHeading(SummaryBox.Text, _summaryStyleUsed),
             markdown);
+
+    // ==================== Session state (restored when the window opens again) ====================
+
+    /// <summary>
+    /// Restores the last session from current-session.json: transcript, notes, the time recorded so far (recording
+    /// continues from it), the live-notes progress and the session's file. Returns when it was from, or null when
+    /// there was nothing to restore. A missing or unreadable file starts a new session.
+    /// </summary>
+    private DateTime? RestoreSession()
+    {
+        var state = TranscriberSessionStore.Load(SessionStatePath, out var error);
+        if (error != null)
+            AppLog.Warn($"Live transcriber: the last session could not be restored ({error}); starting a new one.");
+        if (state == null)
+            return null;
+
+        TranscriptBox.Text = state.Transcript;
+        SummaryBox.Text = state.Notes;
+        _summaryStyleUsed = state.NotesStyle;
+        _notesUpdatedAt = state.NotesUpdatedAt;
+        _elapsedOffset = state.Elapsed;
+        _sessionStarted = state.SessionStarted;
+        _autoSaveFileName = state.AutoSaveFileName;
+        _unsavedChanges = state.UnsavedChanges;
+        _liveNotes.Restore(state.Transcript, state.ProcessedLength);
+        TranscriptBox.ScrollToEnd();
+        AppLog.Info($"Live transcriber: restored the session from {state.SavedAt:yyyy-MM-dd HH:mm:ss} ({LiveTranscriptText.CountWords(state.Transcript)} words).");
+        return state.SessionStarted ?? state.SavedAt;
+    }
+
+    /// <summary>Writes the session state about two seconds after a change (once per burst of changes).</summary>
+    private void ScheduleSessionStateSave()
+    {
+        if (_initializing || _closed)
+            return;
+        if (!_sessionStateTimer.IsEnabled)
+            _sessionStateTimer.Start();
+    }
+
+    /// <summary>Writes the session state now (atomically). An empty session removes it. Never throws.</summary>
+    private void SaveSessionState()
+    {
+        _sessionStateTimer.Stop();
+        var transcript = TranscriptBox.Text;
+        var notes = SummaryBox.Text;
+        if (string.IsNullOrWhiteSpace(transcript) && string.IsNullOrWhiteSpace(notes))
+        {
+            DeleteSessionState();
+            return;
+        }
+
+        try
+        {
+            TranscriberSessionStore.Save(SessionStatePath, new TranscriberSessionState
+            {
+                Transcript = transcript,
+                Notes = notes,
+                NotesStyle = _summaryStyleUsed,
+                NotesUpdatedAt = _notesUpdatedAt,
+                ElapsedMs = (long)SessionElapsed.TotalMilliseconds,
+                ProcessedLength = _liveNotes.ProcessedTranscript.Length,
+                SessionStarted = _sessionStarted,
+                AutoSaveFileName = _autoSaveFileName ?? (_sessionStarted is { } started ? LiveTranscriptText.AutoSaveFileName(started) : null),
+                UnsavedChanges = _unsavedChanges,
+                SavedAt = DateTime.Now,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Live transcriber: could not keep the session for next time.", ex);
+        }
+    }
+
+    private void DeleteSessionState()
+    {
+        _sessionStateTimer.Stop();
+        if (!TranscriberSessionStore.Delete(SessionStatePath, out var error))
+            AppLog.Warn($"Live transcriber: could not remove the saved session state ({error}).");
+    }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -1347,6 +1615,7 @@ public partial class TranscriptionWindow : Window
         CancelLiveNotes();
 
         AutoSave();
+        SaveSessionState();
         _saveSettings();
     }
 

@@ -162,36 +162,102 @@ public class LiveNotesPolicyTests
     }
 
     [Fact]
-    public void FinalUpdateNeedsOnlyOneNewWord()
+    public void FinalNotesNeedOnlyOneNewWord()
     {
         var policy = Policy();
         var transcript = Words(50);
         policy.MarkSummarized(transcript, T0);
+        var fullSummary = "SUMMARY\nThey met.\n\nNOTES BY TIME\n[00:00–00:30]\n- Met.";
 
-        Assert.Equal(LiveNotesCheck.TooFewNewWords, policy.CheckFinal(false, transcript));
-        Assert.Null(policy.TryBeginFinal(false, transcript));
+        Assert.Equal(LiveNotesCheck.TooFewNewWords, policy.CheckFinal(false, transcript, fullSummary, "Summary"));
+        Assert.Null(policy.TryBeginFinal(false, transcript, fullSummary, "Summary"));
 
         var grown = transcript + "\n[01:00] Bye.";
         Assert.Equal(LiveNotesCheck.SummaryRunning, policy.CheckFinal(true, grown));
-        var ticket = policy.TryBeginFinal(false, grown);
+        var ticket = policy.TryBeginFinal(false, grown, fullSummary, "Summary");
         Assert.NotNull(ticket);
         Assert.True(ticket!.IsFinal);
         Assert.Equal("[01:00] Bye.", ticket.NewText);
         Assert.Equal(LiveNotesCheck.AlreadyRunning, policy.CheckFinal(false, grown));
+    }
 
-        policy.Enabled = false;
-        Assert.Equal(LiveNotesCheck.Disabled, policy.CheckFinal(false, grown));
+    [Fact]
+    public void FinalNotesWithoutNewWordsStillWriteTheFullSummary()
+    {
+        var policy = Policy();
+        var transcript = Words(50);
+        policy.MarkSummarized(transcript, T0);
+        var soFar = "SUMMARY SO FAR\nThey met.\n\nNOTES BY TIME\n[00:00–00:30]\n- Met.";
+
+        // The top is still "SUMMARY SO FAR", or a full summary in another style: due.
+        Assert.Equal(LiveNotesCheck.Due, policy.CheckFinal(false, transcript, soFar, "Summary"));
+        Assert.Equal(LiveNotesCheck.Due, policy.CheckFinal(false, transcript, soFar.Replace("SUMMARY SO FAR", "SUMMARY"), "Key points"));
+
+        // Text a user typed without the layout is kept: only new words are worth a final section.
+        Assert.Equal(LiveNotesCheck.TooFewNewWords, policy.CheckFinal(false, transcript, "my own notes", "Summary"));
+
+        // Nothing was said at all.
+        Assert.Equal(LiveNotesCheck.TooFewNewWords, new LiveNotesPolicy { Enabled = true }.CheckFinal(false, "  ", soFar));
+    }
+
+    [Fact]
+    public void FinalNotesRunWithLiveNotesOffWhenTheNotesHaveSections()
+    {
+        var policy = new LiveNotesPolicy { Enabled = false };
+        var transcript = Words(50);
+
+        Assert.Equal(LiveNotesCheck.Disabled, policy.CheckFinal(false, transcript));
+        Assert.Equal(LiveNotesCheck.Disabled, policy.CheckFinal(false, transcript, "Just my notes"));
+        Assert.Equal(LiveNotesCheck.Due, policy.CheckFinal(false, transcript, "NOTES BY TIME\n[00:00–05:00]\n- Hello."));
+    }
+
+    [Fact]
+    public void UpdateNowIgnoresTheIntervalTheSwitchAndTheWordCount()
+    {
+        var policy = new LiveNotesPolicy { Enabled = false };
+        policy.RestartClock(T0);
+        var transcript = "[00:01] Two words.";
+
+        Assert.Equal(LiveNotesCheck.Due, policy.CheckNow(false, transcript));
+        Assert.Equal(LiveNotesCheck.SummaryRunning, policy.CheckNow(true, transcript));
+        Assert.Equal(LiveNotesCheck.TooFewNewWords, policy.CheckNow(false, "  "));
+
+        var ticket = policy.TryBeginNow(false, transcript);
+        Assert.NotNull(ticket);
+        Assert.False(ticket!.IsFinal);
+        Assert.Equal(LiveNotesCheck.AlreadyRunning, policy.CheckNow(false, transcript));
+        Assert.True(policy.Complete(ticket, T0.AddSeconds(5)));
+        Assert.Equal(LiveNotesCheck.TooFewNewWords, policy.CheckNow(false, transcript));
+    }
+
+    [Fact]
+    public void RestoreCoversTheSavedLength()
+    {
+        var policy = new LiveNotesPolicy();
+        var transcript = "[00:00] One.\n[00:05] Two.";
+
+        policy.Restore(transcript, "[00:00] One.".Length);
+        Assert.Equal("[00:05] Two.", policy.GetNewText(transcript));
+
+        policy.Restore(transcript, 10_000);
+        Assert.Equal(transcript, policy.ProcessedTranscript);
+        policy.Restore(transcript, -4);
+        Assert.Equal("", policy.ProcessedTranscript);
+        policy.Restore(null, 5);
+        Assert.Equal("", policy.ProcessedTranscript);
     }
 
     [Theory]
-    [InlineData(2, 2)]
+    [InlineData(2, 5)]
     [InlineData(5, 5)]
     [InlineData(10, 10)]
-    [InlineData(1, 2)]
-    [InlineData(3, 2)]
-    [InlineData(4, 5)]
+    [InlineData(15, 15)]
+    [InlineData(1, 5)]
+    [InlineData(3, 5)]
     [InlineData(8, 10)]
-    [InlineData(60, 10)]
+    [InlineData(12, 10)]
+    [InlineData(13, 15)]
+    [InlineData(60, 15)]
     [InlineData(0, 5)]
     [InlineData(-3, 5)]
     public void NormalizesTheInterval(int minutes, int expected)
@@ -207,7 +273,7 @@ public class LiveNotesPolicyTests
         Assert.Equal(TimeSpan.FromMinutes(5), policy.Interval);
         Assert.Equal(40, policy.MinNewWords);
         Assert.Equal(TimeSpan.FromSeconds(15), LiveNotesPolicy.CheckEvery);
-        Assert.Equal(new[] { 2, 5, 10 }, LiveNotesPolicy.IntervalChoicesMinutes);
+        Assert.Equal(new[] { 5, 10, 15 }, LiveNotesPolicy.IntervalChoicesMinutes);
     }
 
     [Fact]

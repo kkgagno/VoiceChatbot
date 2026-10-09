@@ -21,6 +21,11 @@ public static class TranscriptSummaryStyles
     public static string Normalize(string? name) =>
         Names.FirstOrDefault(n => string.Equals(n, name?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? Summary;
 
+    /// <summary>
+    /// The line above a full summary in the notes pane: "SUMMARY", "ACTION ITEMS", "MEETING NOTES" or "KEY POINTS".
+    /// </summary>
+    public static string GetHeading(string? name) => Normalize(name).ToUpperInvariant();
+
     /// <summary>The request sent with the whole transcript for this style (a one-pass Summarize).</summary>
     public static string GetInstruction(string? name) => Normalize(name) switch
     {

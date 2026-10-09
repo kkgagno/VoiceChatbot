@@ -45,17 +45,19 @@ public sealed class LiveNotesTicket
 /// <summary>
 /// Decides when the running notes of a live transcript are updated, and which text is new since the last update.
 /// While recording, an update is due when live notes are on, the interval has passed since recording started or
-/// the last update, at least <see cref="MinNewWords"/> words were added, and neither another update nor a manual
-/// Summarize is running. After Stop one final update runs if any words were added. Not thread-safe: use it from
-/// one thread (the UI thread). Times are whatever clock the caller uses consistently (UTC recommended).
+/// the last update, at least <see cref="MinNewWords"/> words were added, and neither another update nor a
+/// Summarize / Re-summarize all is running ("Update notes now" skips the interval and word checks). After Stop the
+/// final notes are written when live notes are on or the notes already have sections (see <see cref="CheckFinal"/>).
+/// Not thread-safe: use it from one thread (the UI thread). Times are whatever clock the caller uses consistently
+/// (UTC recommended).
 /// </summary>
 public sealed class LiveNotesPolicy
 {
     public const int DefaultMinNewWords = 40;
     public const int DefaultIntervalMinutes = 5;
 
-    /// <summary>The interval picker's choices, in minutes.</summary>
-    public static IReadOnlyList<int> IntervalChoicesMinutes { get; } = new[] { 2, 5, 10 };
+    /// <summary>The interval picker's choices, in minutes. Five minutes is the shortest.</summary>
+    public static IReadOnlyList<int> IntervalChoicesMinutes { get; } = new[] { 5, 10, 15 };
 
     /// <summary>How often the caller should ask <see cref="TryBegin"/> while recording.</summary>
     public static TimeSpan CheckEvery { get; } = TimeSpan.FromSeconds(15);
@@ -118,11 +120,35 @@ public sealed class LiveNotesPolicy
         return LiveNotesCheck.Due;
     }
 
-    /// <summary>Whether the final update after Stop is due: live notes on, nothing running and any new words.</summary>
-    public LiveNotesCheck CheckFinal(bool summaryRunning, string? transcript)
+    /// <summary>
+    /// Whether the notes are finished after Stop (a last section for the new words, then a full summary at the top;
+    /// see <see cref="TranscriptNotesWriter.FinishAsync"/>): when live notes are on or <paramref name="notes"/> already
+    /// has sections, nothing else is running and the transcript has words. With no new words it is due only while the
+    /// top is not yet a full summary in <paramref name="style"/>. Notes without the layout (text a user wrote) are
+    /// only due with new words, since their text is kept.
+    /// </summary>
+    public LiveNotesCheck CheckFinal(bool summaryRunning, string? transcript, string? notes = null, string? style = null)
     {
-        if (!Enabled)
+        var parsed = TranscriptNotes.Parse(notes);
+        if (!Enabled && !parsed.HasSections)
             return LiveNotesCheck.Disabled;
+        if (IsRunning)
+            return LiveNotesCheck.AlreadyRunning;
+        if (summaryRunning)
+            return LiveNotesCheck.SummaryRunning;
+        if (LiveTranscriptText.CountWords(transcript) == 0)
+            return LiveNotesCheck.TooFewNewWords;
+        if (CountNewWords(transcript) == 0 && (!parsed.IsStructured || parsed.HasFullSummary(style)))
+            return LiveNotesCheck.TooFewNewWords;
+        return LiveNotesCheck.Due;
+    }
+
+    /// <summary>
+    /// "Update notes now": due whenever nothing else is running and at least one word was added, whatever the
+    /// interval, the live-notes switch or recording.
+    /// </summary>
+    public LiveNotesCheck CheckNow(bool summaryRunning, string? transcript)
+    {
         if (IsRunning)
             return LiveNotesCheck.AlreadyRunning;
         if (summaryRunning)
@@ -136,9 +162,13 @@ public sealed class LiveNotesPolicy
     public LiveNotesTicket? TryBegin(DateTime now, bool recording, bool summaryRunning, string? transcript) =>
         Check(now, recording, summaryRunning, transcript) == LiveNotesCheck.Due ? Begin(transcript, isFinal: false) : null;
 
-    /// <summary>Starts the final update after Stop when one is due; otherwise returns null.</summary>
-    public LiveNotesTicket? TryBeginFinal(bool summaryRunning, string? transcript) =>
-        CheckFinal(summaryRunning, transcript) == LiveNotesCheck.Due ? Begin(transcript, isFinal: true) : null;
+    /// <summary>Starts the final notes after Stop when they are due (see <see cref="CheckFinal"/>); otherwise returns null.</summary>
+    public LiveNotesTicket? TryBeginFinal(bool summaryRunning, string? transcript, string? notes = null, string? style = null) =>
+        CheckFinal(summaryRunning, transcript, notes, style) == LiveNotesCheck.Due ? Begin(transcript, isFinal: true) : null;
+
+    /// <summary>Starts an "Update notes now" update when one is possible (see <see cref="CheckNow"/>); otherwise returns null.</summary>
+    public LiveNotesTicket? TryBeginNow(bool summaryRunning, string? transcript) =>
+        CheckNow(summaryRunning, transcript) == LiveNotesCheck.Due ? Begin(transcript, isFinal: false) : null;
 
     /// <summary>True while <paramref name="ticket"/> is the update in progress (not reset or finished since).</summary>
     public bool IsCurrent(LiveNotesTicket ticket) => ReferenceEquals(_running, ticket) && ticket.Generation == _generation;
@@ -175,11 +205,21 @@ public sealed class LiveNotesPolicy
             _running = null;
     }
 
-    /// <summary>A manual Summarize wrote notes covering <paramref name="transcript"/>; live notes continue from there.</summary>
+    /// <summary>Summarize / Re-summarize all wrote notes covering <paramref name="transcript"/>; live notes continue from there.</summary>
     public void MarkSummarized(string? transcript, DateTime now)
     {
         _processed = transcript ?? "";
         _clockStart = now;
+    }
+
+    /// <summary>
+    /// A restored session: the notes cover the first <paramref name="processedLength"/> characters of
+    /// <paramref name="transcript"/> (the length of <see cref="ProcessedTranscript"/> when it was saved).
+    /// </summary>
+    public void Restore(string? transcript, int processedLength)
+    {
+        var text = transcript ?? "";
+        _processed = text[..Math.Clamp(processedLength, 0, text.Length)];
     }
 
     /// <summary>Clear: forgets the covered text, drops an update in progress (its ticket is no longer current).</summary>
@@ -191,7 +231,10 @@ public sealed class LiveNotesPolicy
         _clockStart = now;
     }
 
-    /// <summary>The nearest interval choice (2, 5 or 10 minutes); the default for zero, negative or missing values.</summary>
+    /// <summary>
+    /// The nearest interval choice (5, 10 or 15 minutes), so a stored 2 becomes 5; the default for zero, negative
+    /// or missing values.
+    /// </summary>
     public static int NormalizeIntervalMinutes(int minutes) =>
         minutes <= 0
             ? DefaultIntervalMinutes

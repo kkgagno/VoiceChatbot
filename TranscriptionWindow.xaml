@@ -161,7 +161,7 @@
                         <Button Content="Copy" local:Ui.Icon="&#xE8C8;" Style="{StaticResource GhostButton}"
                                 Click="CopyTranscript_Click" ToolTip="Copy the transcript"/>
                         <Button x:Name="ClearBtn" Content="Clear" local:Ui.Icon="&#xE74D;" Style="{StaticResource GhostButton}"
-                                Click="Clear_Click" ToolTip="Clear the transcript and summary. The session so far is saved to the transcripts folder first."/>
+                                Click="Clear_Click" ToolTip="Start a new session: clears the transcript and notes. The session so far is saved to the transcripts folder first."/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="TRANSCRIPT" Style="{StaticResource SectionLabel}" Margin="0" VerticalAlignment="Center"/>
@@ -178,7 +178,7 @@
         </Border>
 
         <GridSplitter Grid.Row="3" Style="{StaticResource PaneSplitter}" DragCompleted="PaneSplitter_DragCompleted"
-                      ToolTip="Drag to resize the transcript and summary"/>
+                      ToolTip="Drag to resize the transcript and notes"/>
 
         <!-- Summary -->
         <Border Grid.Row="4" Style="{StaticResource Card}" Padding="12,10,12,12">
@@ -192,27 +192,27 @@
                         <ToggleButton x:Name="LiveNotesToggle" Content="Live notes" local:Ui.Icon="&#xE70B;"
                                       Style="{StaticResource ToggleFlatButton}" Padding="10,7" Margin="0,0,6,0"
                                       VerticalAlignment="Center" Click="LiveNotesToggle_Click"
-                                      ToolTip="While recording, keep the notes below up to date: every few minutes the chat model merges what was said since the last update into them, in the chosen style."/>
+                                      ToolTip="While recording, every few minutes the chat model writes detailed notes on what was said since the last update as a new section under NOTES BY TIME, and refreshes the summary at the top. Stop then writes a full summary in the chosen style."/>
                         <ComboBox x:Name="LiveNotesIntervalCombo" Width="84" Margin="0,0,14,0" VerticalAlignment="Center"
                                   SelectionChanged="LiveNotesIntervalCombo_SelectionChanged"
-                                  ToolTip="How often live notes are updated while recording"/>
+                                  ToolTip="How often live notes are updated while recording. Re-summarize all also uses it as the length of each section."/>
                         <ComboBox x:Name="SummaryStyleCombo" Width="150" Margin="0,0,8,0" VerticalAlignment="Center"
-                                  ToolTip="What Summarize and Live notes write"/>
+                                  ToolTip="How the summary at the top of the notes is written"/>
                         <Button x:Name="SummarizeBtn" Content="Summarize" local:Ui.Icon="&#xE9D5;"
                                 Style="{StaticResource SecondaryButton}" MinWidth="112" Click="Summarize_Click"
-                                ToolTip="Ask the chat model for this kind of summary of the whole transcript. Works while recording too; a long transcript is summarized in parts."/>
+                                ToolTip="Write notes by time and a summary in the chosen style from the whole transcript"/>
                         <Button Content="Copy" local:Ui.Icon="&#xE8C8;" Style="{StaticResource GhostButton}" Margin="6,0,0,0"
-                                Click="CopySummary_Click" ToolTip="Copy the summary"/>
+                                Click="CopySummary_Click" ToolTip="Copy the notes"/>
                     </StackPanel>
                     <DockPanel VerticalAlignment="Center" Margin="0,0,10,0">
-                        <TextBlock x:Name="SummaryHeaderText" DockPanel.Dock="Left" Text="SUMMARY" Style="{StaticResource SectionLabel}"
+                        <TextBlock x:Name="SummaryHeaderText" DockPanel.Dock="Left" Text="NOTES" Style="{StaticResource SectionLabel}"
                                    Margin="0" VerticalAlignment="Center"/>
                         <TextBlock x:Name="NotesUpdatedText" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
                 </DockPanel>
                 <TextBox x:Name="SummaryBox" Grid.Row="1" Style="{StaticResource PaneTextBox}"
-                         local:Ui.Placeholder="Pick a style and press Summarize, or turn on Live notes to have notes written while you record."
+                         local:Ui.Placeholder="Turn on Live notes to have notes by time written while you record, or press Summarize after recording."
                          TextChanged="SummaryBox_TextChanged"/>
             </Grid>
         </Border>
@@ -225,14 +225,14 @@
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="FooterText" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="11"
                        Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis"
-                       Text="Ctrl+R start/stop · Ctrl+S save · Ctrl+wheel text size · Sessions are saved to the transcripts folder when you stop."/>
+                       Text="Ctrl+R start/stop · Ctrl+S save · Ctrl+wheel text size · Sessions are saved to the transcripts folder when you stop, and come back when you reopen this window."/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button Content="Open folder" local:Ui.Icon="&#xE838;" Style="{StaticResource GhostButton}" Margin="0,0,6,0"
                         Click="OpenFolder_Click" ToolTip="Open the folder with the saved transcripts"/>
                 <Button Content="Save..." local:Ui.Icon="&#xE74E;" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"
-                        Click="Save_Click" ToolTip="Save the transcript and summary as Markdown or text (Ctrl+S)"/>
+                        Click="Save_Click" ToolTip="Save the transcript and notes as Markdown or text (Ctrl+S)"/>
                 <Button x:Name="SendToChatBtn" Content="Send to chat" local:Ui.Icon="&#xE724;" Style="{StaticResource SecondaryButton}"
-                        Click="SendToChat_Click" ToolTip="Give the transcript (and summary) to the main chat and ask about it there"/>
+                        Click="SendToChat_Click" ToolTip="Give the transcript (and notes) to the main chat and ask about it there"/>
             </StackPanel>
         </Grid>
     </Grid>

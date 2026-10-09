@@ -134,10 +134,31 @@ public static class TranscriptSummarizer
         if (notes.Count == 0)
             return "";
 
-        // Very long sessions: combine the notes in groups first until they fit in one request.
-        while (notes.Count > 2 && notes.Sum(n => n.Length) > SinglePassLimit)
+        notes = await CombineInGroupsAsync(notes, style, summarize, progress, ct);
+        if (notes.Count == 0)
+            return "";
+
+        ct.ThrowIfCancellationRequested();
+        progress?.Report($"Combining the notes from {parts.Count} parts...");
+        return TranscriptSummaryPrompts.StripPreamble(await summarize(TranscriptSummaryPrompts.Combine(notes, style), ct));
+    }
+
+    /// <summary>
+    /// Very long sessions: while the notes together are longer than one request allows, consecutive notes are
+    /// combined in groups (<see cref="GroupForCombining"/>). Returns notes that fit (or a single one), in order;
+    /// empty when every combined reply was empty.
+    /// </summary>
+    public static async Task<List<string>> CombineInGroupsAsync(
+        IReadOnlyList<string> notes,
+        string? style,
+        Func<TranscriptSummaryRequest, CancellationToken, Task<string>> summarize,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        var current = notes.ToList();
+        while (current.Count > 2 && current.Sum(n => n.Length) > SinglePassLimit)
         {
-            var groups = GroupForCombining(notes);
+            var groups = GroupForCombining(current);
             var combined = new List<string>();
             for (var g = 0; g < groups.Count; g++)
             {
@@ -149,18 +170,15 @@ public static class TranscriptSummarizer
                     combined.Add(merged);
             }
 
-            if (combined.Count == 0)
-                return "";
-            notes = combined;
+            current = combined;
         }
 
-        ct.ThrowIfCancellationRequested();
-        progress?.Report($"Combining the notes from {parts.Count} parts...");
-        return TranscriptSummaryPrompts.StripPreamble(await summarize(TranscriptSummaryPrompts.Combine(notes, style), ct));
+        return current;
     }
 
     /// <summary>
-    /// Live notes: merges <paramref name="newText"/> (only what was said since the last update) into
+    /// Live notes as the older web page asks for them (the transcribers now use <see cref="TranscriptNotesWriter"/>):
+    /// merges <paramref name="newText"/> (only what was said since the last update) into
     /// <paramref name="currentNotes"/> and returns the full updated notes. New text that is too long for one
     /// request is merged one part at a time. Throws when the model returns nothing, so the caller keeps the
     /// previous notes.

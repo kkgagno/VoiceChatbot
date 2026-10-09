@@ -99,20 +99,23 @@ public partial class MainWindow
     private async Task<string> SummarizeLiveTranscriptAsync(TranscriptSummaryRequest request, string systemPrompt, CancellationToken ct)
     {
         var cleaned = await RequestTranscriptSummaryAsync(request, systemPrompt, ct);
-        if (!string.IsNullOrWhiteSpace(cleaned) && request.IsFinal && request.Kind != TranscriptSummaryKind.LiveNotes)
+        if (!string.IsNullOrWhiteSpace(cleaned) && request.IsFinal && !request.IsLiveUpdate)
             AddSystemMessage("Live transcript summary updated. Main chat has the latest transcription context.");
 
         return cleaned;
     }
 
     /// <summary>
-    /// Sends one transcriber request (a summary, a part of a long transcript, combining parts, or a live-notes
-    /// update; see TranscriptSummaryPrompts) to the chat model and returns the reply as plain text. Used by the
-    /// desktop Live Transcriber and the web transcriber. Runs on the UI thread (it reads the model picker).
+    /// Sends one transcriber request (a summary, a part of a long transcript, combining parts, or live-notes
+    /// section notes and summary; see TranscriptSummaryPrompts) to the chat model and returns the reply as plain
+    /// text. Used by the desktop Live Transcriber and the web transcriber. Runs on the UI thread (it reads the
+    /// model picker). It uses the same context window as normal chat (num_ctx on Ollama), so a long request is
+    /// not silently cut to the server's default window.
     /// </summary>
     private async Task<string> RequestTranscriptSummaryAsync(TranscriptSummaryRequest request, string systemPrompt, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(ModelCombo.Text))
+        var model = ModelCombo.Text;
+        if (string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException("Select a model first.");
 
         var messages = new List<ChatMessage>
@@ -124,13 +127,15 @@ public partial class MainWindow
             }
         };
 
+        var contextTokens = await GetContextTokensForRequestAsync(model, ct);
         var summary = await _ollama.ChatAsync(
-            ModelCombo.Text,
+            model,
             messages,
             string.IsNullOrWhiteSpace(systemPrompt) ? TranscriptSummaryPrompts.DefaultSystemPrompt : systemPrompt,
             0.2,
-            _settings.MaxTokens,
-            ct);
+            TokenBudget.ResolveMaxTokens(_settings.MaxTokens, isArtifactRequest: false, contextTokens),
+            ct,
+            contextTokens);
 
         return MarkdownText.ToPlainText(CleanDisplayText(summary, hidePlanningNotes: false));
     }
