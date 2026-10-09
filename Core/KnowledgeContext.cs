@@ -289,7 +289,17 @@ public static class KnowledgeContext
             "No passage matched the message's words, so the beginning of each document is below. If they do not contain the answer, say which documents might, and do not invent contents.",
         _ =>
             "No passage matched this message, so only the file names are listed. If the question is about these documents, say which ones might have the answer, and do not invent their contents."
-    }) + " " + IgnoreWhenUnrelated;
+    }) + " " + QuoteTheSource + " " + IgnoreWhenUnrelated;
+
+    /// <summary>
+    /// Added to every knowledge text with documents: a small model pairs a form's labels and amounts
+    /// wrongly when it guesses, so it has to show the line it read and admit when the text is unclear.
+    /// </summary>
+    public const string QuoteTheSource =
+        "When the answer uses a number, amount, date or name from a document, quote the exact line it came from and name the file. " +
+        "Text from forms and tables can come out of order (in PDFs each line is one row of the page, with \" | \" between columns), " +
+        "so if a label and its value are not clearly on the same line, say it is unclear instead of guessing. " +
+        "If the owner says an answer is wrong, re-read the text and quote it rather than offering another guess.";
 
     /// <summary>Added to every knowledge text: the documents ride along on a guess, so the model must be free to ignore them.</summary>
     public const string IgnoreWhenUnrelated =

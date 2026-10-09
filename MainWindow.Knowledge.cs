@@ -156,7 +156,8 @@ public partial class MainWindow
 
         try
         {
-            _knowledgeFilesWindow = new KnowledgeFilesWindow(() => _knowledge.GetFileList(_knowledgeFolder), () => _knowledge.Status)
+            _knowledgeFilesWindow = new KnowledgeFilesWindow(() => _knowledge.GetFileList(_knowledgeFolder), () => _knowledge.Status,
+                path => _knowledge.GetIndexedText(_knowledgeFolder, path))
             {
                 Owner = this
             };

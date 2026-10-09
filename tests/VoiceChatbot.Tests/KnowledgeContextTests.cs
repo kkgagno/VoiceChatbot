@@ -88,6 +88,43 @@ public class KnowledgeContextTests
         Assert.Contains("no text could be read from: Deed.pdf", catalog);
     }
 
+    [Theory]
+    [InlineData(KnowledgeContextMode.WholeFolder)]
+    [InlineData(KnowledgeContextMode.Excerpts)]
+    [InlineData(KnowledgeContextMode.Overview)]
+    [InlineData(KnowledgeContextMode.Catalog)]
+    public void FormatCatalog_AsksToQuoteTheLineANumberCameFrom(KnowledgeContextMode mode)
+    {
+        var catalog = KnowledgeContext.FormatCatalog("taxes", new[] { "1040 2022.pdf" }, null, mode);
+
+        Assert.Contains(KnowledgeContext.QuoteTheSource, catalog);
+        Assert.Contains("quote the exact line it came from and name the file", catalog);
+        Assert.Contains("say it is unclear instead of guessing", catalog);
+        Assert.Contains("re-read the text and quote it rather than offering another guess", catalog);
+        // The column mark the PDF reader uses is explained.
+        Assert.Contains($"\"{PdfLayoutText.ColumnSeparator}\" between columns", catalog);
+        Assert.EndsWith(KnowledgeContext.IgnoreWhenUnrelated, catalog.Split('\n')[1].TrimEnd());
+    }
+
+    [Fact]
+    public void Build_AskingAboutAFormAmountGetsTheQuotingRule()
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(new KnowledgeFileRecord
+        {
+            Path = Path.Combine(Root, "1040 2022.pdf"),
+            Chunks = KnowledgeIndex.ChunkText("Form 1040 U.S. Individual Income Tax Return 2022\n" +
+                                               "9 Add lines 1z through 8. This is your total income ... 9 | 114,423\n" +
+                                               "11 Subtract line 10 from line 9. This is your adjusted gross income ... 11 | 112,258")
+        });
+
+        var result = KnowledgeContext.Build(index, "What was my adjusted gross income in 2022?", null, 4, 5000);
+
+        Assert.NotEqual(KnowledgeContextMode.None, result.Mode);
+        Assert.Contains(KnowledgeContext.QuoteTheSource, result.Text);
+        Assert.Contains("adjusted gross income ... 11 | 112,258", result.Text);
+    }
+
     [Fact]
     public void FormatCatalog_CapsTheListAndCountsTheRest()
     {
@@ -110,6 +147,8 @@ public class KnowledgeContextTests
         Assert.Contains("no text could be read from any of them", catalog);
         Assert.Contains("Unreadable: Deed.pdf, Bylaws scan.pdf.", catalog);
         Assert.Contains("do not invent contents", catalog);
+        // Nothing to quote from.
+        Assert.DoesNotContain(KnowledgeContext.QuoteTheSource, catalog);
     }
 
     // ==================== Build ====================
@@ -318,6 +357,19 @@ public class KnowledgeContextTests
         Assert.Equal(paragraphs, KnowledgeContext.JoinChunks(KnowledgeIndex.ChunkText(paragraphs)));
         Assert.Equal("", KnowledgeContext.JoinChunks(null));
         Assert.Equal("one\ntwo", KnowledgeContext.JoinChunks(new[] { "one", " ", "two" }));
+    }
+
+    [Fact]
+    public void JoinChunks_RebuildsPdfFormRowsForViewText()
+    {
+        // Rows as the PDF reader lays them out: each a line, " | " between columns, no sentences to cut at.
+        var rows = string.Join("\n", Enumerable.Range(1, 80).Select(i =>
+            $"{i} Line {i} of the form, amount for item {i * 3} ... {i} | {i * 1234:N0}"));
+
+        var chunks = KnowledgeIndex.ChunkText(rows);
+
+        Assert.True(chunks.Count > 3);
+        Assert.Equal(rows, KnowledgeContext.JoinChunks(chunks));
     }
 
     // ==================== Names ====================

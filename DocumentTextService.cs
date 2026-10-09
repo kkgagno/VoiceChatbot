@@ -341,10 +341,11 @@ public sealed class DocumentTextService
     {
         progress?.Report("reading PDF text...");
         List<string> pages;
+        List<bool> pagesNeedOcr;
         int pageCount;
         try
         {
-            (pages, pageCount) = ExtractPdfPages(path, ct);
+            (pages, pagesNeedOcr, pageCount) = ExtractPdfPages(path, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -354,15 +355,18 @@ public sealed class DocumentTextService
             // The PDF library could not parse it; Windows may still render it for OCR.
             AppLog.Info($"PdfPig could not read {Path.GetFileName(path)}: {ex.Message}");
             pages = new List<string>();
+            pagesNeedOcr = new List<bool>();
             pageCount = 0;
         }
 
         var text = NormalizeText(string.Join("\n\n", pages));
-        var readable = text.Length > 0 && LooksLikeReadableText(text);
+        // The column marks of the page layout are not part of the text's letters-to-symbols balance.
+        var readable = text.Length > 0 && LooksLikeReadableText(text.Replace(PdfLayoutText.ColumnSeparator, " "));
 
-        // Pages whose text layer is (nearly) empty are scans; a garbled text layer means every page is.
+        // Pages whose printed text layer is (nearly) empty are scans (form values alone do not make a
+        // page readable); a garbled text layer means every page is.
         var scanned = readable
-            ? Enumerable.Range(1, pages.Count).Where(p => DocumentFileTypes.PdfPageNeedsOcr(pages[p - 1])).ToList()
+            ? Enumerable.Range(1, pages.Count).Where(p => pagesNeedOcr[p - 1]).ToList()
             : Enumerable.Range(1, pageCount > 0 ? pageCount : maxOcrPages).ToList();
         if (scanned.Count == 0)
             return CreateResult(path, text, "");
@@ -411,29 +415,39 @@ public sealed class DocumentTextService
         return CreateResult(path, string.IsNullOrWhiteSpace(notice) ? body : $"[{notice}]\n\n{body}", "") with { Notice = notice };
     }
 
-    private static (List<string> Pages, int PageCount) ExtractPdfPages(string path, CancellationToken ct)
+    /// <summary>
+    /// Each page's text layer as lines in reading order, laid out by position (PdfPageText), with the
+    /// values of a fillable form placed beside their labels; and whether each page's printed text is
+    /// so thin that the page is a scan for OCR.
+    /// </summary>
+    private static (List<string> Pages, List<bool> NeedsOcr, int PageCount) ExtractPdfPages(string path, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
         var pages = new List<string>();
+        var needsOcr = new List<bool>();
         using var stream = OpenShared(path);
         using var document = PdfDocument.Open(stream);
+        var reader = new PdfPageText(document, path);
         for (var number = 1; number <= document.NumberOfPages; number++)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                pages.Add(document.GetPage(number).Text ?? "");
+                var (text, scan) = reader.Read(document.GetPage(number));
+                pages.Add(text);
+                needsOcr.Add(scan);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // One unreadable page: OCR may still read it.
                 AppLog.Info($"PdfPig could not read page {number} of {Path.GetFileName(path)}: {ex.Message}");
                 pages.Add("");
+                needsOcr.Add(true);
             }
         }
 
-        return (pages, document.NumberOfPages);
+        return (pages, needsOcr, document.NumberOfPages);
     }
 
     private sealed record PdfOcrResult(Dictionary<int, string> Texts, string Error, DocumentReadProblem Problem);

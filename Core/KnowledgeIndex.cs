@@ -26,6 +26,17 @@ public sealed class KnowledgeFileRecord
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public DocumentReadProblem? Problem { get; set; }
     public List<string> Chunks { get; set; } = new();
+    // The reader version that gave Chunks (KnowledgeIndex.ExtractorVersionFor); 0 for most files and
+    // for PDFs indexed before versions were recorded.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ExtractorVersion { get; set; }
+
+    /// <summary>
+    /// True when the file's text came from an older reader than the app has now (a PDF indexed before
+    /// PDFs were read by layout), so even an unchanged file is read again.
+    /// </summary>
+    [JsonIgnore]
+    public bool ReadByOlderExtractor => Chunks.Count > 0 && ExtractorVersion < KnowledgeIndex.ExtractorVersionFor(Path);
 
     /// <summary>
     /// True when the file was read and simply has no text: a picture or scan where OCR found no words,
@@ -70,6 +81,11 @@ public sealed record KnowledgeHit(string Path, int ChunkIndex, string Text, doub
 public sealed class KnowledgeIndex
 {
     public const int FormatVersion = 1;
+    /// <summary>
+    /// The version of the PDF reader. Bump it when PDF text extraction changes, so PDFs indexed by an
+    /// older reader are read again on the next reindex (2: lines laid out by position, form values).
+    /// </summary>
+    public const int PdfExtractorVersion = 2;
     public const int DefaultChunkChars = 900;
     public const int DefaultOverlapChars = 150;
     public const int DefaultMaxChunks = 4;
@@ -152,6 +168,10 @@ public sealed class KnowledgeIndex
         return Path.TrimEndingDirectorySeparator(text);
     }
 
+    /// <summary>The reader version a file of this type is read with now (<see cref="PdfExtractorVersion"/> for PDFs, else 0).</summary>
+    public static int ExtractorVersionFor(string? path) =>
+        DocumentFileTypes.GetReader(path) == DocumentReader.Pdf ? PdfExtractorVersion : 0;
+
     public static bool SameFolder(string? a, string? b)
     {
         var left = NormalizeFolder(a);
@@ -173,7 +193,8 @@ public sealed class KnowledgeIndex
 
     /// <summary>
     /// Compares a folder scan with the index: new files and files whose size or write time changed must
-    /// be read, indexed files missing from the scan are gone. With <paramref name="retryFailed"/>, files
+    /// be read, and so must files whose text an older reader gave (<see cref="KnowledgeFileRecord.ReadByOlderExtractor"/>);
+    /// indexed files missing from the scan are gone. With <paramref name="retryFailed"/>, files
     /// that could not be read last time are read again too (e.g. after installing an OCR language), and
     /// so are scans whose OCR stopped early (<see cref="KnowledgeFileRecord.OcrCutShort"/>); files that
     /// were read and have no text (<see cref="KnowledgeFileRecord.HasNoText"/>) are not.
@@ -190,7 +211,7 @@ public sealed class KnowledgeIndex
                 if (string.IsNullOrWhiteSpace(file.Path) || !seen.Add(file.Path))
                     continue;
 
-                if (_files.TryGetValue(file.Path, out var record) && IsCurrent(record, file) &&
+                if (_files.TryGetValue(file.Path, out var record) && IsCurrent(record, file) && !record.ReadByOlderExtractor &&
                     !(retryFailed && ((record.Chunks.Count == 0 && !record.HasNoText) || record.OcrCutShort)))
                     unchanged++;
                 else

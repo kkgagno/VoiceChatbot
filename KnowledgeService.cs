@@ -126,6 +126,20 @@ public sealed class KnowledgeService
     }
 
     /// <summary>
+    /// The text indexed for <paramref name="path"/> in <paramref name="folder"/>, as the assistant reads it:
+    /// its chunks in order with the overlap between them left out. Null when the file has no indexed text.
+    /// </summary>
+    public string? GetIndexedText(string? folder, string? path)
+    {
+        var index = _index;
+        if (index == null || string.IsNullOrEmpty(path) || !KnowledgeIndex.SameFolder(index.Folder, folder) ||
+            !index.TryGetFile(path, out var record) || record.Chunks.Count == 0)
+            return null;
+
+        return KnowledgeContext.JoinChunks(record.Chunks);
+    }
+
+    /// <summary>
     /// Brings the index up to date with <paramref name="folder"/> on the thread pool. A different folder
     /// starts a new index. With <paramref name="retryFailed"/>, files that gave no text are read again.
     /// Cancelling keeps (and saves) the files read so far and gives a Stopped result. Errors are
@@ -443,7 +457,13 @@ public sealed class KnowledgeService
 
     private async Task<KnowledgeFileRecord> ReadFileAsync(KnowledgeFileStamp file, IProgress<string> progress, CancellationToken ct)
     {
-        var record = new KnowledgeFileRecord { Path = file.Path, Size = file.Size, LastWriteUtc = file.LastWriteUtc };
+        var record = new KnowledgeFileRecord
+        {
+            Path = file.Path,
+            Size = file.Size,
+            LastWriteUtc = file.LastWriteUtc,
+            ExtractorVersion = KnowledgeIndex.ExtractorVersionFor(file.Path)
+        };
         DocumentTextResult result;
         try
         {

@@ -10,12 +10,14 @@ public class KnowledgeIndexTests
 
     private static string P(params string[] parts) => Path.Combine(new[] { Root }.Concat(parts).ToArray());
 
+    // A record as the app makes it now, with the current reader's version.
     private static KnowledgeFileRecord Record(string path, params string[] chunks) => new()
     {
         Path = path,
         Size = 100,
         LastWriteUtc = Time1,
-        Chunks = chunks.ToList()
+        Chunks = chunks.ToList(),
+        ExtractorVersion = KnowledgeIndex.ExtractorVersionFor(path)
     };
 
     private static KnowledgeIndex SampleIndex()
@@ -210,6 +212,37 @@ public class KnowledgeIndexTests
         Assert.False(index.Plan(scan).HasChanges);
         // Read again only when the knowledge folder's limit reads more of it.
         Assert.Equal(new[] { P("declaration.pdf") }, index.Plan(scan, retryFailed: true).ToRead.Select(f => f.Path));
+    }
+
+    [Fact]
+    public void Plan_RereadsPdfsTheOlderReaderRead_WithoutAManualReindex()
+    {
+        var index = new KnowledgeIndex(Root);
+        KnowledgeFileRecord Old(string name, params string[] chunks) => Again(Record(P(name), chunks), 0);
+        index.Upsert(Old("1040 2022.pdf", "11 Adjusted gross income 112,258"));      // indexed before layout reading
+        index.Upsert(Record(P("1040 2023.pdf"), "11 Adjusted gross income ... 11 | 120,000"));
+        index.Upsert(Old("notes.txt", "pool hours"));                                  // other types have no reader version
+        index.Upsert(Again(new KnowledgeFileRecord { Path = P("scan.pdf"), Size = 100, LastWriteUtc = Time1, Error = "No text.", Problem = DocumentReadProblem.NoTextInImage }, 0));
+        var scan = index.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc)).ToList();
+
+        var plan = index.Plan(scan);
+
+        Assert.Equal(new[] { P("1040 2022.pdf") }, plan.ToRead.Select(f => f.Path));
+        Assert.Equal(3, plan.Unchanged);
+        Assert.True(index.Files.Single(f => f.Path == P("1040 2022.pdf")).ReadByOlderExtractor);
+        Assert.Equal(KnowledgeIndex.PdfExtractorVersion, KnowledgeIndex.ExtractorVersionFor(P("x.PDF")));
+        Assert.Equal(0, KnowledgeIndex.ExtractorVersionFor(P("x.docx")));
+        Assert.Equal(0, KnowledgeIndex.ExtractorVersionFor(null));
+
+        // Read again by the current reader: up to date.
+        index.Upsert(Record(P("1040 2022.pdf"), "11 Adjusted gross income ... 11 | 112,258"));
+        Assert.False(index.Plan(scan).HasChanges);
+
+        static KnowledgeFileRecord Again(KnowledgeFileRecord record, int version)
+        {
+            record.ExtractorVersion = version;
+            return record;
+        }
     }
 
     [Fact]
@@ -570,6 +603,33 @@ public class KnowledgeIndexTests
         Assert.True(loaded.Files.Single(f => f.Path == P("photo.jpg")).HasNoText);
         Assert.Null(loaded.Files.Single(f => f.Path == P("notes.txt")).Problem);
         Assert.DoesNotContain("hasNoText", json);
+    }
+
+    [Fact]
+    public void Json_KeepsTheReaderVersion_AndOldIndexesStillLoad()
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(Record(P("1040.pdf"), "11 Adjusted gross income ... 11 | 112,258"));
+        index.Upsert(Record(P("notes.txt"), "pool hours"));
+
+        var json = index.ToJson();
+        var loaded = KnowledgeIndex.FromJson(json);
+
+        Assert.Contains($"\"extractorVersion\":{KnowledgeIndex.PdfExtractorVersion}", json);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(json, "extractorVersion"));
+        Assert.Equal(KnowledgeIndex.PdfExtractorVersion, loaded.Files.Single(f => f.Path == P("1040.pdf")).ExtractorVersion);
+        Assert.False(loaded.Plan(index.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc))).HasChanges);
+
+        // An index saved before reader versions: it loads and stays searchable, and its PDFs are read again.
+        var old = "{\"version\":1,\"folder\":\"\",\"files\":[" +
+                  "{\"path\":\"a.pdf\",\"size\":5,\"lastWriteUtc\":\"2025-01-01T00:00:00Z\",\"chunks\":[\"greenhouse plans\"]}," +
+                  "{\"path\":\"b.txt\",\"size\":5,\"lastWriteUtc\":\"2025-01-01T00:00:00Z\",\"chunks\":[\"garden notes\"]}]}";
+        var oldIndex = KnowledgeIndex.FromJson(old);
+        var stamps = oldIndex.Files.Select(f => new KnowledgeFileStamp(f.Path, f.Size, f.LastWriteUtc));
+
+        Assert.Equal(2, oldIndex.FileCount);
+        Assert.Equal("a.pdf", oldIndex.Search("greenhouse plans").Single().Path);
+        Assert.Equal(new[] { "a.pdf" }, oldIndex.Plan(stamps).ToRead.Select(f => f.Path));
     }
 
     [Theory]

@@ -48,7 +48,7 @@
 
                 <ListBox x:Name="FileList" Grid.Row="1"
                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                         MouseDoubleClick="FileList_MouseDoubleClick">
+                         MouseDoubleClick="FileList_MouseDoubleClick" SelectionChanged="FileList_SelectionChanged">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
                             <Setter Property="Padding" Value="8,4"/>
@@ -98,6 +98,9 @@
         <DockPanel Grid.Row="2" Margin="0,10,0,0" LastChildFill="False">
             <Button x:Name="OpenFolderBtn" Content="Open folder" local:Ui.Icon="&#xE838;" Style="{StaticResource SecondaryButton}"
                     Click="OpenFolder_Click" ToolTip="Show the knowledge folder in Explorer"/>
+            <Button x:Name="ViewTextBtn" Content="View text" local:Ui.Icon="&#xE8A5;" Style="{StaticResource SecondaryButton}" Margin="6,0,0,0"
+                    Click="ViewText_Click" IsEnabled="False"
+                    ToolTip="Show the selected file's text as the assistant reads it (select an indexed file)"/>
             <Button Content="Refresh" local:Ui.Icon="&#xE72C;" Style="{StaticResource GhostButton}" Margin="6,0,0,0"
                     Click="Refresh_Click" ToolTip="Show the latest list (it does not reindex)"/>
             <Button DockPanel.Dock="Right" Content="Close" Style="{StaticResource SecondaryButton}" IsCancel="True"

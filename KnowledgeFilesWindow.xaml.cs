@@ -11,23 +11,27 @@ namespace VoiceChatbot;
 
 /// <summary>
 /// Lists every file the last knowledge folder scan saw and what happened to it (indexed, could not be
-/// read, skipped, too large), sortable by name, type or status. Opened from the Files button; the main
-/// window calls <see cref="Refresh"/> when a reindex finishes.
+/// read, skipped, too large), sortable by name, type or status. View text shows an indexed file's text
+/// as the assistant reads it. Opened from the Files button; the main window calls <see cref="Refresh"/>
+/// when a reindex finishes.
 /// </summary>
 public partial class KnowledgeFilesWindow : Window
 {
     private readonly Func<KnowledgeFileList> _loadFiles;
     private readonly Func<KnowledgeStatus> _getStatus;
+    private readonly Func<string, string?> _getIndexedText;
     private KnowledgeFileList _list = new("", Array.Empty<KnowledgeFileEntry>());
     private KnowledgeFileSort _sort = KnowledgeFileSort.Status;
     private bool _descending;
 
-    public KnowledgeFilesWindow(Func<KnowledgeFileList> loadFiles, Func<KnowledgeStatus> getStatus)
+    /// <param name="getIndexedText">A file's indexed text by full path, or null when it has none.</param>
+    public KnowledgeFilesWindow(Func<KnowledgeFileList> loadFiles, Func<KnowledgeStatus> getStatus, Func<string, string?> getIndexedText)
     {
         InitializeComponent();
         WindowTheme.UseThemedTitleBar(this);
         _loadFiles = loadFiles ?? throw new ArgumentNullException(nameof(loadFiles));
         _getStatus = getStatus ?? throw new ArgumentNullException(nameof(getStatus));
+        _getIndexedText = getIndexedText ?? throw new ArgumentNullException(nameof(getIndexedText));
         Refresh();
     }
 
@@ -71,6 +75,7 @@ public partial class KnowledgeFilesWindow : Window
             ? "Choose a knowledge folder first (Browse)."
             : "No files found yet. Click Reindex to scan the folder.";
         EmptyText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateViewTextButton();
 
         SortNameBtn.Content = HeaderText("File", KnowledgeFileSort.Name);
         SortTypeBtn.Content = HeaderText("Type", KnowledgeFileSort.Type);
@@ -112,6 +117,43 @@ public partial class KnowledgeFilesWindow : Window
         }
     }
 
+    private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateViewTextButton();
+
+    private void UpdateViewTextButton() =>
+        ViewTextBtn.IsEnabled = FileList.SelectedItem is KnowledgeFileRow { HasText: true };
+
+    private void ViewText_Click(object sender, RoutedEventArgs e)
+    {
+        if (FileList.SelectedItem is not KnowledgeFileRow row)
+            return;
+
+        string? text;
+        try
+        {
+            text = _getIndexedText(row.FullPath);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not get the indexed text of {row.FullPath}: {ex.Message}");
+            text = null;
+        }
+
+        if (string.IsNullOrEmpty(text))
+        {
+            SummaryText.Text = $"No text is indexed for {row.Name}. Click Refresh, or Reindex if it changed.";
+            return;
+        }
+
+        try
+        {
+            new KnowledgeTextWindow(row.Name, text) { Owner = this }.Show();
+        }
+        catch (Exception ex)
+        {
+            SummaryText.Text = $"Could not show the text: {ex.Message}";
+        }
+    }
+
     private void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (FileList.SelectedItem is not KnowledgeFileRow row || !File.Exists(row.FullPath))
@@ -138,6 +180,7 @@ public sealed class KnowledgeFileRow
         var extension = KnowledgeReport.ExtensionOf(entry.Path);
         Type = extension.Length == 0 ? "none" : extension.TrimStart('.');
         Status = KnowledgeReport.DescribeEntry(entry);
+        HasText = entry.State == KnowledgeFileState.Indexed;
         Detail = string.IsNullOrWhiteSpace(entry.Reason) ? Status : $"{Status}\n\n{entry.Reason}";
         Tone = entry.State switch
         {
@@ -155,4 +198,6 @@ public sealed class KnowledgeFileRow
     public string Status { get; }
     public string Detail { get; }
     public string Tone { get; }
+    /// <summary>True when the file has indexed text (View text can show it).</summary>
+    public bool HasText { get; }
 }
