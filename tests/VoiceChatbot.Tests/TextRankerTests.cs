@@ -152,4 +152,18 @@ public class TextRankerTests
         Assert.All(results, r => Assert.Equal(ranker.Coverage("solar roof", r.Index), r.Coverage, 6));
         Assert.Equal(new[] { 2, 1 }, results.Select(r => r.MatchedTerms));
     }
+
+    [Fact]
+    public void WeightShare_IsTheShareOfTheQueryWeightInTheGivenWords()
+    {
+        var ranker = new TextRanker(new[] { "solar panels on the roof", "roof repair quote", "garden tools" });
+        var terms = TextRanker.QueryTermsOf("solar roof");
+
+        Assert.Equal(new[] { "solar", "roof" }, terms);
+        Assert.Equal(1, ranker.WeightShare(terms, new HashSet<string> { "solar", "roof", "other" }), 6);
+        Assert.Equal(ranker.Coverage("solar roof", 1), ranker.WeightShare(terms, new HashSet<string> { "roof" }), 6);
+        Assert.Equal(0, ranker.WeightShare(terms, new HashSet<string>()));
+        Assert.Equal(0, ranker.WeightShare(Array.Empty<string>(), new HashSet<string> { "roof" }));
+        Assert.Equal(0, ranker.WeightShare(null, null));
+    }
 }

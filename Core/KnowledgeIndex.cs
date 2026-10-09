@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -45,6 +44,7 @@ public sealed record KnowledgeHit(string Path, int ChunkIndex, string Text, doub
 /// chunks that overlap by ~150 characters and end on paragraph or sentence boundaries, and chunks are
 /// ranked with BM25 (<see cref="TextRanker"/>). Per-file size and write time let a reindex re-read only
 /// new or changed files. Reading files is the app's job (KnowledgeService); this class is data + logic.
+/// What goes to the model for a message is chosen by <see cref="KnowledgeContext"/>.
 /// Search may run on any thread. Upsert/Remove/Plan are meant for one owner thread: the app changes a
 /// private copy and publishes a <see cref="Clone"/> that it never changes again.
 /// </summary>
@@ -62,7 +62,16 @@ public sealed class KnowledgeIndex
     // A chunk that shares just one word with a longer message needs that word to carry most of the
     // message's weight: "name my cat" should not pull in "WiFi name: ...".
     public const double SingleWordMinCoverage = 0.6;
-    public const string ContextHeading = "Relevant excerpts from the user's documents";
+    // Query words in a file's name or folder names lift all of that file's chunks: by this share of their
+    // score when the name holds all of the query's weight, less when it holds part of it. So "pool hours"
+    // ranks "HOA\Pool rules.pdf" above a newsletter that says "pool" five times, and "what do the HOA
+    // bylaws say about pets" ranks pet rules in "HOA\Bylaws.pdf" above other files about pets.
+    public const double NameBoost = 1.5;
+    // For a short follow-up ("and the parking rules?"), chunks that also match the previous question
+    // gain this share of their score for it. Only the latest message decides whether a chunk is used.
+    public const double FollowUpWeight = 0.4;
+    // A message with this many search words or fewer counts as a possible follow-up.
+    public const int ShortFollowUpTerms = 3;
 
     // Long pastes are searched on their first part only.
     private const int MaxQueryChars = 4000;
@@ -73,10 +82,11 @@ public sealed class KnowledgeIndex
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    // Chat filler that says nothing about the topic: "what does the document say about X" should match
-    // on X only, and small talk ("thanks", "good morning", "what time is it?") should not pull in excerpts.
+    // Chat filler that says nothing about the topic: "what does the document say about X" or "summarize
+    // the X pdf" should match on X only, and small talk ("thanks", "good morning", "what time is it?")
+    // should not pull in excerpts.
     private static readonly Regex FillerWords = new(
-        @"\b(?:tell|say|says|said|know|think|show|give|explain|describe|mean|means|look|help|according|mention|mentions|mentioned|remember|document|documents|doc|docs|file|files|folder|folders|thing|things|something|anything|stuff|thanks|thank|hello|hi|hey|good|morning|afternoon|evening|night|tonight|today|tomorrow|yesterday|day|time|weather|great|cool|nice|sure|sorry|okay|yeah|yep|nope|bye|goodbye)\b",
+        @"\b(?:tell|say|says|said|know|think|show|give|explain|describe|mean|means|look|help|according|mention|mentions|mentioned|remember|document|documents|doc|docs|file|files|folder|folders|pdf|pdfs|docx|summarize|summarise|summarized|summary|overview|recap|find|search|details|thing|things|something|anything|stuff|thanks|thank|hello|hi|hey|good|morning|afternoon|evening|night|tonight|today|tomorrow|yesterday|day|time|weather|great|cool|nice|sure|sorry|okay|yeah|yep|nope|bye|goodbye)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly Regex HorizontalSpace = new(@"[\t\v\f \u00A0\x00-\x08\x0E-\x1F]+", RegexOptions.Compiled);
@@ -206,15 +216,28 @@ public sealed class KnowledgeIndex
     /// <summary>
     /// The best chunks for a chat message, best first: BM25 order, keeping only chunks that contain at
     /// least <paramref name="minCoverage"/> of the message's weighted words (more when they share only
-    /// one word with it). Empty when nothing is relevant.
+    /// one word with it). Chunks of files whose name or folders contain message words rank higher.
+    /// <paramref name="followUpContext"/> is the previous question for a short follow-up: chunks that
+    /// match it too rank higher, and a message without words of its own ("what about it?") searches
+    /// for it instead. <paramref name="nameBoost"/> is <see cref="NameBoost"/> unless a test turns it
+    /// off. Empty when nothing is relevant.
     /// </summary>
-    public IReadOnlyList<KnowledgeHit> Search(string? query, int maxChunks = DefaultMaxChunks, double minCoverage = DefaultMinCoverage)
+    public IReadOnlyList<KnowledgeHit> Search(string? query, int maxChunks = DefaultMaxChunks, double minCoverage = DefaultMinCoverage,
+        string? followUpContext = null, double nameBoost = NameBoost)
     {
         var text = CleanQuery(query);
+        var context = CleanQuery(followUpContext);
+        if (TextRanker.Tokenize(text).Count == 0)
+            (text, context) = (context, "");
         if (maxChunks <= 0 || TextRanker.Tokenize(text).Count == 0)
             return Array.Empty<KnowledgeHit>();
 
         var cache = GetSearchCache();
+        var terms = TextRanker.QueryTermsOf(text);
+        var contextScores = TextRanker.Tokenize(context).Count == 0
+            ? null
+            : cache.Ranker.Rank(context).ToDictionary(r => r.Index, r => r.Score);
+        var nameShares = new Dictionary<KnowledgeFileRecord, double>();
         var hits = new List<KnowledgeHit>();
         foreach (var ranked in cache.Ranker.Rank(text))
         {
@@ -222,13 +245,32 @@ public sealed class KnowledgeIndex
                 continue;
 
             var (record, chunk) = cache.Chunks[ranked.Index];
-            hits.Add(new KnowledgeHit(record.Path, chunk, record.Chunks[chunk], ranked.Score, ranked.Coverage));
-            if (hits.Count >= maxChunks)
-                break;
+            if (!nameShares.TryGetValue(record, out var nameShare))
+                nameShares[record] = nameShare = cache.Ranker.WeightShare(terms, cache.TitleWords[record]);
+
+            var score = ranked.Score * (1 + nameBoost * nameShare);
+            if (contextScores != null && contextScores.TryGetValue(ranked.Index, out var contextScore))
+                score += FollowUpWeight * contextScore;
+            hits.Add(new KnowledgeHit(record.Path, chunk, record.Chunks[chunk], score, ranked.Coverage));
         }
 
-        return hits;
+        // A stable sort: equal scores keep BM25 order.
+        return hits.OrderByDescending(h => h.Score).Take(maxChunks).ToList();
     }
+
+    /// <summary>
+    /// True when a message has so few search words (after filler such as "tell me" is removed) that it
+    /// may follow up on the previous question: "and the parking rules?", "what about it?".
+    /// </summary>
+    public static bool IsShortFollowUp(string? text) => TextRanker.Tokenize(CleanQuery(text)).Count <= ShortFollowUpTerms;
+
+    /// <summary>The files that have text, in folder order (by path), as the catalog and whole-folder context list them.</summary>
+    public IReadOnlyList<KnowledgeFileRecord> IndexedFilesInOrder() =>
+        GetSearchCache().OrderedFiles.Where(f => f.Chunks.Count > 0).ToList();
+
+    /// <summary>The files that gave no text, in folder order.</summary>
+    public IReadOnlyList<KnowledgeFileRecord> UnreadableFilesInOrder() =>
+        GetSearchCache().OrderedFiles.Where(f => f.Chunks.Count == 0).ToList();
 
     /// <summary>Builds the search structures now (on a background thread) instead of on the first search.</summary>
     public void Prepare() => GetSearchCache();
@@ -366,36 +408,7 @@ public sealed class KnowledgeIndex
         return normalized.Trim();
     }
 
-    // ==================== Prompt text ====================
-
-    /// <summary>The context block for the model (appended to the user message): a short instruction, then each excerpt under its file name.</summary>
-    public static string FormatContext(IReadOnlyList<KnowledgeHit> hits, string? folder = null)
-    {
-        if (hits == null || hits.Count == 0)
-            return "";
-
-        var sb = new StringBuilder();
-        sb.AppendLine(ContextHeading + " (their knowledge folder), found by keyword search for the latest message.");
-        sb.AppendLine("Use them when they help answer that message and mention which file you used. If they do not cover the question, ignore them and answer normally. Do not invent document content.");
-        for (var i = 0; i < hits.Count; i++)
-        {
-            sb.AppendLine();
-            sb.Append('[').Append(i + 1).Append("] ").AppendLine(DisplayName(hits[i].Path, folder));
-            sb.AppendLine(hits[i].Text.Trim());
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    /// <summary>The chat note for a search, e.g. "Using 3 excerpts from: a.pdf, b.md".</summary>
-    public static string FormatNote(IReadOnlyList<KnowledgeHit> hits)
-    {
-        if (hits == null || hits.Count == 0)
-            return "";
-
-        var files = hits.Select(h => h.FileName).Distinct(StringComparer.OrdinalIgnoreCase);
-        return $"Using {hits.Count} {(hits.Count == 1 ? "excerpt" : "excerpts")} from: {string.Join(", ", files)}";
-    }
+    // ==================== Names ====================
 
     /// <summary>The path relative to the knowledge folder when the file is inside it, else just the file name.</summary>
     public static string DisplayName(string path, string? folder)
@@ -488,11 +501,14 @@ public sealed class KnowledgeIndex
 
             var chunks = new List<(KnowledgeFileRecord Record, int Chunk)>();
             var documents = new List<string>();
-            foreach (var record in _files.Values.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase))
+            var titleWords = new Dictionary<KnowledgeFileRecord, IReadOnlySet<string>>();
+            var ordered = _files.Values.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var record in ordered)
             {
                 // The file name and its subfolders are searchable too, so "my car's tire pressure" also
                 // finds chunks of "Car\Honda manual.md" and "my lease" those of "Lease 2025.pdf".
                 var title = Path.ChangeExtension(DisplayName(record.Path, Folder), null);
+                titleWords[record] = new HashSet<string>(TextRanker.Tokenize(title), StringComparer.Ordinal);
                 for (var i = 0; i < record.Chunks.Count; i++)
                 {
                     chunks.Add((record, i));
@@ -500,12 +516,16 @@ public sealed class KnowledgeIndex
                 }
             }
 
-            _searchCache = new SearchCache(new TextRanker(documents), chunks);
+            _searchCache = new SearchCache(new TextRanker(documents), chunks, titleWords, ordered);
             return _searchCache;
         }
     }
 
-    private sealed record SearchCache(TextRanker Ranker, List<(KnowledgeFileRecord Record, int Chunk)> Chunks);
+    private sealed record SearchCache(
+        TextRanker Ranker,
+        List<(KnowledgeFileRecord Record, int Chunk)> Chunks,
+        Dictionary<KnowledgeFileRecord, IReadOnlySet<string>> TitleWords,
+        List<KnowledgeFileRecord> OrderedFiles);
 
     internal sealed class IndexData
     {
