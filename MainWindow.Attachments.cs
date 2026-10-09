@@ -264,7 +264,7 @@ public partial class MainWindow
         var dialog = new OpenFileDialog
         {
             Title = "Attach document",
-            Filter = "Documents (*.pdf;*.docx;*.txt;*.md;*.csv;*.json;*.xml;*.log)|*.pdf;*.docx;*.txt;*.md;*.csv;*.json;*.xml;*.log|All files (*.*)|*.*",
+            Filter = DocumentFileTypes.BuildOpenFileDialogFilter(),
             Multiselect = true
         };
 

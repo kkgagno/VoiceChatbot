@@ -411,7 +411,8 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
             return true;
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
-        return ext is ".pdf" or ".docx" || DocumentFileTypes.IsTextExtension(ext);
+        // Images were handled above; everything else the document reader understands is accepted.
+        return DocumentFileTypes.CanRead(ext);
     }
 
     private async Task<object> BuildResponseAsync(PhoneRemoteUserInput input, CancellationToken ct)
