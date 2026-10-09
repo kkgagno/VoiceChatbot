@@ -206,11 +206,31 @@ The hint under the setting shows how many memories the last message used. The se
 
 The assistant can answer from your own documents. Open **Knowledge Folder** in the sidebar, click **Browse** (or type a path and press Enter) and turn on **Use my documents**.
 
-- PDF, Word (`.docx`), `.txt`, `.md`, `.csv`, `.json`, `.xml` and `.log` files are read, including subfolders. Files over 25 MB, hidden files and Office lock files are skipped. Scanned PDFs need the same OCR tools as attached documents (Poppler and Tesseract).
+- PDFs (scanned ones too), Word, Excel, PowerPoint, OpenDocument, RTF, text, Markdown, CSV, JSON, XML, logs, web pages, emails (`.eml`, Outlook `.msg`) and pictures are read, including subfolders (see [Documents and OCR](#documents-and-ocr)). Files over 25 MB, hidden files and Office lock files are skipped.
 - Indexing runs in the background. The status line shows progress, then the number of files and chunks and when the folder was last indexed. Hover it to see files that could not be read. While indexing, the button reads **Stop**.
 - While it is on, the folder is checked again a few seconds after the app starts and whenever you change it, and only new or changed files are read again. **Reindex** does the same now and also retries files that could not be read before (for example after installing OCR).
 - For each message, desktop or phone remote, the best-matching passages (up to **Excerpts per message**, default 4, about 900 characters each) are added to that request only, and the chat shows a note such as *Using 3 excerpts from: lease.pdf, car.md*. Matching is keyword based, like memories: a message has to share its main words with a passage, so small talk and general questions are not affected. File and subfolder names count as words too.
 - The index is stored in `%APPDATA%\VoiceChatbot\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
+
+### Documents and OCR
+
+Attached documents and the knowledge folder use the same reader (`DocumentTextService`):
+
+| Type | Read as |
+| --- | --- |
+| PDF | Text of each page. Pages without a text layer (scans) are read with OCR, up to 8 pages per file; the reply notes which pages were left out. |
+| Word `.docx`, `.doc`, `.rtf`, `.odt` | Body text, headers, footers and footnotes. Old `.doc` files (Word 97-2003) are read directly. |
+| Excel `.xlsx`, `.xlsm`, `.ods` | Each sheet as `Sheet: name`, then one line per row with comma-separated cells (dates as `yyyy-mm-dd`). |
+| PowerPoint `.pptx`, `.odp` | `Slide n` with the slide text and speaker notes. |
+| Emails `.eml`, `.msg`, web pages `.html`, `.mht` | From, To, Date and Subject, then the message text; attachments are named but not read. |
+| Pictures `.png`, `.jpg`, `.gif`, `.bmp`, `.tif`, `.webp`, `.heic` | Text in the picture, with OCR. Photos without words show as "No text was found in this picture". |
+| Text, Markdown, CSV, JSON, XML, logs, scripts | As they are (UTF-8, UTF-16 or Windows ANSI). |
+| `.xls`, `.ppt`, Publisher, Visio, WordPerfect and other types | Through the Windows text filter (IFilter) for that type, when one is installed (Windows includes one for old Office files; Office and the Microsoft Office filter pack add more). Otherwise the file is listed with what to do, such as saving it as `.xlsx`. |
+
+- **OCR** uses the text recognition built into Windows 10 and 11, in your Windows display language (else English). Nothing has to be installed; if Windows has no OCR language, add one in **Settings > Time & language > Language** (**Language & region** on Windows 11). When Windows OCR is not available, Poppler `pdftoppm` and Tesseract are used if they are installed.
+- **`.heic` photos** (iPhone) need **HEIF Image Extensions** and **HEVC Video Extensions** from the Microsoft Store; **`.webp`** needs **Webp Image Extensions** (installed on most PCs).
+- **OneDrive**: online-only files are downloaded when they are read. If that fails (OneDrive is signed out or offline), the file is listed as online-only: right-click the folder in File Explorer and choose **Always keep on this device**.
+- Password-protected files cannot be read; remove the password and save the file again.
 
 ### Personas
 
@@ -266,9 +286,10 @@ The remote also serves the Live Transcriber as a web page: open `https://<PC add
 
 The Windows installer bundles `yt-dlp`, Deno, and `ffmpeg`, so YouTube captions and audio fallback work on a clean installation. Release builds fetch current official Windows binaries from their projects.
 
-Optional tools improve document support:
+Optional tools for documents (see [Documents and OCR](#documents-and-ocr)):
 
-- Poppler `pdftoppm` and Tesseract OCR for scanned PDFs.
+- Poppler `pdftoppm` and Tesseract OCR, used for scanned PDFs only when Windows OCR has no language installed.
+- The Microsoft Office filter pack, for old Office, Publisher and Visio files that Windows has no text filter for.
 
 These tools can be installed with WinGet where packages are available.
 

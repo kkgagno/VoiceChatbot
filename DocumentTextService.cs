@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Xml.Linq;
 using UglyToad.PdfPig;
 
 namespace VoiceChatbot;
@@ -16,11 +15,17 @@ namespace VoiceChatbot;
 public sealed class DocumentTextService
 {
     private const int MaxDocumentContextChars = 240000;
+    // Office, RTF, email and filter output is capped here; the knowledge index keeps less.
+    private const int MaxExtractedChars = 4_000_000;
+    // Old Office files and .msg files larger than this skip the built-in readers (they load the whole file).
+    private const long MaxCompoundFileBytes = 100L * 1024 * 1024;
 
     /// <summary>
-    /// Reads a document's text. Runs on a worker thread (PdfPig, DOCX parsing and the OCR tool lookup
-    /// are synchronous), so a UI caller stays responsive. Cancelling throws OperationCanceledException
-    /// and kills any running pdftoppm/tesseract process.
+    /// Reads a document's text: PDF (with OCR for scanned pages), Word, Excel, PowerPoint,
+    /// OpenDocument, RTF, HTML, emails (.eml, .msg), pictures (OCR) and plain text; other types go
+    /// through their Windows text filter when one is installed. Runs on a worker thread, so a UI
+    /// caller stays responsive. Cancelling throws OperationCanceledException and kills any running
+    /// pdftoppm/tesseract process. Failures come back as a result with an Error and a Problem.
     /// </summary>
     public Task<DocumentTextResult> ExtractAsync(string path, CancellationToken ct = default, IProgress<string>? progress = null) =>
         Task.Run(() => ExtractCoreAsync(path, progress, ct), CancellationToken.None);
@@ -28,34 +33,14 @@ public sealed class DocumentTextService
     private static async Task<DocumentTextResult> ExtractCoreAsync(string path, IProgress<string>? progress, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            return new DocumentTextResult(path, "", "File not found.");
+            return Fail(path, "File not found.", DocumentReadProblem.NotFound);
 
-        var ext = Path.GetExtension(path).ToLowerInvariant();
+        // An online-only OneDrive file is downloaded when it is read; only explain when that fails.
+        var cloudOnly = IsCloudOnly(path);
+        DocumentTextResult result;
         try
         {
-            if (ext == ".pdf")
-                return await ExtractPdfDocumentAsync(path, progress, ct);
-
-            if (ext == ".docx")
-            {
-                var docxText = ExtractDocx(path);
-                return string.IsNullOrWhiteSpace(docxText)
-                    ? new DocumentTextResult(path, "", "No readable text was found in this Word document.")
-                    : CreateResult(path, docxText, "");
-            }
-
-            var unsupported = DocumentFileTypes.GetUnsupportedTypeMessage(ext);
-            if (unsupported != null)
-                return new DocumentTextResult(path, "", unsupported);
-
-            // Unknown extensions are read as text when the bytes look like text (scripts, configs, code).
-            if (!DocumentFileTypes.IsTextExtension(ext) && !await LooksLikeTextFileAsync(path, ct))
-                return new DocumentTextResult(path, "", DocumentFileTypes.DescribeUnsupportedType(ext));
-
-            var text = await File.ReadAllTextAsync(path, ct);
-            return string.IsNullOrWhiteSpace(text)
-                ? new DocumentTextResult(path, "", "The file is empty: there is no text in it.")
-                : CreateResult(path, text, "");
+            result = await ReadAsync(path, progress, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -63,14 +48,100 @@ public sealed class DocumentTextService
         }
         catch (Exception ex)
         {
-            return new DocumentTextResult(path, "", ex.Message);
+            AppLog.Info($"Could not read {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
+            result = Fail(path, ex.Message, DocumentReadProblem.Failed);
+        }
+
+        if (cloudOnly && result.Problem is (DocumentReadProblem.Failed or DocumentReadProblem.NoText) && IsCloudOnly(path))
+            return Fail(path, DocumentFileTypes.OneDriveOnlineOnlyMessage, DocumentReadProblem.OnlineOnly);
+        return result;
+    }
+
+    private static bool IsCloudOnly(string path)
+    {
+        try
+        {
+            return DocumentFileTypes.IsCloudOnly(File.GetAttributes(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
         }
     }
 
-    private static async Task<bool> LooksLikeTextFileAsync(string path, CancellationToken ct)
+    private static async Task<DocumentTextResult> ReadAsync(string path, IProgress<string>? progress, CancellationToken ct)
     {
-        await using var stream = File.OpenRead(path);
-        var buffer = new byte[DocumentFileTypes.TextSniffBytes];
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        var reader = DocumentFileTypes.GetReader(ext);
+        switch (reader)
+        {
+            case DocumentReader.Unsupported:
+                return Fail(path, DocumentFileTypes.GetUnsupportedTypeMessage(ext) ?? DocumentFileTypes.DescribeUnsupportedType(ext), DocumentReadProblem.Unsupported);
+            case DocumentReader.Pdf:
+                return await ExtractPdfDocumentAsync(path, progress, ct);
+            case DocumentReader.Image:
+                return await ExtractImageAsync(path, progress, ct);
+            case DocumentReader.Text:
+                return await ExtractTextFileAsync(path, ct);
+            case DocumentReader.Html:
+                return await ExtractHtmlAsync(path, ct);
+            case DocumentReader.Email:
+                return await ExtractEmailAsync(path, ct);
+        }
+
+        // Office-style files are recognized by their first bytes too: a .doc may really be RTF, HTML
+        // or a .docx, an .xls may be a web page or tab-separated text, and a .docx that is an OLE
+        // compound file is password-protected.
+        var start = await ReadStartAsync(path, DocumentFileTypes.TextSniffBytes, ct);
+        switch (DocumentFileTypes.Sniff(start))
+        {
+            case SniffedFormat.Pdf:
+                return await ExtractPdfDocumentAsync(path, progress, ct);
+            case SniffedFormat.Rtf:
+                return await ExtractRtfAsync(path, ct);
+            case SniffedFormat.Html:
+                return await ExtractHtmlAsync(path, ct);
+            case SniffedFormat.Zip:
+                return ExtractZipDocument(path);
+            case SniffedFormat.CompoundFile:
+                return await ExtractCompoundFileAsync(path, reader, progress, ct);
+        }
+
+        switch (reader)
+        {
+            case DocumentReader.Rtf:
+                // Not RTF inside: some programs save plain text as .rtf.
+                return await ExtractTextFileAsync(path, ct);
+            case DocumentReader.OutlookMessage when EmailText.LooksLikeEmail(Encoding.Latin1.GetString(start)):
+                return await ExtractEmailAsync(path, ct);
+        }
+
+        // A tab-separated "spreadsheet", an old .doc that is really text, or an unknown text file.
+        if (DocumentFileTypes.LooksLikeText(start))
+            return await ExtractTextFileAsync(path, ct);
+
+        if (reader is DocumentReader.Word or DocumentReader.Excel or DocumentReader.PowerPoint or DocumentReader.OpenDocument)
+            return Fail(path, $"This {DocumentFileTypes.GetTypeName(ext)} file is damaged or is not really a {ext} file.", DocumentReadProblem.Failed);
+
+        return await ExtractWithFilterAsync(path, reader, progress, ct);
+    }
+
+    // Files open in Word or Excel are still readable: share with writers too.
+    private static FileStream OpenShared(string path, bool useAsync = false) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync);
+
+    private static async Task<byte[]> ReadAllBytesSharedAsync(string path, CancellationToken ct)
+    {
+        await using var stream = OpenShared(path, useAsync: true);
+        var output = new MemoryStream(stream.CanSeek ? (int)Math.Min(stream.Length, int.MaxValue) : 0);
+        await stream.CopyToAsync(output, ct);
+        return output.Length == output.Capacity ? output.GetBuffer() : output.ToArray();
+    }
+
+    private static async Task<byte[]> ReadStartAsync(string path, int count, CancellationToken ct)
+    {
+        await using var stream = OpenShared(path, useAsync: true);
+        var buffer = new byte[count];
         var read = 0;
         while (read < buffer.Length)
         {
@@ -80,7 +151,390 @@ public sealed class DocumentTextService
             read += n;
         }
 
-        return DocumentFileTypes.LooksLikeText(buffer.AsSpan(0, read));
+        return buffer[..read];
+    }
+
+    private static async Task<DocumentTextResult> ExtractTextFileAsync(string path, CancellationToken ct)
+    {
+        var text = TextDecoding.Decode(await ReadAllBytesSharedAsync(path, ct));
+        return string.IsNullOrWhiteSpace(text)
+            ? Fail(path, "The file is empty: there is no text in it.", DocumentReadProblem.NoText)
+            : CreateResult(path, text, "");
+    }
+
+    private static async Task<DocumentTextResult> ExtractHtmlAsync(string path, CancellationToken ct)
+    {
+        var bytes = await ReadAllBytesSharedAsync(path, ct);
+        var text = HtmlDocumentText.ToPlainText(TextDecoding.Decode(bytes, HtmlDocumentText.DetectCharset(bytes)));
+        return string.IsNullOrWhiteSpace(text)
+            ? Fail(path, "No readable text was found in this web page.", DocumentReadProblem.NoText)
+            : CreateResult(path, text, "");
+    }
+
+    private static async Task<DocumentTextResult> ExtractEmailAsync(string path, CancellationToken ct)
+    {
+        var text = EmailText.Extract(await ReadAllBytesSharedAsync(path, ct), MaxExtractedChars);
+        return string.IsNullOrWhiteSpace(text)
+            ? Fail(path, "No readable text was found in this email.", DocumentReadProblem.NoText)
+            : CreateResult(path, text, "");
+    }
+
+    private static async Task<DocumentTextResult> ExtractRtfAsync(string path, CancellationToken ct)
+    {
+        var raw = Encoding.Latin1.GetString(await ReadAllBytesSharedAsync(path, ct));
+        var text = RtfText.LooksLikeRtf(raw) ? RtfText.ToPlainText(raw, MaxExtractedChars) : raw;
+        return string.IsNullOrWhiteSpace(text)
+            ? Fail(path, "No readable text was found in this RTF document.", DocumentReadProblem.NoText)
+            : CreateResult(path, text, "");
+    }
+
+    /// <summary>Word, Excel, PowerPoint and OpenDocument files (whatever their extension says).</summary>
+    private static DocumentTextResult ExtractZipDocument(string path)
+    {
+        ZipArchive zip;
+        var stream = OpenShared(path);
+        try
+        {
+            zip = new ZipArchive(stream, ZipArchiveMode.Read);
+        }
+        catch (InvalidDataException)
+        {
+            stream.Dispose();
+            return Fail(path, $"This {DocumentFileTypes.GetTypeName(path)} file is damaged: it could not be opened.", DocumentReadProblem.Failed);
+        }
+
+        using (zip)
+        {
+            var kind = OfficeText.DetectKind(zip);
+            if (kind == ZipDocumentKind.Unknown)
+            {
+                var ext = Path.GetExtension(path);
+                return DocumentFileTypes.GetReader(ext) is DocumentReader.Word or DocumentReader.Excel or DocumentReader.PowerPoint or DocumentReader.OpenDocument
+                    ? Fail(path, $"This {DocumentFileTypes.GetTypeName(ext)} file is damaged: no document was found inside it.", DocumentReadProblem.Failed)
+                    : Fail(path, DocumentFileTypes.DescribeUnsupportedType(ext), DocumentReadProblem.Unsupported);
+            }
+
+            var text = OfficeText.Extract(zip, MaxExtractedChars);
+            if (!string.IsNullOrWhiteSpace(text))
+                return CreateResult(path, text, "");
+
+            var message = kind switch
+            {
+                ZipDocumentKind.Word => "No readable text was found in this Word document.",
+                ZipDocumentKind.Excel or ZipDocumentKind.OpenDocumentSpreadsheet => "This spreadsheet has no cells with text or numbers.",
+                ZipDocumentKind.PowerPoint or ZipDocumentKind.OpenDocumentPresentation => "No text was found on the slides of this presentation.",
+                _ => "No readable text was found in this document."
+            };
+            return Fail(path, message, DocumentReadProblem.NoText);
+        }
+    }
+
+    /// <summary>
+    /// OLE compound files: Word 97-2003 and Outlook .msg are read directly; anything else (and
+    /// anything those readers cannot handle) goes through its Windows text filter.
+    /// </summary>
+    private static async Task<DocumentTextResult> ExtractCompoundFileAsync(string path, DocumentReader reader, IProgress<string>? progress, CancellationToken ct)
+    {
+        string? refusal = null;
+        if (new FileInfo(path).Length <= MaxCompoundFileBytes)
+        {
+            CompoundFile? file = null;
+            try
+            {
+                file = CompoundFile.Open(await ReadAllBytesSharedAsync(path, ct));
+            }
+            catch (InvalidDataException ex)
+            {
+                AppLog.Info($"{Path.GetFileName(path)} is not a readable compound file: {ex.Message}");
+            }
+
+            if (file != null)
+            {
+                // A password-protected .docx/.xlsx/.pptx is a compound file holding an encrypted package.
+                if (file.Find(file.Root, "EncryptedPackage") != null)
+                    return Fail(path, DocumentFileTypes.GetPasswordMessage(path), DocumentReadProblem.PasswordProtected);
+
+                try
+                {
+                    var text = WordBinaryText.IsWordDocument(file) ? WordBinaryText.Extract(file, MaxExtractedChars)
+                        : OutlookMsgText.IsOutlookMessage(file) ? OutlookMsgText.Extract(file, MaxExtractedChars)
+                        : "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        return CreateResult(path, text, "");
+                }
+                catch (NotSupportedException ex)
+                {
+                    // Encrypted, or a Word 6/95 file: a Windows filter may still read the old format.
+                    refusal = ex.Message;
+                    if (ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase))
+                        return Fail(path, DocumentFileTypes.GetPasswordMessage(path), DocumentReadProblem.PasswordProtected);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IndexOutOfRangeException)
+                {
+                    AppLog.Info($"Built-in reader could not read {Path.GetFileName(path)}: {ex.Message}");
+                }
+            }
+        }
+
+        var filtered = await ExtractWithFilterAsync(path, reader, progress, ct);
+        if (filtered.Problem == DocumentReadProblem.NeedsFilter && refusal != null)
+            return filtered with { Error = $"{refusal} {filtered.Error}" };
+        return filtered;
+    }
+
+    private static async Task<DocumentTextResult> ExtractWithFilterAsync(string path, DocumentReader reader, IProgress<string>? progress, CancellationToken ct)
+    {
+        var ext = Path.GetExtension(path);
+        if (reader == DocumentReader.Unknown && !IFilterText.HasFilter(ext))
+            return Fail(path, DocumentFileTypes.DescribeUnsupportedType(ext), DocumentReadProblem.Unsupported);
+
+        progress?.Report("reading with the Windows text filter...");
+        var result = await IFilterText.ExtractAsync(path, ct, MaxExtractedChars);
+        return string.IsNullOrWhiteSpace(result.Text)
+            ? Fail(path, result.Error, result.Problem)
+            : CreateResult(path, result.Text, "");
+    }
+
+    // ==================== Pictures ====================
+
+    private static async Task<DocumentTextResult> ExtractImageAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    {
+        progress?.Report("reading the text in the picture...");
+        var engine = WindowsOcr.TryCreateEngine(out var ocrError);
+        if (engine == null)
+        {
+            // No Windows OCR language: use Tesseract when it is installed.
+            var tesseract = GetTesseractPath();
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(tesseract) && File.Exists(tesseract) && ext is not (".heic" or ".heif"))
+            {
+                var run = await RunProcessAsync(tesseract, [path, "stdout", "-l", "eng", "--psm", "3"], Path.GetTempPath(),
+                    new[] { Path.GetDirectoryName(tesseract) ?? "" }.Where(d => d.Length > 0).ToList(), ct);
+                return OcrText.HasWords(run.Output)
+                    ? CreateResult(path, "[Text read from a picture with OCR]\n\n" + run.Output, "")
+                    : Fail(path, run.ExitCode == 0 ? DocumentFileTypes.NoTextInImageMessage : "OCR failed: " + run.Error.Trim(),
+                        run.ExitCode == 0 ? DocumentReadProblem.NoTextInImage : DocumentReadProblem.Failed);
+            }
+
+            return Fail(path, ocrError, DocumentReadProblem.NeedsOcr);
+        }
+
+        try
+        {
+            var image = await WindowsOcr.RecognizeImageAsync(engine, path, progress, ct);
+            return string.IsNullOrWhiteSpace(image.Text)
+                ? Fail(path, image.Error, image.Problem)
+                : CreateResult(path, "[Text read from a picture with OCR]\n\n" + image.Text, "");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && ex is not IOException && ex is not UnauthorizedAccessException)
+        {
+            AppLog.Warn($"Windows OCR failed on {Path.GetFileName(path)}.", ex);
+            return Fail(path, $"Windows could not read the text in this picture ({ex.Message}).", DocumentReadProblem.Failed);
+        }
+    }
+
+    // ==================== PDF ====================
+
+    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, IProgress<string>? progress, CancellationToken ct)
+    {
+        progress?.Report("reading PDF text...");
+        List<string> pages;
+        int pageCount;
+        try
+        {
+            (pages, pageCount) = ExtractPdfPages(path, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (ex.GetType().Name.Contains("Encrypted", StringComparison.OrdinalIgnoreCase))
+                return Fail(path, DocumentFileTypes.GetPasswordMessage(path), DocumentReadProblem.PasswordProtected);
+
+            // The PDF library could not parse it; Windows may still render it for OCR.
+            AppLog.Info($"PdfPig could not read {Path.GetFileName(path)}: {ex.Message}");
+            pages = new List<string>();
+            pageCount = 0;
+        }
+
+        var text = NormalizeText(string.Join("\n\n", pages));
+        var readable = text.Length > 0 && LooksLikeReadableText(text);
+
+        // Pages whose text layer is (nearly) empty are scans; a garbled text layer means every page is.
+        var scanned = readable
+            ? Enumerable.Range(1, pages.Count).Where(p => DocumentFileTypes.PdfPageNeedsOcr(pages[p - 1])).ToList()
+            : Enumerable.Range(1, pageCount > 0 ? pageCount : DocumentFileTypes.MaxOcrPages).ToList();
+        if (scanned.Count == 0)
+            return CreateResult(path, text, "");
+
+        var allScanned = !readable || scanned.Count == pages.Count;
+        var toRead = scanned.Take(DocumentFileTypes.MaxOcrPages).ToList();
+        var ocr = await OcrPdfPagesAsync(path, toRead, pageCount, allScanned, progress, ct);
+        var ocrLetters = ocr.Texts.Values.Sum(DocumentFileTypes.CountLetters);
+
+        if (ocrLetters == 0)
+        {
+            // OCR is unavailable or found nothing: a PDF with real text pages is still worth reading.
+            if (!allScanned)
+            {
+                var missing = ocr.Error.Length > 0 ? ocr.Error : "OCR found no text on them.";
+                var pagesNotice = scanned.Count == 1
+                    ? $"Page {scanned[0]} looks scanned and could not be read: {missing}"
+                    : $"Pages {DocumentFileTypes.FormatPageRanges(scanned)} look scanned and could not be read: {missing}";
+                return CreateResult(path, $"[{pagesNotice}]\n\n{text}", "") with { Notice = pagesNotice };
+            }
+
+            if (ocr.Error.Length > 0)
+                return Fail(path, "This PDF is scanned (its pages are pictures). " + ocr.Error, ocr.Problem);
+            return Fail(path, "No readable text was found. This PDF looks scanned, and OCR found no text on its pages.", DocumentReadProblem.NoTextInImage);
+        }
+
+        // Each page keeps whichever has more text: its text layer or its OCR.
+        var lastPage = Math.Max(pageCount, ocr.Texts.Keys.DefaultIfEmpty(0).Max());
+        var merged = new List<(int Page, string Text)>();
+        for (var page = 1; page <= lastPage; page++)
+        {
+            var layer = readable && page <= pages.Count ? pages[page - 1] : "";
+            var best = ocr.Texts.TryGetValue(page, out var read) && DocumentFileTypes.CountLetters(read) > DocumentFileTypes.CountLetters(layer)
+                ? read
+                : layer;
+            merged.Add((page, best));
+        }
+
+        var ocrPagesRead = ocr.Texts.Count;
+        var notice = allScanned
+            ? DocumentFileTypes.BuildOcrPageNotice(ocrPagesRead, pageCount)
+            : DocumentFileTypes.BuildScannedPagesNotice(ocrPagesRead, scanned.Skip(DocumentFileTypes.MaxOcrPages).ToList());
+        // Put the page coverage in the text too, so the model (and the phone, which only keeps
+        // Text) knows which pages were not read.
+        var body = OcrText.JoinPages(merged);
+        return CreateResult(path, string.IsNullOrWhiteSpace(notice) ? body : $"[{notice}]\n\n{body}", "") with { Notice = notice };
+    }
+
+    private static (List<string> Pages, int PageCount) ExtractPdfPages(string path, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var pages = new List<string>();
+        using var stream = OpenShared(path);
+        using var document = PdfDocument.Open(stream);
+        for (var number = 1; number <= document.NumberOfPages; number++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                pages.Add(document.GetPage(number).Text ?? "");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One unreadable page: OCR may still read it.
+                AppLog.Info($"PdfPig could not read page {number} of {Path.GetFileName(path)}: {ex.Message}");
+                pages.Add("");
+            }
+        }
+
+        return (pages, document.NumberOfPages);
+    }
+
+    private sealed record PdfOcrResult(Dictionary<int, string> Texts, string Error, DocumentReadProblem Problem);
+
+    /// <summary>
+    /// OCRs the given pages: with Windows OCR when it has a language, else with Poppler and
+    /// Tesseract when they are installed.
+    /// </summary>
+    private static async Task<PdfOcrResult> OcrPdfPagesAsync(
+        string path,
+        IReadOnlyList<int> pages,
+        int pageCount,
+        bool allScanned,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        progress?.Report(allScanned && pageCount > pages.Count
+            ? $"rendering the first {pages.Count} of {pageCount} scanned pages for OCR..."
+            : "rendering scanned pages for OCR...");
+
+        var engine = WindowsOcr.TryCreateEngine(out var error);
+        var problem = DocumentReadProblem.NeedsOcr;
+        if (engine != null)
+        {
+            try
+            {
+                var texts = await WindowsOcr.RecognizePdfPagesAsync(engine, path, pages, progress, ct);
+                return new PdfOcrResult(texts, "", DocumentReadProblem.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (WindowsOcr.IsPasswordError(ex))
+                    return new PdfOcrResult(new Dictionary<int, string>(), DocumentFileTypes.GetPasswordMessage(path), DocumentReadProblem.PasswordProtected);
+
+                AppLog.Warn($"Windows could not render {Path.GetFileName(path)} for OCR.", ex);
+                error = $"Windows could not render its pages for OCR ({ex.Message}).";
+                problem = DocumentReadProblem.Failed;
+            }
+        }
+
+        // Fallback: Poppler + Tesseract, when they are installed.
+        var poppler = await OcrPdfPagesWithTesseractAsync(path, pages, progress, ct);
+        if (poppler.Texts.Count > 0)
+            return poppler;
+        return new PdfOcrResult(poppler.Texts, error, problem);
+    }
+
+    private static async Task<PdfOcrResult> OcrPdfPagesWithTesseractAsync(
+        string path,
+        IReadOnlyList<int> pages,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        var texts = new Dictionary<int, string>();
+        var pdftoppm = GetPdftoppmPath();
+        var tesseract = GetTesseractPath();
+        if (string.IsNullOrWhiteSpace(pdftoppm) || !File.Exists(pdftoppm))
+            return new PdfOcrResult(texts, "OCR unavailable: could not find pdftoppm.exe from Poppler.", DocumentReadProblem.NeedsOcr);
+        if (string.IsNullOrWhiteSpace(tesseract) || !File.Exists(tesseract))
+            return new PdfOcrResult(texts, "OCR unavailable: could not find tesseract.exe.", DocumentReadProblem.NeedsOcr);
+
+        var toolDirectories = new[] { pdftoppm, tesseract }
+            .Select(Path.GetDirectoryName)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "document-ocr", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            for (var i = 0; i < pages.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                progress?.Report($"OCR page {i + 1} of {pages.Count}...");
+                var page = pages[i].ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var outputPrefix = Path.Combine(tempDir, "page-" + page);
+                var render = await RunProcessAsync(
+                    pdftoppm,
+                    ["-f", page, "-l", page, "-r", OcrText.PdfRenderDpi.ToString(System.Globalization.CultureInfo.InvariantCulture), "-png", "-singlefile", path, outputPrefix],
+                    tempDir,
+                    toolDirectories,
+                    ct);
+                var image = outputPrefix + ".png";
+                if (render.ExitCode != 0 || !File.Exists(image))
+                {
+                    if (texts.Count == 0 && i == 0)
+                        return new PdfOcrResult(texts, "OCR render failed: " + render.Error.Trim(), DocumentReadProblem.Failed);
+                    continue;
+                }
+
+                var ocr = await RunProcessAsync(tesseract, [image, "stdout", "-l", "eng", "--psm", "6"], tempDir, toolDirectories, ct);
+                texts[pages[i]] = NormalizeText(ocr.Output);
+            }
+
+            return new PdfOcrResult(texts, "", DocumentReadProblem.None);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); }
+            catch { }
+        }
     }
 
     public static string BuildContext(IEnumerable<DocumentTextResult> documents, string question = "")
@@ -95,151 +549,6 @@ public sealed class DocumentTextService
             ? ""
             : "Attached document context for this response. Use this document text as the authoritative source when answering questions about the attachment.\n\n" +
               string.Join("\n\n---\n\n", parts);
-    }
-
-    private static string ExtractDocx(string path)
-    {
-        using var archive = ZipFile.OpenRead(path);
-        var parts = archive.Entries
-            .Where(e =>
-                e.FullName.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase) ||
-                e.FullName.StartsWith("word/header", StringComparison.OrdinalIgnoreCase) ||
-                e.FullName.StartsWith("word/footer", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(e => e.FullName.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
-
-        var output = new StringBuilder();
-        foreach (var part in parts)
-        {
-            using var stream = part.Open();
-            var xml = XDocument.Load(stream);
-            foreach (var node in xml.Descendants())
-            {
-                var name = node.Name.LocalName;
-                if (name == "t")
-                    output.Append(node.Value);
-                else if (name is "tab")
-                    output.Append('\t');
-                else if (name is "br" or "cr" or "p")
-                    output.AppendLine();
-            }
-        }
-
-        return NormalizeText(output.ToString());
-    }
-
-    private static async Task<DocumentTextResult> ExtractPdfDocumentAsync(string path, IProgress<string>? progress, CancellationToken ct)
-    {
-        progress?.Report("reading PDF text...");
-        var (text, pageCount) = ExtractPdfText(path, ct);
-        if (!string.IsNullOrWhiteSpace(text) && LooksLikeReadableText(text))
-            return CreateResult(path, text, "");
-
-        var ocr = await ExtractPdfWithOcrAsync(path, pageCount, progress, ct);
-        if (!string.IsNullOrWhiteSpace(ocr.Text) && LooksLikeReadableText(ocr.Text))
-        {
-            // Put the page coverage in the text too, so the model (and the phone, which only keeps
-            // Text) knows later pages were not read.
-            var notice = DocumentFileTypes.BuildOcrPageNotice(ocr.PagesRead, pageCount);
-            var body = string.IsNullOrWhiteSpace(notice) ? ocr.Text : $"[{notice}]\n\n{ocr.Text}";
-            return CreateResult(path, body, "") with { Notice = notice };
-        }
-
-        var error = string.IsNullOrWhiteSpace(ocr.Error)
-            ? "No readable text was found. If this is a scanned PDF, OCR did not produce usable text."
-            : ocr.Error;
-        return new DocumentTextResult(path, "", error);
-    }
-
-    private static (string Text, int PageCount) ExtractPdfText(string path, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-
-        var output = new StringBuilder();
-        using var document = PdfDocument.Open(path);
-        foreach (var page in document.GetPages())
-        {
-            ct.ThrowIfCancellationRequested();
-            output.AppendLine(page.Text);
-            output.AppendLine();
-        }
-
-        return (NormalizeText(output.ToString()), document.NumberOfPages);
-    }
-
-    private static async Task<(string Text, string Error, int PagesRead)> ExtractPdfWithOcrAsync(
-        string path,
-        int pageCount,
-        IProgress<string>? progress,
-        CancellationToken ct)
-    {
-        var pdftoppm = GetPdftoppmPath();
-        var tesseract = GetTesseractPath();
-        if (string.IsNullOrWhiteSpace(pdftoppm) || !File.Exists(pdftoppm))
-            return ("", "OCR unavailable: could not find pdftoppm.exe from Poppler.", 0);
-        if (string.IsNullOrWhiteSpace(tesseract) || !File.Exists(tesseract))
-            return ("", "OCR unavailable: could not find tesseract.exe.", 0);
-
-        var toolDirectories = new[] { pdftoppm, tesseract }
-            .Select(Path.GetDirectoryName)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => p!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "document-ocr", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
-
-        try
-        {
-            var pagesToRender = pageCount > 0
-                ? Math.Min(pageCount, DocumentFileTypes.MaxOcrPages)
-                : DocumentFileTypes.MaxOcrPages;
-            progress?.Report(pageCount > DocumentFileTypes.MaxOcrPages
-                ? $"rendering the first {pagesToRender} of {pageCount} scanned pages for OCR..."
-                : "rendering scanned pages for OCR...");
-
-            var outputPrefix = Path.Combine(tempDir, "page");
-            var render = await RunProcessAsync(
-                pdftoppm,
-                ["-f", "1", "-l", DocumentFileTypes.MaxOcrPages.ToString(), "-r", "200", "-png", path, outputPrefix],
-                tempDir,
-                toolDirectories,
-                ct);
-            if (render.ExitCode != 0)
-                return ("", "OCR render failed: " + render.Error, 0);
-
-            var images = Directory.GetFiles(tempDir, "page-*.png")
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (images.Count == 0)
-                return ("", "OCR render failed: Poppler did not produce page images.", 0);
-
-            var output = new StringBuilder();
-            for (var i = 0; i < images.Count; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                progress?.Report($"OCR page {i + 1} of {images.Count}...");
-                var ocr = await RunProcessAsync(
-                    tesseract,
-                    [images[i], "stdout", "-l", "eng", "--psm", "6"],
-                    tempDir,
-                    toolDirectories,
-                    ct);
-
-                if (!string.IsNullOrWhiteSpace(ocr.Output))
-                {
-                    output.AppendLine(ocr.Output);
-                    output.AppendLine();
-                }
-            }
-
-            return (NormalizeText(output.ToString()), "", images.Count);
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); }
-            catch { }
-        }
     }
 
     private static async Task<(int ExitCode, string Output, string Error)> RunProcessAsync(
@@ -350,6 +659,9 @@ public sealed class DocumentTextService
             return "";
         }
     }
+
+    private static DocumentTextResult Fail(string path, string error, DocumentReadProblem problem) =>
+        new(path, "", string.IsNullOrWhiteSpace(error) ? "No readable text was found." : error) { Problem = problem };
 
     private static DocumentTextResult CreateResult(string path, string text, string error)
     {
@@ -589,4 +901,9 @@ public sealed record DocumentTextResult(string Path, string Text, string Error)
 
     /// <summary>Something the user should know about a successful read, such as OCR page coverage.</summary>
     public string Notice { get; init; } = "";
+
+    /// <summary>Why there is no text (None when the read worked), for summaries such as "3 photos without text".</summary>
+    public DocumentReadProblem Problem { get; init; } = string.IsNullOrWhiteSpace(Text) && !string.IsNullOrWhiteSpace(Error)
+        ? DocumentReadProblem.Failed
+        : DocumentReadProblem.None;
 }

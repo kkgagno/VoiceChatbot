@@ -30,9 +30,8 @@ public sealed class KnowledgeService
     private static readonly TimeSpan PublishInterval = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(200);
 
-    /// <summary>The formats DocumentTextService.ExtractAsync can read.</summary>
-    public static readonly IReadOnlyList<string> SupportedExtensions =
-        new[] { ".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".xml", ".log" };
+    /// <summary>The formats the knowledge folder indexes (DocumentFileTypes.KnowledgeExtensions).</summary>
+    public static readonly IReadOnlyList<string> SupportedExtensions = DocumentFileTypes.KnowledgeExtensions;
 
     public static string DefaultIndexPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

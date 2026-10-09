@@ -36,14 +36,11 @@ public class DocumentFileTypesTests
     }
 
     [Theory]
-    [InlineData(".doc", ".docx")]
-    [InlineData(".xlsx", "CSV")]
-    [InlineData(".XLS", "CSV")]
-    [InlineData(".pptx", "PDF")]
-    [InlineData(".rtf", ".docx")]
-    [InlineData(".png", "Image button")]
     [InlineData(".mp4", "audio or video")]
+    [InlineData(".MP3", "audio or video")]
     [InlineData(".zip", "Extract")]
+    [InlineData(".pages", "Export it as PDF")]
+    [InlineData(".ico", "icon")]
     public void KnownUnreadableTypesGetAdviceThatFits(string extension, string expectedHint)
     {
         var message = DocumentFileTypes.GetUnsupportedTypeMessage(extension);
@@ -51,6 +48,201 @@ public class DocumentFileTypesTests
         Assert.NotNull(message);
         Assert.Contains(expectedHint, message);
         Assert.DoesNotContain("scanned", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(DocumentReader.Unsupported, DocumentFileTypes.GetReader(extension));
+    }
+
+    [Theory]
+    [InlineData(".doc")]
+    [InlineData(".xlsx")]
+    [InlineData(".XLS")]
+    [InlineData(".pptx")]
+    [InlineData(".ppt")]
+    [InlineData(".rtf")]
+    [InlineData(".odt")]
+    [InlineData(".eml")]
+    [InlineData(".msg")]
+    [InlineData(".png")]
+    [InlineData(".heic")]
+    [InlineData(".html")]
+    public void NowReadableTypesAreNotCalledUnsupported(string extension)
+    {
+        Assert.Null(DocumentFileTypes.GetUnsupportedTypeMessage(extension));
+        Assert.True(DocumentFileTypes.CanRead(extension));
+    }
+
+    [Theory]
+    [InlineData("report.pdf", DocumentReader.Pdf)]
+    [InlineData("Letter.DOCX", DocumentReader.Word)]
+    [InlineData("old.doc", DocumentReader.OldWord)]
+    [InlineData("budget.xlsm", DocumentReader.Excel)]
+    [InlineData("budget.xls", DocumentReader.WindowsFilter)]
+    [InlineData("deck.pptx", DocumentReader.PowerPoint)]
+    [InlineData("deck.ppt", DocumentReader.WindowsFilter)]
+    [InlineData("notes.odt", DocumentReader.OpenDocument)]
+    [InlineData("sheet.ods", DocumentReader.OpenDocument)]
+    [InlineData("memo.rtf", DocumentReader.Rtf)]
+    [InlineData("page.htm", DocumentReader.Html)]
+    [InlineData("mail.eml", DocumentReader.Email)]
+    [InlineData("saved.mht", DocumentReader.Email)]
+    [InlineData("mail.msg", DocumentReader.OutlookMessage)]
+    [InlineData("scan.TIFF", DocumentReader.Image)]
+    [InlineData("photo.heic", DocumentReader.Image)]
+    [InlineData("flyer.pub", DocumentReader.WindowsFilter)]
+    [InlineData("notes.txt", DocumentReader.Text)]
+    [InlineData("setup.ps1", DocumentReader.Text)]
+    [InlineData("data.dat", DocumentReader.Unknown)]
+    [InlineData("README", DocumentReader.Unknown)]
+    public void EachTypeGetsTheRightReader(string path, DocumentReader expected)
+    {
+        Assert.Equal(expected, DocumentFileTypes.GetReader(path));
+    }
+
+    [Fact]
+    public void KnowledgeExtensionsCoverAHomeDocumentsFolder()
+    {
+        foreach (var ext in new[]
+                 {
+                     ".pdf", ".docx", ".doc", ".rtf", ".odt", ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".log",
+                     ".html", ".htm", ".eml", ".msg", ".xlsx", ".xlsm", ".xls", ".ods", ".pptx", ".ppt", ".odp",
+                     ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp", ".heic"
+                 })
+        {
+            Assert.Contains(ext, DocumentFileTypes.KnowledgeExtensions);
+            Assert.True(DocumentFileTypes.IsKnowledgeExtension(ext.ToUpperInvariant()), ext);
+            Assert.True(DocumentFileTypes.CanRead(ext), ext);
+        }
+
+        Assert.False(DocumentFileTypes.IsKnowledgeExtension(".mp4"));
+        Assert.False(DocumentFileTypes.IsKnowledgeExtension(".zip"));
+        Assert.False(DocumentFileTypes.IsKnowledgeExtension(""));
+        Assert.False(DocumentFileTypes.IsKnowledgeExtension(null));
+        Assert.Equal(DocumentFileTypes.KnowledgeExtensions.Count, DocumentFileTypes.KnowledgeExtensions.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(DocumentFileTypes.KnowledgeExtensions, e => Assert.Equal(e.ToLowerInvariant(), e));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Docs\HOA rules.pdf", "PDF")]
+    [InlineData("budget.XLSX", "Excel")]
+    [InlineData(".xls", "old Excel")]
+    [InlineData("letter.doc", "old Word")]
+    [InlineData("letter.docx", "Word")]
+    [InlineData("deck.ppt", "old PowerPoint")]
+    [InlineData("IMG_0042.JPG", "image")]
+    [InlineData("photo.heic", "image")]
+    [InlineData("mail.eml", "email")]
+    [InlineData("mail.msg", "Outlook email")]
+    [InlineData("page.html", "web page")]
+    [InlineData("notes.txt", "text")]
+    [InlineData("data.dat", "DAT")]
+    [InlineData("README", "file")]
+    [InlineData(null, "file")]
+    public void TypeNamesForSummaries(string? path, string expected)
+    {
+        Assert.Equal(expected, DocumentFileTypes.GetTypeName(path));
+    }
+
+    [Fact]
+    public void TypeCountsListTheMostCommonTypesFirst()
+    {
+        var paths = new[] { "a.pdf", "b.pdf", "c.PDF", "d.jpg", "e.png", "f.xlsx", "g.docx", "h.docx" };
+
+        Assert.Equal("3 PDF, 2 image, 2 Word, 1 Excel", DocumentFileTypes.DescribeTypeCounts(paths));
+        Assert.Equal("3 PDF, 2 image, 3 other", DocumentFileTypes.DescribeTypeCounts(paths, maxTypes: 2));
+        Assert.Equal("", DocumentFileTypes.DescribeTypeCounts(Array.Empty<string>()));
+    }
+
+    [Theory]
+    [InlineData(".doc", "Old Word format (.doc) and no Windows text filter is installed: save it as .docx or install the Microsoft Office filter pack.")]
+    [InlineData(".xls", "Old Excel format (.xls)")]
+    [InlineData(".ppt", "Old PowerPoint format (.ppt)")]
+    [InlineData(".pub", "Publisher")]
+    [InlineData(".wpd", "WordPerfect")]
+    [InlineData(".msg", "Outlook")]
+    [InlineData(".dat", "Can't read .dat files")]
+    public void NoFilterMessagesNameTheFormatAndTheFix(string extension, string expected)
+    {
+        Assert.Contains(expected, DocumentFileTypes.GetNoFilterMessage(extension));
+    }
+
+    [Fact]
+    public void CloudOnlyAttributesAreRecognized()
+    {
+        Assert.True(DocumentFileTypes.IsCloudOnly((FileAttributes)0x400000 | FileAttributes.Archive));
+        Assert.True(DocumentFileTypes.IsCloudOnly((FileAttributes)0x40000));
+        Assert.True(DocumentFileTypes.IsCloudOnly(FileAttributes.Offline));
+        Assert.False(DocumentFileTypes.IsCloudOnly(FileAttributes.Archive | FileAttributes.ReadOnly));
+        // Pinned ("Always keep on this device") files are local.
+        Assert.False(DocumentFileTypes.IsCloudOnly((FileAttributes)0x80000 | FileAttributes.Archive));
+        Assert.Contains("Always keep on this device", DocumentFileTypes.OneDriveOnlineOnlyMessage);
+    }
+
+    [Fact]
+    public void ImageAndOcrMessagesSayWhatToInstall()
+    {
+        Assert.Contains("HEIF Image Extensions", DocumentFileTypes.GetImageDecodeMessage(".heic"));
+        Assert.Contains("Webp Image Extensions", DocumentFileTypes.GetImageDecodeMessage(".webp"));
+        Assert.Contains("damaged", DocumentFileTypes.GetImageDecodeMessage(".png"));
+        Assert.Contains("Settings > Time & language > Language", DocumentFileTypes.OcrLanguageMissingMessage);
+        Assert.Contains("password-protected", DocumentFileTypes.GetPasswordMessage("a.xlsx"));
+        Assert.Contains("Excel", DocumentFileTypes.GetPasswordMessage("a.xlsx"));
+    }
+
+    [Fact]
+    public void SniffRecognizesFormatsByTheirFirstBytes()
+    {
+        Assert.Equal(SniffedFormat.Pdf, DocumentFileTypes.Sniff(Encoding.ASCII.GetBytes("%PDF-1.7\n")));
+        Assert.Equal(SniffedFormat.Zip, DocumentFileTypes.Sniff(new byte[] { 0x50, 0x4B, 0x03, 0x04, 0x14, 0x00 }));
+        Assert.Equal(SniffedFormat.CompoundFile, DocumentFileTypes.Sniff(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0 }));
+        Assert.Equal(SniffedFormat.Rtf, DocumentFileTypes.Sniff(Encoding.ASCII.GetBytes("  {\\rtf1\\ansi hello}")));
+        Assert.Equal(SniffedFormat.Html, DocumentFileTypes.Sniff(Encoding.ASCII.GetBytes("\r\n<!DOCTYPE html><html>")));
+        Assert.Equal(SniffedFormat.Html, DocumentFileTypes.Sniff(Encoding.ASCII.GetBytes("<HTML><body>")));
+        Assert.Equal(SniffedFormat.Unknown, DocumentFileTypes.Sniff(Encoding.ASCII.GetBytes("Name,Amount")));
+        Assert.Equal(SniffedFormat.Unknown, DocumentFileTypes.Sniff(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
+    public void PdfPagesWithoutATextLayerAreOcrd()
+    {
+        Assert.True(DocumentFileTypes.PdfPageNeedsOcr(""));
+        Assert.True(DocumentFileTypes.PdfPageNeedsOcr("Scanned by CamScanner"));
+        Assert.True(DocumentFileTypes.PdfPageNeedsOcr("Page 3 of 12"));
+        Assert.False(DocumentFileTypes.PdfPageNeedsOcr("The seller agrees to repair the roof before the closing date of June 1."));
+    }
+
+    [Fact]
+    public void ScannedPagesNoticeForMixedPdfs()
+    {
+        Assert.Equal("OCR read 3 scanned pages.", DocumentFileTypes.BuildScannedPagesNotice(3, Array.Empty<int>()));
+        Assert.Equal("OCR read 1 scanned page.", DocumentFileTypes.BuildScannedPagesNotice(1, Array.Empty<int>()));
+        Assert.Equal(
+            "OCR read 8 scanned pages (OCR is limited to 8 pages). Scanned pages 12-14 and 20 were not read.",
+            DocumentFileTypes.BuildScannedPagesNotice(8, new[] { 12, 13, 14, 20 }, 8));
+        Assert.Equal(
+            "OCR read 8 scanned pages (OCR is limited to 8 pages). Scanned page 30 was not read.",
+            DocumentFileTypes.BuildScannedPagesNotice(8, new[] { 30 }, 8));
+        Assert.Equal("", DocumentFileTypes.BuildScannedPagesNotice(0, Array.Empty<int>()));
+    }
+
+    [Fact]
+    public void PageRangesAreCompact()
+    {
+        Assert.Equal("3-5, 9 and 12", DocumentFileTypes.FormatPageRanges(new[] { 9, 3, 4, 5, 12, 4 }));
+        Assert.Equal("7", DocumentFileTypes.FormatPageRanges(new[] { 7 }));
+        Assert.Equal("1-3", DocumentFileTypes.FormatPageRanges(new[] { 1, 2, 3 }));
+        Assert.Equal("", DocumentFileTypes.FormatPageRanges(Array.Empty<int>()));
+    }
+
+    [Fact]
+    public void OpenFileDialogFilterListsDocumentsAndPictures()
+    {
+        var parts = DocumentFileTypes.BuildOpenFileDialogFilter().Split('|');
+
+        Assert.Equal(6, parts.Length);
+        Assert.Contains("*.pdf", parts[1]);
+        Assert.Contains("*.xlsx", parts[1]);
+        Assert.DoesNotContain("*.jpg", parts[1]);
+        Assert.Contains("*.jpg", parts[3]);
+        Assert.Equal("*.*", parts[5]);
     }
 
     [Fact]
