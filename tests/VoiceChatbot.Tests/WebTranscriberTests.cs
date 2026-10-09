@@ -41,6 +41,17 @@ public class WebTranscriberTests
     }
 
     [Fact]
+    public void SessionLengthIsTheBrowsersTimeWhenItIsPlausible()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(12.5), WebTranscriber.ResolveSessionLength(750_000));
+        Assert.Null(WebTranscriber.ResolveSessionLength(null));
+        Assert.Null(WebTranscriber.ResolveSessionLength(0));
+        Assert.Null(WebTranscriber.ResolveSessionLength(-1));
+        Assert.Null(WebTranscriber.ResolveSessionLength((long)TimeSpan.FromDays(8).TotalMilliseconds));
+        Assert.Null(WebTranscriber.ResolveSessionLength(long.MaxValue));
+    }
+
+    [Fact]
     public void NewSaveFileNameIsTheDesktopAutoSaveNameWhenFree()
     {
         var start = new DateTime(2026, 10, 8, 14, 30, 5);
@@ -108,6 +119,10 @@ public class WebTranscriberTests
         Assert.Equal(chunk.CutSearch.TotalMilliseconds, config.Chunk.CutSearchMs);
         Assert.Equal(TranscriptSummaryStyles.Names, config.Styles);
         Assert.Equal(TranscriptSummaryStyles.Summary, config.DefaultStyle);
+        Assert.Equal(TranscriptNotes.SummarySoFarHeading, config.Notes.SummarySoFarHeading);
+        Assert.Equal(TranscriptNotes.NotesByTimeHeading, config.Notes.NotesByTimeHeading);
+        Assert.Equal(TranscriptSummaryStyles.Names.Select(TranscriptSummaryStyles.GetHeading), config.Notes.StyleHeadings);
+        Assert.Equal(new[] { 5, 10, 15 }, config.Intervals);
         Assert.Equal(LiveNotesPolicy.IntervalChoicesMinutes, config.Intervals);
         Assert.Equal(LiveNotesPolicy.DefaultIntervalMinutes, config.DefaultInterval);
         Assert.Equal(LiveNotesPolicy.CheckEvery.TotalMilliseconds, config.CheckEveryMs);
@@ -126,6 +141,8 @@ public class WebTranscriberTests
         Assert.Equal(16000, root.GetProperty("chunk").GetProperty("sampleRate").GetInt32());
         Assert.Equal("Summary", root.GetProperty("defaultStyle").GetString());
         Assert.Equal(4, root.GetProperty("styles").GetArrayLength());
+        Assert.Equal("NOTES BY TIME", root.GetProperty("notes").GetProperty("notesByTimeHeading").GetString());
+        Assert.Equal("ACTION ITEMS", root.GetProperty("notes").GetProperty("styleHeadings")[1].GetString());
         Assert.DoesNotContain("<", WebTranscriber.ConfigJson());
     }
 
@@ -189,6 +206,34 @@ public class PhoneRemoteTranscriberPageTests
         Assert.Contains("echoCancellation: false, noiseSuppression: true, autoGainControl: true", Page);
         Assert.Contains("navigator.wakeLock", Page);
         Assert.Contains("beforeunload", Page);
+    }
+
+    [Fact]
+    public void PageWritesNotesByTimeThroughJobsOnThePc()
+    {
+        // Live updates, the notes on Stop and Re-summarize all are background jobs the page polls.
+        Assert.Contains("API + '/notes'", Page);
+        Assert.Contains("API + '/summarize'", Page);
+        Assert.Contains("API + '/jobs/'", Page);
+        Assert.DoesNotContain("'/summarize/'", Page);
+        Assert.Contains("isFinal: ticket.isFinal", Page);
+        Assert.Contains("intervalMinutes: settings.intervalMinutes", Page);
+
+        // The button and the confirmation match the desktop window.
+        Assert.Contains("'Update notes now'", Page);
+        Assert.Contains("'Re-summarize all'", Page);
+        Assert.Contains("confirm('Replace the current notes with a fresh summary of the whole transcript?')", Page);
+        Assert.Contains("el.notes.readOnly = ", Page);
+    }
+
+    [Fact]
+    public void PageKeepsNotesAndLiveNotesProgressAcrossAReload()
+    {
+        Assert.Contains("processedLength: policy.processed.length", Page);
+        Assert.Contains("policy.restore(transcript, saved.processedLength)", Page);
+        Assert.Contains("elapsedMs: Math.round(sessionElapsedMs())", Page);
+        Assert.Contains("timelineOriginMs = state.elapsedBaseMs", Page);
+        Assert.Contains("'Restored your last session from '", Page);
     }
 
     [Fact]

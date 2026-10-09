@@ -15,8 +15,6 @@ public enum TranscriptSummaryKind
     Part,
     /// <summary>Combining the notes on the parts of a long transcript into the chosen style.</summary>
     Combine,
-    /// <summary>Merging the words said since the last update into the running live notes (older web page).</summary>
-    LiveNotes,
     /// <summary>Detailed notes on one stretch of a live transcript: a "[start–end]" section of the notes.</summary>
     SectionNotes,
     /// <summary>The brief "SUMMARY SO FAR" at the top of the notes, written from the section notes.</summary>
@@ -33,7 +31,7 @@ public sealed record TranscriptSummaryRequest(TranscriptSummaryKind Kind, string
 
     /// <summary>Part of a live-notes update while recording (not a summary the user asked for).</summary>
     public bool IsLiveUpdate =>
-        Kind is TranscriptSummaryKind.LiveNotes or TranscriptSummaryKind.SectionNotes or TranscriptSummaryKind.SummarySoFar;
+        Kind is TranscriptSummaryKind.SectionNotes or TranscriptSummaryKind.SummarySoFar;
 }
 
 /// <summary>
@@ -171,28 +169,6 @@ public static class TranscriptSummaryPrompts
         {
             IsFinal = isFinal
         };
-    }
-
-    /// <summary>
-    /// Live notes as the older web page asks for them: the current notes plus only the words said since they were
-    /// last updated, merged into full updated notes. The transcribers now use <see cref="SectionNotes"/> and
-    /// <see cref="SummarySoFar"/> (see <see cref="TranscriptNotesWriter"/>) instead.
-    /// </summary>
-    public static TranscriptSummaryRequest LiveNotes(string? currentNotes, string? newTranscript, string? style, bool isFinal = true)
-    {
-        var name = TranscriptSummaryStyles.Normalize(style);
-        var notes = string.IsNullOrWhiteSpace(currentNotes) ? "(none yet)" : currentNotes.Trim();
-        var instruction =
-            $"You keep running notes on a live transcript that is still going on, written as {TranscriptSummaryStyles.GetFormat(name)}. " +
-            "Below are the CURRENT NOTES and the NEW TRANSCRIPT, which is only what was said since the notes were last updated. " +
-            "Return the full updated notes: keep every earlier point, merge the new information into them " +
-            "(update or correct an existing point instead of repeating it) and add new points where they belong. " +
-            "If the new transcript adds nothing, return the current notes unchanged. " +
-            "Keep names, dates and numbers exact and do not invent details. " +
-            "Return only the notes, with no preamble, no explanation of what changed and no closing remarks.";
-
-        var message = $"{instruction}\n\nCURRENT NOTES:\n{notes}\n\nNEW TRANSCRIPT:\n{(newTranscript ?? "").Trim()}";
-        return new TranscriptSummaryRequest(TranscriptSummaryKind.LiveNotes, name, message) { IsFinal = isFinal };
     }
 
     /// <summary>

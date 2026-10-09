@@ -15,18 +15,25 @@ public enum TranscriberJobState
     Cancelled,
 }
 
-/// <summary>What a browser polling a job is told about it.</summary>
+/// <summary>
+/// What a browser polling a job is told about it. <see cref="Warning"/> is set for a job that finished with only
+/// part of what was asked for (live notes whose summary at the top could not be refreshed).
+/// </summary>
 public sealed record TranscriberJobSnapshot(
     string Id,
     string Label,
     TranscriberJobState State,
     string Progress,
     string Result,
-    string Error);
+    string Error,
+    string Warning = "");
+
+/// <summary>What a finished job hands back: its result and, when only part of it worked, a warning to show with it.</summary>
+public sealed record TranscriberJobOutput(string Result, string Warning = "");
 
 /// <summary>
-/// One background request of the web transcriber (a full Summarize, which can take many minutes for a long
-/// transcript). The browser starts it, then polls for progress and the result instead of holding one HTTP
+/// One background request of the web transcriber (Re-summarize all, which can take many minutes for a long
+/// transcript, a live-notes update or the notes written on Stop). The browser starts it, then polls for progress and the result instead of holding one HTTP
 /// request open, so a phone that sleeps for a moment does not lose the summary. Thread-safe.
 /// </summary>
 public sealed class TranscriberJob
@@ -38,6 +45,7 @@ public sealed class TranscriberJob
     private string _progress = "";
     private string _result = "";
     private string _error = "";
+    private string _warning = "";
     private DateTimeOffset? _finished;
 
     internal TranscriberJob(string id, string label, DateTimeOffset started)
@@ -72,7 +80,7 @@ public sealed class TranscriberJob
     public TranscriberJobSnapshot Snapshot()
     {
         lock (_gate)
-            return new TranscriberJobSnapshot(Id, Label, _state, _progress, _result, _error);
+            return new TranscriberJobSnapshot(Id, Label, _state, _progress, _result, _error, _warning);
     }
 
     /// <summary>Asks the job to stop. False when it has already finished.</summary>
@@ -98,7 +106,7 @@ public sealed class TranscriberJob
         }
     }
 
-    internal void Finish(TranscriberJobState state, string result, string error, DateTimeOffset at)
+    internal void Finish(TranscriberJobState state, string result, string error, DateTimeOffset at, string warning = "")
     {
         lock (_gate)
         {
@@ -108,6 +116,7 @@ public sealed class TranscriberJob
             _state = state;
             _result = result;
             _error = error;
+            _warning = warning;
             _progress = "";
             _finished = at;
         }
@@ -158,6 +167,20 @@ public sealed class TranscriberJobs
         string label,
         Func<IProgress<string>, CancellationToken, Task<string>> work,
         Func<Exception, string> describeError,
+        out string refusal) =>
+        TryStartWithWarning(
+            label,
+            async (progress, ct) => new TranscriberJobOutput(await work(progress, ct).ConfigureAwait(false)),
+            describeError,
+            out refusal);
+
+    /// <summary>
+    /// <see cref="TryStart"/> for work whose result can come with a warning (<see cref="TranscriberJobSnapshot.Warning"/>).
+    /// </summary>
+    public TranscriberJob? TryStartWithWarning(
+        string label,
+        Func<IProgress<string>, CancellationToken, Task<TranscriberJobOutput>> work,
+        Func<Exception, string> describeError,
         out string refusal)
     {
         Prune();
@@ -167,8 +190,8 @@ public sealed class TranscriberJobs
             if (RunningCount >= MaxRunning)
             {
                 refusal = MaxRunning == 1
-                    ? "A summary is already being written. Wait for it or cancel it first."
-                    : $"{MaxRunning} summaries are already being written. Wait for one to finish or cancel it first.";
+                    ? "Notes are already being written on the PC. Wait for them or cancel them first."
+                    : $"The PC is already writing {MaxRunning} sets of notes. Wait for one to finish or cancel it first.";
                 return null;
             }
 
@@ -211,16 +234,16 @@ public sealed class TranscriberJobs
 
     private async Task RunAsync(
         TranscriberJob job,
-        Func<IProgress<string>, CancellationToken, Task<string>> work,
+        Func<IProgress<string>, CancellationToken, Task<TranscriberJobOutput>> work,
         Func<Exception, string> describeError)
     {
         try
         {
-            var result = await work(new TranscriberJob.ProgressSink(job), job.Token).ConfigureAwait(false);
+            var output = await work(new TranscriberJob.ProgressSink(job), job.Token).ConfigureAwait(false);
             if (job.Token.IsCancellationRequested)
                 job.Finish(TranscriberJobState.Cancelled, "", "", _clock());
             else
-                job.Finish(TranscriberJobState.Done, result ?? "", "", _clock());
+                job.Finish(TranscriberJobState.Done, output?.Result ?? "", "", _clock(), output?.Warning ?? "");
         }
         catch (OperationCanceledException) when (job.Token.IsCancellationRequested)
         {

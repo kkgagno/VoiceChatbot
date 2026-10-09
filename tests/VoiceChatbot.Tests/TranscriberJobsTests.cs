@@ -23,6 +23,34 @@ public class TranscriberJobsTests
     }
 
     [Fact]
+    public async Task AResultCanComeWithAWarning()
+    {
+        var jobs = new TranscriberJobs();
+        var job = jobs.TryStartWithWarning(
+            "Summary",
+            (_, _) => Task.FromResult(new TranscriberJobOutput("notes with a new section", "The summary at the top was not refreshed.")),
+            Describe,
+            out _)!;
+        await job.Completion;
+
+        var snapshot = job.Snapshot();
+        Assert.Equal(TranscriberJobState.Done, snapshot.State);
+        Assert.Equal("notes with a new section", snapshot.Result);
+        Assert.Equal("The summary at the top was not refreshed.", snapshot.Warning);
+        Assert.Equal("", snapshot.Error);
+    }
+
+    [Fact]
+    public async Task APlainResultHasNoWarning()
+    {
+        var jobs = new TranscriberJobs();
+        var job = jobs.TryStart("Summary", (_, _) => Task.FromResult("the notes"), Describe, out _)!;
+        await job.Completion;
+
+        Assert.Equal("", job.Snapshot().Warning);
+    }
+
+    [Fact]
     public async Task ProgressIsVisibleWhileTheJobRuns()
     {
         var jobs = new TranscriberJobs();

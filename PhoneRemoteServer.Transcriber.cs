@@ -18,9 +18,20 @@ public sealed record PhoneRemoteTranscriberHooks(
     Func<string, string, Task<string>> SendToChatAsync,
     string TranscriptsFolder);
 
-public sealed record TranscriberSummarizeRequest(string? Transcript, string? Style);
+/// <summary>Summarize / Re-summarize all: fresh notes from the whole transcript, in sections of the live-notes interval.</summary>
+public sealed record TranscriberSummarizeRequest(string? Transcript, string? Style, int? IntervalMinutes, long? ElapsedMs);
 
-public sealed record TranscriberNotesRequest(string? Notes, string? NewText, string? Style);
+/// <summary>
+/// A live-notes update (the text said since the last one, <see cref="NewText"/>), or with <see cref="IsFinal"/> the
+/// notes written on Stop, which also need the whole <see cref="Transcript"/> for the full summary.
+/// </summary>
+public sealed record TranscriberNotesRequest(
+    string? Notes,
+    string? NewText,
+    string? Transcript,
+    string? Style,
+    long? ElapsedMs,
+    bool? IsFinal);
 
 public sealed record TranscriberSaveRequest(
     string? Transcript,
@@ -36,7 +47,9 @@ public sealed record TranscriberSendRequest(string? Transcript, string? Notes);
 /// The web transcriber: GET /transcribe (the page, public like "/") and the PIN-protected /api/transcriber/*
 /// endpoints it calls. Chunks are transcribed by the same Whisper callback as the rest of the remote (SpeechEngine
 /// runs one transcription at a time, so web chunks, the desktop transcriber and voice chat simply take turns) and
-/// cleaned like the desktop transcriber's. Summaries and live notes use the same Core prompts and splitting.
+/// cleaned like the desktop transcriber's. Notes are written by the same Core code as the desktop transcriber's
+/// (<see cref="TranscriptNotesWriter"/>), each as a background job the page polls, so a phone that sleeps for a
+/// moment does not lose them.
 /// </summary>
 public sealed partial class PhoneRemoteServer
 {
@@ -93,7 +106,8 @@ public sealed partial class PhoneRemoteServer
             }
         });
 
-        // Full Summarize: starts a background job (a long transcript is summarized in parts) and returns its state.
+        // Summarize / Re-summarize all: a background job that writes fresh notes by time from the whole transcript
+        // (one section per interval, then the full summary at the top) and returns its state.
         app.MapPost(api + "/summarize", (TranscriberSummarizeRequest body, HttpRequest request) =>
         {
             if (!IsAuthorized(request))
@@ -108,59 +122,63 @@ public sealed partial class PhoneRemoteServer
                 return Error(StatusCodes.Status413PayloadTooLarge, tooLong);
 
             var style = TranscriptSummaryStyles.Normalize(body.Style);
-            var job = _summaryJobs.TryStart(
-                style,
-                (progress, ct) => TranscriptSummarizer.SummarizeAsync(transcript, style, hooks.SummarizeAsync, progress, ct),
-                DescribeSummaryError,
-                out var refusal);
-            return job == null
-                ? Error(StatusCodes.Status409Conflict, refusal)
-                : Results.Json(JobJson(job.Snapshot()));
+            var window = TimeSpan.FromMinutes(LiveNotesPolicy.NormalizeIntervalMinutes(body.IntervalMinutes ?? 0));
+            var length = WebTranscriber.ResolveSessionLength(body.ElapsedMs);
+            return StartJob(style, async (progress, ct) => new TranscriberJobOutput(
+                await TranscriptNotesWriter.RebuildAsync(transcript, style, window, length, hooks.SummarizeAsync, progress, ct)));
         });
 
-        app.MapGet(api + "/summarize/{id}", (string id, HttpRequest request) =>
+        // Live notes: a background job that adds a section on only the text said since the last update and refreshes
+        // the summary so far; with isFinal (on Stop) the last section and a full summary of the whole transcript.
+        app.MapPost(api + "/notes", (TranscriberNotesRequest body, HttpRequest request) =>
+        {
+            if (!IsAuthorized(request))
+                return Results.Unauthorized();
+            if (_transcriber is not { } hooks)
+                return TranscriberUnavailable();
+            var tooLong = WebTranscriber.CheckLength(body.NewText, body.Notes) ?? WebTranscriber.CheckLength(body.Transcript, null);
+            if (tooLong != null)
+                return Error(StatusCodes.Status413PayloadTooLarge, tooLong);
+
+            var final = body.IsFinal == true;
+            var notes = body.Notes ?? "";
+            var newText = body.NewText ?? "";
+            var transcript = body.Transcript ?? "";
+            if (newText.Trim().Length == 0 && (!final || transcript.Trim().Length == 0))
+                return Error(StatusCodes.Status400BadRequest, "Nothing new to add to the notes yet.");
+
+            var style = TranscriptSummaryStyles.Normalize(body.Style);
+            var elapsed = WebTranscriber.ResolveSessionLength(body.ElapsedMs) ?? TimeSpan.Zero;
+            return StartJob(style, async (progress, ct) =>
+            {
+                var result = final
+                    ? await TranscriptNotesWriter.FinishAsync(notes, newText, transcript, elapsed, style, hooks.SummarizeAsync, progress, ct)
+                    : await TranscriptNotesWriter.UpdateAsync(notes, newText, elapsed, style, hooks.SummarizeAsync, progress, ct);
+                if (result.SummaryError is not { } error)
+                    return new TranscriberJobOutput(result.Notes);
+
+                AppLog.Warn("Web transcriber: the summary at the top of the notes could not be refreshed.", error);
+                return new TranscriberJobOutput(result.Notes, $"The summary at the top was not refreshed: {DescribeSummaryError(error)}");
+            });
+        });
+
+        // A job's state and, once it has finished, its result (polled by the page about once a second).
+        app.MapGet(api + "/jobs/{id}", (string id, HttpRequest request) =>
         {
             if (!IsAuthorized(request))
                 return Results.Unauthorized();
 
             return _summaryJobs.Get(id) is { } job
                 ? Results.Json(JobJson(job.Snapshot()))
-                : Error(StatusCodes.Status404NotFound, "That summary is no longer known to the PC (the app may have restarted). Press Summarize again.");
+                : Error(StatusCodes.Status404NotFound, "The PC no longer knows about these notes (the app may have restarted). Try again.");
         });
 
-        app.MapPost(api + "/summarize/{id}/cancel", (string id, HttpRequest request) =>
+        app.MapPost(api + "/jobs/{id}/cancel", (string id, HttpRequest request) =>
         {
             if (!IsAuthorized(request))
                 return Results.Unauthorized();
 
             return Results.Json(new { cancelled = _summaryJobs.Cancel(id) });
-        });
-
-        // Live notes: merges the text said since the last update into the current notes.
-        app.MapPost(api + "/notes", async (TranscriberNotesRequest body, HttpRequest request, CancellationToken ct) =>
-        {
-            if (!IsAuthorized(request))
-                return Results.Unauthorized();
-            if (_transcriber is not { } hooks)
-                return TranscriberUnavailable();
-            if (WebTranscriber.CheckLength(body.NewText, body.Notes) is { } tooLong)
-                return Error(StatusCodes.Status413PayloadTooLarge, tooLong);
-
-            var style = TranscriptSummaryStyles.Normalize(body.Style);
-            try
-            {
-                var notes = await TranscriptSummarizer.UpdateNotesAsync(body.Notes, body.NewText, style, hooks.SummarizeAsync, null, ct);
-                return Results.Json(new { notes, style });
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                return Results.Empty;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Warn("Web transcriber: the live notes could not be updated.", ex);
-                return Error(StatusCodes.Status502BadGateway, DescribeSummaryError(ex));
-            }
         });
 
         // Saves the session in the transcripts folder under a name the server chooses (see WebTranscriber.NewSaveFileName).
@@ -228,16 +246,13 @@ public sealed partial class PhoneRemoteServer
     {
         var now = DateTimeOffset.Now;
         var start = WebTranscriber.ResolveSessionStart(body.StartedAt, now).LocalDateTime;
-        TimeSpan? length = body.ElapsedMs is > 0 and < 7L * 24 * 60 * 60 * 1000
-            ? TimeSpan.FromMilliseconds(body.ElapsedMs.Value)
-            : null;
         var document = LiveTranscriptText.BuildDocument(
             LiveTranscriptText.DocumentTitle,
             start,
-            length,
+            WebTranscriber.ResolveSessionLength(body.ElapsedMs),
             transcript,
             notes,
-            TranscriptSummaryStyles.Normalize(body.NotesStyle),
+            TranscriptNotes.DocumentHeading(notes, body.NotesStyle),
             markdown: true);
 
         var folder = Path.GetFullPath(transcriptsFolder);
@@ -271,6 +286,13 @@ public sealed partial class PhoneRemoteServer
         }
     }
 
+    // Starts a notes job and answers with its state, or 409 when too many are running.
+    private IResult StartJob(string style, Func<IProgress<string>, CancellationToken, Task<TranscriberJobOutput>> work)
+    {
+        var job = _summaryJobs.TryStartWithWarning(style, work, DescribeSummaryError, out var refusal);
+        return job == null ? Error(StatusCodes.Status409Conflict, refusal) : Results.Json(JobJson(job.Snapshot()));
+    }
+
     private static object JobJson(TranscriberJobSnapshot job) => new
     {
         id = job.Id,
@@ -278,7 +300,8 @@ public sealed partial class PhoneRemoteServer
         state = job.State.ToString().ToLowerInvariant(),
         progress = job.Progress,
         result = job.Result,
-        error = job.Error
+        error = job.Error,
+        warning = job.Warning
     };
 
     private static string DescribeSummaryError(Exception ex) => Shorten(FriendlyErrors.Describe(ex));

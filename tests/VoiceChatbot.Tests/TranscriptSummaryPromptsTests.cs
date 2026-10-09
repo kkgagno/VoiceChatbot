@@ -24,49 +24,6 @@ public class TranscriptSummaryPromptsTests
     }
 
     [Fact]
-    public void LiveNotesSendsCurrentNotesNewTextAndTheStyleFormat()
-    {
-        var request = TranscriptSummaryPrompts.LiveNotes(
-            "• Budget is 5k\n• Ana owns the venue",
-            "[02:10] We moved the date to May 3.",
-            TranscriptSummaryStyles.MeetingNotes);
-
-        Assert.Equal(TranscriptSummaryKind.LiveNotes, request.Kind);
-        Assert.Equal(TranscriptSummaryStyles.MeetingNotes, request.Style);
-        Assert.True(request.IsFinal);
-
-        var message = request.UserMessage;
-        Assert.Contains(TranscriptSummaryStyles.GetFormat(TranscriptSummaryStyles.MeetingNotes), message);
-        Assert.Contains("full updated notes", message);
-        Assert.Contains("keep every earlier point", message);
-        Assert.Contains("merge the new information", message);
-        Assert.Contains("no preamble", message);
-        Assert.Contains("only what was said since the notes were last updated", message);
-        Assert.Contains("CURRENT NOTES:\n• Budget is 5k\n• Ana owns the venue\n\nNEW TRANSCRIPT:\n[02:10] We moved the date to May 3.", message);
-        Assert.EndsWith("May 3.", message);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   \n ")]
-    public void LiveNotesWithoutNotesSaysNoneYet(string? notes)
-    {
-        var message = TranscriptSummaryPrompts.LiveNotes(notes, "[00:00] Hi.", null).UserMessage;
-        Assert.Contains("CURRENT NOTES:\n(none yet)\n\nNEW TRANSCRIPT:\n[00:00] Hi.", message);
-        Assert.Contains(TranscriptSummaryStyles.GetFormat(TranscriptSummaryStyles.Summary), message);
-    }
-
-    [Fact]
-    public void EveryStyleGetsADifferentLiveNotesPrompt()
-    {
-        var messages = TranscriptSummaryStyles.Names
-            .Select(style => TranscriptSummaryPrompts.LiveNotes("notes", "new", style).UserMessage)
-            .ToList();
-        Assert.Equal(messages.Count, messages.Distinct().Count());
-    }
-
-    [Fact]
     public void PartPromptNamesThePartAndIsNotFinal()
     {
         var request = TranscriptSummaryPrompts.Part("[00:00] First words.", 2, 5, "action items");

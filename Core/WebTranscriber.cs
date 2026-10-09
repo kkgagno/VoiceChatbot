@@ -33,6 +33,18 @@ public static class WebTranscriber
     /// <summary>The oldest session start that is accepted (a transcript restored after a reload can be days old).</summary>
     public static TimeSpan MaxSessionAge { get; } = TimeSpan.FromDays(30);
 
+    /// <summary>The longest recording time of a session the endpoints accept from the browser.</summary>
+    public static TimeSpan MaxSessionLength { get; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// The time recorded so far in the browser's session (milliseconds), or null when it is missing, zero or
+    /// implausible (negative, or longer than <see cref="MaxSessionLength"/>).
+    /// </summary>
+    public static TimeSpan? ResolveSessionLength(long? elapsedMs) =>
+        elapsedMs is long ms && ms > 0 && ms < (long)MaxSessionLength.TotalMilliseconds
+            ? TimeSpan.FromMilliseconds(ms)
+            : null;
+
     /// <summary>
     /// When the session started, for its saved file name and document date: the browser's start time
     /// (Unix milliseconds) when it is plausible, otherwise <paramref name="now"/>. A start slightly in the
@@ -94,7 +106,8 @@ public static class WebTranscriber
 
     /// <summary>
     /// The settings the page's JavaScript uses, taken from the same Core classes as the desktop Live Transcriber:
-    /// the chunking thresholds (<see cref="SpeechChunkerOptions"/>), summary styles, live-notes timing and limits.
+    /// the chunking thresholds (<see cref="SpeechChunkerOptions"/>), summary styles, the notes layout's headings
+    /// (<see cref="TranscriptNotes"/>), live-notes timing and limits.
     /// </summary>
     public static WebTranscriberConfig CreateConfig()
     {
@@ -112,6 +125,10 @@ public static class WebTranscriber
                 chunk.CutSearch.TotalMilliseconds),
             TranscriptSummaryStyles.Names.ToArray(),
             TranscriptSummaryStyles.Summary,
+            new WebTranscriberNotesConfig(
+                TranscriptNotes.SummarySoFarHeading,
+                TranscriptNotes.NotesByTimeHeading,
+                TranscriptSummaryStyles.Names.Select(TranscriptSummaryStyles.GetHeading).ToArray()),
             LiveNotesPolicy.IntervalChoicesMinutes.ToArray(),
             LiveNotesPolicy.DefaultIntervalMinutes,
             LiveNotesPolicy.CheckEvery.TotalMilliseconds,
@@ -145,11 +162,21 @@ public sealed record WebTranscriberChunkConfig(
     double PreRollMs,
     double CutSearchMs);
 
+/// <summary>
+/// The headings of the notes layout (<see cref="TranscriptNotes"/>), so the page can tell notes by time from other
+/// text the way the PC does. <see cref="StyleHeadings"/> are in the order of the styles ("SUMMARY", "ACTION ITEMS"...).
+/// </summary>
+public sealed record WebTranscriberNotesConfig(
+    string SummarySoFarHeading,
+    string NotesByTimeHeading,
+    string[] StyleHeadings);
+
 /// <summary>What the web transcriber page needs to behave like the desktop Live Transcriber.</summary>
 public sealed record WebTranscriberConfig(
     WebTranscriberChunkConfig Chunk,
     string[] Styles,
     string DefaultStyle,
+    WebTranscriberNotesConfig Notes,
     int[] Intervals,
     int DefaultInterval,
     double CheckEveryMs,

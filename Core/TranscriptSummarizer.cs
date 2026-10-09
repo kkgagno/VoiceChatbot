@@ -8,8 +8,8 @@ using System.Threading.Tasks;
 namespace VoiceChatbot;
 
 /// <summary>
-/// Runs transcript summaries and live-notes updates through a "send this request to the chat model" callback,
-/// splitting text that is too long for one request. Shared by the desktop Live Transcriber and the web version.
+/// Runs transcript summaries through a "send this request to the chat model" callback, splitting text that is
+/// too long for one request (live notes are written by <see cref="TranscriptNotesWriter"/>). Shared by the desktop Live Transcriber and the web version.
 /// <para>
 /// The awaits keep the caller's context (no ConfigureAwait(false)), so a callback started on the UI thread
 /// continues there and may touch the UI.
@@ -174,43 +174,6 @@ public static class TranscriptSummarizer
         }
 
         return current;
-    }
-
-    /// <summary>
-    /// Live notes as the older web page asks for them (the transcribers now use <see cref="TranscriptNotesWriter"/>):
-    /// merges <paramref name="newText"/> (only what was said since the last update) into
-    /// <paramref name="currentNotes"/> and returns the full updated notes. New text that is too long for one
-    /// request is merged one part at a time. Throws when the model returns nothing, so the caller keeps the
-    /// previous notes.
-    /// </summary>
-    public static async Task<string> UpdateNotesAsync(
-        string? currentNotes,
-        string? newText,
-        string? style,
-        Func<TranscriptSummaryRequest, CancellationToken, Task<string>> summarize,
-        IProgress<string>? progress = null,
-        CancellationToken ct = default)
-    {
-        var notes = (currentNotes ?? "").Trim();
-        var text = (newText ?? "").Trim();
-        if (text.Length == 0)
-            return notes;
-
-        var parts = NeedsSplitting(text) ? SplitIntoParts(text) : new[] { text };
-        for (var i = 0; i < parts.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (parts.Count > 1)
-                progress?.Report($"Updating notes (part {i + 1} of {parts.Count})...");
-
-            var request = TranscriptSummaryPrompts.LiveNotes(notes, parts[i], style, isFinal: i == parts.Count - 1);
-            var updated = TranscriptSummaryPrompts.StripPreamble(await summarize(request, ct));
-            if (updated.Length == 0)
-                throw new InvalidOperationException("The model returned no notes.");
-            notes = updated;
-        }
-
-        return notes;
     }
 
     // A line longer than the part length is cut at the last space that fits, or hard when there is none.

@@ -6,7 +6,9 @@ namespace VoiceChatbot;
 /// <summary>
 /// The web transcriber page (GET /transcribe on the phone remote): records the microphone or, in desktop
 /// Chrome/Edge, a tab's or the system's audio, cuts it at pauses like the desktop Live Transcriber, sends the
-/// chunks one at a time to the PC to transcribe and offers the same notes, live notes and output buttons.
+/// chunks one at a time to the PC to transcribe and offers the same notes by time, live notes, Re-summarize all
+/// and output buttons (the notes are written on the PC by Core/TranscriptNotesWriter, as background jobs the page
+/// polls).
 /// The page holds no data; every API call carries the PIN, remembered under the same key as the main page.
 /// All text is put on the page with textContent or form values, never parsed as HTML.
 /// </summary>
@@ -150,10 +152,10 @@ public static class PhoneRemoteTranscriberPage
       <div class="toolbar notesbar">
         <select id="style" aria-label="Notes style"></select>
         <button id="summarize" type="button">Summarize</button>
-        <button id="liveNotes" type="button" aria-pressed="false">Live notes Off</button>
-        <select id="interval" aria-label="Live notes interval"></select>
+        <button id="liveNotes" type="button" aria-pressed="false" title="While recording, every few minutes the chat model writes detailed notes on what was said since the last update as a new section under NOTES BY TIME, and refreshes the summary at the top. Stop then writes a full summary in the chosen style.">Live notes Off</button>
+        <select id="interval" aria-label="Live notes interval" title="How often live notes are updated while recording. Re-summarize all also uses it as the length of each section."></select>
       </div>
-      <textarea id="notes" aria-label="Notes" placeholder="Summarize writes notes on the whole transcript here. With Live notes on, they are kept up to date while you record."></textarea>
+      <textarea id="notes" aria-label="Notes" placeholder="Turn on Live notes to have notes by time written while you record, or press Summarize after recording."></textarea>
     </div>
   </section>
   <section class="toolbar" aria-label="Output">
@@ -218,7 +220,7 @@ function normalizeStyle(name) {
   return CFG.styles.find(style => style.toLowerCase() === wanted) || CFG.defaultStyle;
 }
 
-// The nearest interval choice (2, 5 or 10 minutes); the default for missing values.
+// The nearest interval choice (5, 10 or 15 minutes, so a stored 2 becomes 5); the default for missing values.
 function normalizeInterval(minutes) {
   const m = Number(minutes);
   if (!(m > 0)) return CFG.defaultInterval;
@@ -238,6 +240,55 @@ function levelPercent(rms) { return rms <= 0 ? 0 : clamp((20 * Math.log10(rms) +
 
 function formatUpdated(date) {
   return 'Notes updated ' + date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function sameText(a, b) {
+  return String(a || '').replace(/\r\n/g, '\n').trim() === String(b || '').replace(/\r\n/g, '\n').trim();
+}
+
+// ==================== Notes layout (same rules as Core/TranscriptNotes) ====================
+// SUMMARY SO FAR (or the style's heading after Stop / Re-summarize all), the summary, then NOTES BY TIME with one
+// "[00:00–05:12]" (or "[Part 2]") section per update. The PC writes the notes; the page only needs to tell
+// whether they have sections and whether the top is already a full summary in the chosen style.
+
+const SECTION_HEADER = /^\s*\[\s*(?:\d{1,3}:\d{2}(?::\d{2})?\s*[\u2013\u2014-]\s*\d{1,3}:\d{2}(?::\d{2})?|Part\s+\d{1,4})\s*\]\s*$/i;
+const KNOWN_HEADINGS = [CFG.notes.summarySoFarHeading].concat(CFG.notes.styleHeadings);
+
+function headingText(line) { return String(line || '').trim().replace(/:+$/, '').trim().toLowerCase(); }
+function knownHeading(line) {
+  const text = headingText(line);
+  return KNOWN_HEADINGS.find(heading => heading.toLowerCase() === text) || null;
+}
+function isNotesByTimeLine(line) { return headingText(line) === CFG.notes.notesByTimeHeading.toLowerCase(); }
+function styleHeading(style) { return CFG.notes.styleHeadings[CFG.styles.indexOf(normalizeStyle(style))] || ''; }
+
+// { structured, empty, heading, top, hasSections }. Text without the layout (older notes, or notes a user typed)
+// is not structured; the PC keeps it verbatim.
+function notesShape(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const byTime = lines.findIndex(isNotesByTimeLine);
+  const topEnd = byTime >= 0 ? byTime : lines.length;
+  let first = 0;
+  while (first < topEnd && !lines[first].trim()) first++;
+  const heading = first < topEnd ? knownHeading(lines[first]) : null;
+  if (byTime < 0 && heading === null) {
+    const whole = lines.join('\n').trim();
+    return { structured: !whole, empty: !whole, heading: null, top: whole, hasSections: false };
+  }
+  const top = lines.slice(heading !== null ? first + 1 : first, topEnd).join('\n').trim();
+  const rest = byTime >= 0 ? lines.slice(byTime + 1) : [];
+  const hasSections = rest.some(line => SECTION_HEADER.test(line));
+  const empty = heading === null && !top && !rest.some(line => line.trim());
+  return { structured: true, empty, heading, top, hasSections };
+}
+
+// The top is a full summary in this style (written on Stop or by Re-summarize all).
+function hasFullSummary(shape, style) { return shape.top.length > 0 && shape.heading === styleHeading(style); }
+
+// The heading of the notes in the saved document: "Notes" for the layout (it carries its own headings).
+function documentHeading(notes, style) {
+  const shape = notesShape(notes);
+  return shape.structured && !shape.empty ? 'Notes' : normalizeStyle(style);
 }
 
 function documentLines(text) {
@@ -301,8 +352,21 @@ class LiveNotesPolicy {
     return 'Due';
   }
 
-  checkFinal(summaryRunning, transcript) {
-    if (!this.enabled) return 'Disabled';
+  // After Stop: due when live notes are on or the notes already have sections, the transcript has words, and
+  // either words were added or the top is not yet a full summary in the style. Notes without the layout (text a
+  // user wrote) are only due with new words, since their text is kept.
+  checkFinal(summaryRunning, transcript, notes, style) {
+    const shape = notesShape(notes);
+    if (!this.enabled && !shape.hasSections) return 'Disabled';
+    if (this.running) return 'AlreadyRunning';
+    if (summaryRunning) return 'SummaryRunning';
+    if (countWords(transcript) === 0) return 'TooFewNewWords';
+    if (this.countNewWords(transcript) === 0 && (!shape.structured || hasFullSummary(shape, style))) return 'TooFewNewWords';
+    return 'Due';
+  }
+
+  // "Update notes now": whatever the interval, the Live notes switch or the 40-word minimum; needs one new word.
+  checkNow(summaryRunning, transcript) {
     if (this.running) return 'AlreadyRunning';
     if (summaryRunning) return 'SummaryRunning';
     if (this.countNewWords(transcript) === 0) return 'TooFewNewWords';
@@ -313,8 +377,12 @@ class LiveNotesPolicy {
     return this.check(now, recording, summaryRunning, transcript) === 'Due' ? this.begin(transcript, false) : null;
   }
 
-  tryBeginFinal(summaryRunning, transcript) {
-    return this.checkFinal(summaryRunning, transcript) === 'Due' ? this.begin(transcript, true) : null;
+  tryBeginFinal(summaryRunning, transcript, notes, style) {
+    return this.checkFinal(summaryRunning, transcript, notes, style) === 'Due' ? this.begin(transcript, true) : null;
+  }
+
+  tryBeginNow(summaryRunning, transcript) {
+    return this.checkNow(summaryRunning, transcript) === 'Due' ? this.begin(transcript, false) : null;
   }
 
   isCurrent(ticket) { return this.running === ticket && ticket.generation === this.generation; }
@@ -336,6 +404,12 @@ class LiveNotesPolicy {
   abandon(ticket) { if (this.isCurrent(ticket)) this.running = null; }
 
   markSummarized(transcript, now) { this.processed = transcript || ''; this.clockStart = now; }
+
+  // A restored session: the notes cover the first processedLength characters of the transcript.
+  restore(transcript, processedLength) {
+    const text = transcript || '';
+    this.processed = text.slice(0, clamp(Math.floor(Number(processedLength) || 0), 0, text.length));
+  }
 
   reset(now) { this.generation++; this.running = null; this.processed = ''; this.clockStart = now; }
 
@@ -509,7 +583,7 @@ const el = {
   notice: $('notice'), source: $('source'), startStop: $('startStop'), dot: $('dot'), elapsed: $('elapsed'),
   meterFill: $('meterFill'), status: $('status'), panes: $('panes'), divider: $('divider'),
   transcript: $('transcript'), words: $('words'), editHint: $('editHint'), copyTranscript: $('copyTranscript'),
-  notes: $('notes'), notesTitle: $('notesTitle'), notesUpdated: $('notesUpdated'), copyNotes: $('copyNotes'),
+  notes: $('notes'), notesUpdated: $('notesUpdated'), copyNotes: $('copyNotes'),
   style: $('style'), summarize: $('summarize'), liveNotes: $('liveNotes'), interval: $('interval'),
   download: $('download'), savePc: $('savePc'), sendChat: $('sendChat'), clear: $('clear'),
   fontDown: $('fontDown'), fontUp: $('fontUp')
@@ -544,9 +618,10 @@ const state = {
   changeVersion: 0,
   savedVersion: 0,      // changeVersion when the session was last saved on the PC
   saveId: '',           // the PC's id for this session's file
-  notesStyle: CFG.defaultStyle,
+  notesStyle: CFG.defaultStyle,  // the style the notes were last written in
   notesUpdatedAt: null,
-  liveNotesFailed: false
+  liveNotesFailed: false,
+  notesProblem: ''      // why the summary at the top was not refreshed by the last update
 };
 const settings = { fontSize: DEFAULT_FONT, liveNotes: false, intervalMinutes: CFG.defaultInterval, style: CFG.defaultStyle, source: 'mic', split: DEFAULT_SPLIT };
 const queue = [];          // recorded chunks waiting to be transcribed, oldest first (and Clear's mark, see clearSession)
@@ -556,6 +631,7 @@ let authBlocked = false;   // a request was refused for the PIN: chunks wait unt
 let unreachable = false;   // the PC could not be reached: chunks wait and are retried until it answers
 let clearPending = false;  // Clear was pressed: it runs once the chunks recorded before it are transcribed
 let capture = null, chunker = null, timelineOriginMs = 0, peakLevel = 0;
+// summaryJob: Summarize / Re-summarize all on the PC; liveJob: a live-notes update or the notes on Stop.
 let pumping = false, summaryJob = null, liveJob = null, stopPromise = null;
 let liveTimer = 0, statusUntil = 0, persistTimer = 0, persistWarned = false, wordsTimer = 0;
 let wakeLock = null, wakeLockPending = false;
@@ -704,10 +780,12 @@ function loadSettings() {
     if (Number.isFinite(saved.split)) settings.split = saved.split;
   }
   settings.fontSize = clamp(Math.round(settings.fontSize), MIN_FONT, MAX_FONT);
+  const storedInterval = settings.intervalMinutes;
   settings.intervalMinutes = normalizeInterval(settings.intervalMinutes);
   settings.style = normalizeStyle(settings.style);
   settings.split = clamp(settings.split, MIN_SPLIT, MAX_SPLIT);
   if (settings.source === 'tab' && !canShareTab) settings.source = 'mic';
+  if (saved && storedInterval !== settings.intervalMinutes) saveSettings(); // e.g. a stored 2 is 5 from now on
 }
 
 function saveSettings() { writeJson(SETTINGS_KEY, settings); }
@@ -762,7 +840,6 @@ function persistNow() {
     removeKey(SESSION_KEY);
     return;
   }
-  const processed = policy.processed;
   const ok = writeJson(SESSION_KEY, {
     v: 1,
     transcript,
@@ -770,10 +847,11 @@ function persistNow() {
     notesStyle: state.notesStyle,
     notesUpdatedAt: state.notesUpdatedAt ? state.notesUpdatedAt.getTime() : 0,
     startedAt: state.startedAt,
-    elapsedMs: Math.round(sessionElapsedMs()),
+    elapsedMs: Math.round(sessionElapsedMs()),  // recording continues from here after a reload
     saveId: state.saveId,
     unsaved: hasUnsaved(),
-    processedLength: processed && transcript.startsWith(processed) ? processed.length : 0
+    processedLength: policy.processed.length,   // how much of the transcript the notes cover
+    savedAt: Date.now()
   });
   if (ok) {
     persistWarned = false;
@@ -783,12 +861,14 @@ function persistNow() {
   }
 }
 
+// The session kept before the page was reloaded or closed: transcript, notes, the time recorded so far and the
+// live-notes progress. Returns when it is from (a Date), or null when there is nothing to restore.
 function restoreSession() {
   const saved = readJson(SESSION_KEY);
-  if (!saved || typeof saved !== 'object') return false;
+  if (!saved || typeof saved !== 'object') return null;
   const transcript = typeof saved.transcript === 'string' ? saved.transcript : '';
   const notes = typeof saved.notes === 'string' ? saved.notes : '';
-  if (!transcript.trim() && !notes.trim()) return false;
+  if (!transcript.trim() && !notes.trim()) return null;
 
   el.transcript.value = transcript;
   el.notes.value = notes;
@@ -797,10 +877,11 @@ function restoreSession() {
   state.startedAt = Number(saved.startedAt) > 0 ? Number(saved.startedAt) : 0;
   state.elapsedBaseMs = clamp(Number(saved.elapsedMs) || 0, 0, 30 * 86400000);
   state.saveId = typeof saved.saveId === 'string' && /^[0-9a-f]{32}$/.test(saved.saveId) ? saved.saveId : '';
-  policy.processed = transcript.slice(0, clamp(Math.floor(Number(saved.processedLength) || 0), 0, transcript.length));
+  policy.restore(transcript, saved.processedLength);
   state.changeVersion = 1;
   state.savedVersion = saved.unsaved === false ? 1 : 0;
-  return true;
+  const from = state.startedAt || Number(saved.savedAt) || 0;
+  return new Date(from > 0 ? from : Date.now());
 }
 
 // ---------- Display ----------
@@ -832,11 +913,35 @@ function updateUi() {
   el.editHint.textContent = rec || fin ? 'Read-only while recording' : 'Editable';
   el.source.disabled = rec || fin || state.starting;
   el.clear.disabled = fin || clearPending;
+  updateNotesControls();
 }
 
-function updateSummaryUi() {
-  el.summarize.textContent = summaryJob ? 'Cancel' : 'Summarize';
+// The notes are read-only while recording and while notes are being written (updates only add to them then);
+// editable when stopped. The button reads "Update notes now" while recording, "Summarize" for empty notes,
+// "Re-summarize all" otherwise, and "Cancel" while a summary is being written.
+function updateNotesControls() {
+  const rec = state.recording;
+  const stopping = !rec && (state.finishing || !!stopPromise);
+  el.notes.readOnly = rec || stopping || !!liveJob || !!summaryJob;
+  let label, tip;
+  if (summaryJob) {
+    label = 'Cancel';
+    tip = 'Stop writing the notes; the previous notes are kept';
+  } else if (rec) {
+    label = 'Update notes now';
+    tip = 'Add notes on what was said since the last update now, without waiting for the live-notes interval';
+  } else if (!el.notes.value.trim()) {
+    label = 'Summarize';
+    tip = 'Write notes by time and a summary in the chosen style from the whole transcript; a long transcript is written section by section';
+  } else {
+    label = 'Re-summarize all';
+    tip = 'Replace the notes with fresh notes by time and a summary in the chosen style, written from the whole transcript';
+  }
+  if (el.summarize.textContent !== label) el.summarize.textContent = label;
+  el.summarize.title = tip;
   el.summarize.classList.toggle('cancel', !!summaryJob);
+  // While an update or the notes on Stop are being written, wait for them.
+  el.summarize.disabled = !summaryJob && (stopping || !!liveJob);
   el.style.disabled = !!summaryJob;
 }
 
@@ -848,12 +953,13 @@ function updateLiveNotesUi() {
 
 function updateNotesHeader() {
   const hasNotes = el.notes.value.trim().length > 0;
-  el.notesTitle.textContent = hasNotes ? state.notesStyle : 'Notes';
   const updated = hasNotes && state.notesUpdatedAt ? formatUpdated(state.notesUpdatedAt) : '';
   let detail = updated;
-  if (liveJob) detail = 'Updating notes...';
-  else if (state.liveNotesFailed) detail = updated ? 'Update failed · ' + updated : 'Notes update failed';
+  if (summaryJob) detail = summaryJob.progress || 'Summarizing...';
+  else if (liveJob) detail = 'Updating notes...';
+  else if (state.liveNotesFailed) detail = updated ? 'Summary not refreshed · ' + updated : 'Notes update failed';
   el.notesUpdated.textContent = detail;
+  el.notesUpdated.title = state.notesProblem && !summaryJob && !liveJob ? state.notesProblem : '';
 }
 
 // Every 200 ms: elapsed time, input level and the live status line.
@@ -890,7 +996,17 @@ function appendLine(line) {
 function setNotes(text) {
   el.notes.value = text;
   updateNotesHeader();
+  updateNotesControls();
   markChanged();
+}
+
+// New sections are added at the end: a reader at the end keeps following them, one who scrolled back stays put.
+function replaceNotesKeepingScroll(text) {
+  const box = el.notes;
+  const atEnd = box.scrollHeight > box.clientHeight && box.scrollTop + box.clientHeight >= box.scrollHeight - 6;
+  const top = box.scrollTop;
+  setNotes(text);
+  box.scrollTop = atEnd ? box.scrollHeight : top;
 }
 
 // ---------- Capture ----------
@@ -1168,14 +1284,19 @@ async function stopCore(reason) {
   updateUi();
   persistNow();
 
-  // Saved on the PC right away, then again once the final live notes are written.
+  // Saved on the PC right away, then again once the final notes are written (with Live notes on, or when the
+  // notes already have sections: a last section for the words since the previous update and a full summary).
   const stopped = reason || 'Stopped.';
   const saved = await autoSave();
   if (!state.recording) setStatus(stopped + savedNote(saved), true);
   const notesUpdated = await finishLiveNotes(stopped);
   if (!notesUpdated) return;
   const resaved = await autoSave();
-  if (!state.recording && state.notesUpdatedAt) setStatus(stopped + ' ' + formatUpdated(state.notesUpdatedAt) + '.' + savedNote(resaved || saved), true);
+  persistNow();
+  if (!state.recording && state.notesUpdatedAt) {
+    const problem = state.notesProblem ? ' ' + state.notesProblem : '';
+    setStatus(stopped + ' ' + formatUpdated(state.notesUpdatedAt) + '.' + problem + savedNote(resaved || saved), true);
+  }
 }
 
 function savedNote(fileName) { return fileName ? ' Saved on the PC as ' + fileName + '.' : ''; }
@@ -1248,91 +1369,153 @@ async function autoSave() {
   }
 }
 
-// ---------- Summarize ----------
+// ---------- Notes jobs on the PC ----------
 
-function cancelSummaryOnPc(id) {
-  if (id) api(API + '/summarize/' + encodeURIComponent(id) + '/cancel', { method: 'POST' }).catch(() => {});
+function cancelJobOnPc(id) {
+  if (id) api(API + '/jobs/' + encodeURIComponent(id) + '/cancel', { method: 'POST' }).catch(() => {});
 }
 
-function cancelSummary() {
-  const job = summaryJob;
+// Stops a job (summaryJob or liveJob); its result is dropped and the previous notes stay.
+function cancelJob(job) {
   if (!job || job.cancelled) return;
   job.cancelled = true;
-  cancelSummaryOnPc(job.id);
+  cancelJobOnPc(job.id);
 }
 
-async function summarize() {
+function cancelSummary() { cancelJob(summaryJob); }
+function cancelLiveNotes() { cancelJob(liveJob); }
+
+// Starts a notes job on the PC and polls it until it ends, so a phone that sleeps or loses Wi-Fi for a moment
+// does not lose it (the job keeps going on the PC). Resolves to the finished job ({ result, warning });
+// throws CancelledError after cancelJob, or an Error when it failed.
+async function runJob(path, body, job, onProgress) {
+  let data = await api(path, { method: 'POST', json: body });
+  job.id = String(data.id || '');
+  if (job.cancelled) cancelJobOnPc(job.id);
+  let failures = 0;
+  while (data.state === 'running' && !job.cancelled) {
+    await sleep(1000);
+    if (job.cancelled) break;
+    try {
+      data = await api(API + '/jobs/' + encodeURIComponent(job.id));
+      failures = 0;
+    } catch (e) {
+      if (e.status === 0 && ++failures < 60) {
+        await sleep(2000);
+        continue;
+      }
+      throw e;
+    }
+    if (data.progress && !job.cancelled && onProgress) onProgress(String(data.progress));
+  }
+  if (job.cancelled || data.state === 'cancelled') throw new CancelledError();
+  if (data.state === 'failed') throw new Error(data.error || 'The request failed.');
+  return data;
+}
+
+// ---------- Summarize / Re-summarize all / Update notes now ----------
+
+// While recording: "Update notes now". When stopped: Summarize / Re-summarize all. While that runs: Cancel.
+function summarizeClick() {
   if (summaryJob) {
     cancelSummary();
     return;
   }
+  if (state.recording) {
+    updateNotesNow();
+    return;
+  }
+  if (state.finishing || stopPromise || liveJob) {
+    setStatus('The notes are still being written. Try again in a moment.');
+    return;
+  }
+  rebuildNotes();
+}
+
+// Adds a section right away, whatever the interval and the Live notes switch.
+function updateNotesNow() {
+  const check = policy.checkNow(!!summaryJob, el.transcript.value);
+  if (check === 'AlreadyRunning') {
+    setStatus('The notes are already being updated.');
+    return;
+  }
+  if (check === 'TooFewNewWords') {
+    setStatus('Nothing new to add to the notes yet.');
+    return;
+  }
+  const ticket = policy.tryBeginNow(!!summaryJob, el.transcript.value);
+  if (ticket) startLiveNotes(ticket);
+}
+
+// Summarize (empty notes) or Re-summarize all (asks first): notes by time for each interval of the whole
+// transcript, then a full summary in the chosen style at the top. The previous notes stay until the new ones are
+// ready, so a cancel or an error keeps them.
+async function rebuildNotes() {
   const snapshot = el.transcript.value;
   const transcript = snapshot.trim();
   if (!transcript) {
     setStatus('No transcript to summarize yet.');
     return;
   }
+  const replacing = el.notes.value.trim().length > 0;
+  if (replacing && !confirm('Replace the current notes with a fresh summary of the whole transcript?')) return;
+  // Things may have moved on while the question was open.
+  if (summaryJob || liveJob || state.recording || state.finishing || stopPromise || el.transcript.value !== snapshot) return;
 
-  // The full summary replaces the notes, so a live-notes update in progress gives way to it.
-  cancelLiveNotes();
   const style = normalizeStyle(el.style.value);
   const gen = state.sessionGen;
-  const job = { id: '', cancelled: false };
+  const job = { id: '', cancelled: false, progress: '' };
   summaryJob = job;
-  updateSummaryUi();
-  const parts = transcript.length > CFG.singlePassLimit ? Math.ceil(transcript.length / CFG.partLength) : 1;
-  setStatus(parts > 1
-    ? 'Writing ' + style.toLowerCase() + ' of a long transcript in about ' + parts + ' parts...'
-    : 'Writing ' + style.toLowerCase() + '...', true);
+  updateNotesControls();
+  updateNotesHeader();
+  setStatus(replacing ? 'Re-summarizing the whole transcript...' : 'Writing ' + style.toLowerCase() + '...', true);
 
+  let done = false;
   try {
-    let result = await api(API + '/summarize', { method: 'POST', json: { transcript, style } });
-    job.id = String(result.id || '');
-    if (job.cancelled) cancelSummaryOnPc(job.id);
-    let failures = 0;
-    while (result.state === 'running' && !job.cancelled) {
-      await sleep(1000);
-      if (job.cancelled) break;
-      try {
-        result = await api(API + '/summarize/' + encodeURIComponent(job.id));
-        failures = 0;
-      } catch (e) {
-        // The phone may sleep or lose Wi-Fi for a moment; the summary keeps going on the PC.
-        if (e.status === 0 && ++failures < 60) {
-          await sleep(2000);
-          continue;
-        }
-        throw e;
-      }
-      if (result.progress && !job.cancelled) setStatus(result.progress, true);
-    }
-    if (job.cancelled || result.state === 'cancelled') throw new CancelledError();
-    if (result.state === 'failed') throw new Error(result.error || 'The summary failed.');
+    const data = await runJob(API + '/summarize', {
+      transcript,
+      style,
+      intervalMinutes: settings.intervalMinutes,
+      elapsedMs: Math.round(sessionElapsedMs())
+    }, job, message => {
+      // Section by section: "Section 3 of 12...", then "Writing the summary...".
+      job.progress = message;
+      setStatus(message, true);
+      updateNotesHeader();
+    });
     if (gen !== state.sessionGen) return;
 
-    const summary = String(result.result || '').trim();
-    if (!summary) {
-      setStatus('The chat model returned an empty summary; the previous notes are kept.', !state.recording);
+    const notes = String(data.result || '');
+    if (!notes.trim()) {
+      setStatus('The chat model returned no notes; the previous notes are kept.', !state.recording);
       return;
     }
     state.notesStyle = style;
-    state.notesUpdatedAt = null;
+    state.notesUpdatedAt = new Date();
     state.liveNotesFailed = false;
-    setNotes(summary);
+    state.notesProblem = '';
+    if (summaryJob === job) summaryJob = null;
+    setNotes(notes);
     el.notes.scrollTop = 0;
-    // Live notes carry on from this summary with the words added after it.
+    // Live notes carry on from here with the words added after it.
     policy.markSummarized(snapshot, Date.now());
-    setStatus(style + ' ready.');
+    persistSoon();
+    done = true;
   } catch (e) {
     if (e instanceof CancelledError || job.cancelled) {
-      if (gen === state.sessionGen) setStatus('Summary cancelled.');
+      if (gen === state.sessionGen) setStatus(replacing ? 'Re-summarize cancelled; the previous notes are kept.' : 'Summary cancelled.');
     } else {
-      setStatus('Summary failed: ' + e.message, !state.recording);
+      setStatus('Summary failed: ' + e.message + (replacing ? ' The previous notes are kept.' : ''), !state.recording);
     }
   } finally {
     if (summaryJob === job) summaryJob = null;
-    updateSummaryUi();
+    updateNotesControls();
+    updateNotesHeader();
   }
+  if (!done) return;
+
+  const saved = state.recording ? null : await autoSave();
+  if (gen === state.sessionGen) setStatus(style + ' ready.' + savedNote(saved), !state.recording);
 }
 
 // ---------- Live notes ----------
@@ -1345,56 +1528,62 @@ function liveNotesTick() {
 }
 
 function startLiveNotes(ticket) {
-  const job = { ticket, controller: new AbortController(), promise: null };
+  const job = { ticket, id: '', cancelled: false, promise: null };
   liveJob = job;
   job.promise = runLiveNotes(job);
   return job.promise;
 }
 
-function cancelLiveNotes() {
-  if (liveJob) liveJob.controller.abort();
-}
-
-// Sends the current notes and only the text added since the last update; the reply replaces the notes.
-// A failure keeps the previous notes. Resolves to true when new notes were shown; never rejects.
+// A live update (or, for the final ticket, the notes on Stop), written on the PC: notes on only the text added
+// since the last update become a new section, then the summary at the top is rewritten (on Stop: a full summary
+// of the whole transcript). Errors keep the previous notes; when only the summary fails, the new section is kept.
+// Resolves to true when new notes were shown; never rejects.
 async function runLiveNotes(job) {
-  const { ticket, controller } = job;
-  const notesBefore = el.notes.value.trim();
+  const ticket = job.ticket;
+  const notesBefore = el.notes.value;
   const style = normalizeStyle(el.style.value);
+  const elapsedMs = Math.round(sessionElapsedMs());
   updateNotesHeader();
+  updateNotesControls();
   try {
-    const data = await api(API + '/notes', {
-      method: 'POST',
-      json: { notes: notesBefore, newText: ticket.newText, style },
-      signal: controller.signal
-    });
-    if (controller.signal.aborted || !policy.isCurrent(ticket)) {
+    const data = await runJob(API + '/notes', {
+      notes: notesBefore,
+      newText: ticket.newText,
+      transcript: ticket.isFinal ? ticket.transcript : '',
+      style,
+      elapsedMs,
+      isFinal: ticket.isFinal
+    }, job, null);
+    if (job.cancelled || !policy.isCurrent(ticket)) {
       policy.abandon(ticket);
-      return false;
+      return false; // cleared meanwhile
     }
-    if (el.notes.value.trim() !== notesBefore) {
-      // The notes were edited while the update was written: keep the edit, merge on the next check.
+    if (!sameText(el.notes.value, notesBefore)) {
+      // The notes were edited while the update was written: keep the edit, add to it on the next check.
       policy.abandon(ticket);
       setStatus('Live notes not applied because the notes were edited meanwhile. They update on the next check.');
       return false;
     }
-    const notes = String(data.notes || '').trim();
-    if (!notes) throw new Error('The model returned no notes.');
+    const notes = String(data.result || '');
+    if (!notes.trim()) throw new Error('The model returned no notes.');
+    const warning = String(data.warning || '');
     policy.complete(ticket, Date.now());
     state.notesUpdatedAt = new Date();
-    state.liveNotesFailed = false;
-    state.notesStyle = normalizeStyle(data.style || style);
-    setNotes(notes);
-    setStatus(formatUpdated(state.notesUpdatedAt) + '.');
+    state.liveNotesFailed = !!warning;
+    state.notesProblem = warning;
+    state.notesStyle = style;
+    if (!sameText(notes, notesBefore)) replaceNotesKeepingScroll(notes);
+    else markChanged();
+    setStatus(formatUpdated(state.notesUpdatedAt) + '.' + (warning ? ' ' + warning : ''));
     return true;
   } catch (e) {
-    if ((e && e.name === 'AbortError') || controller.signal.aborted) {
+    if (e instanceof CancelledError || job.cancelled) {
       policy.abandon(ticket);
       return false;
     }
     const current = policy.isCurrent(ticket);
     policy.fail(ticket, Date.now());
-    if (current && policy.enabled) {
+    if (current) {
       state.liveNotesFailed = true;
       setStatus('Live notes not updated, the previous notes are kept: ' + shorten(e.message, 120));
     }
@@ -1402,16 +1591,18 @@ async function runLiveNotes(job) {
   } finally {
     if (liveJob === job) liveJob = null;
     updateNotesHeader();
+    updateNotesControls();
   }
 }
 
-// After Stop: waits for an update in progress, then runs the final one when words were added since.
+// After Stop (the last chunks are transcribed): waits for an update in progress, then writes the final notes when
+// they are due (live notes on or notes by time there). True when either put new notes in the notes pane.
 async function finishLiveNotes(stopped) {
   let updated = false;
   if (liveJob) updated = await liveJob.promise;
-  const ticket = policy.tryBeginFinal(!!summaryJob, el.transcript.value);
+  const ticket = policy.tryBeginFinal(!!summaryJob, el.transcript.value, el.notes.value, normalizeStyle(el.style.value));
   if (!ticket) return updated;
-  if (!state.recording) setStatus(stopped + ' Writing the final notes...', true);
+  if (!state.recording) setStatus(stopped + ' Writing the final notes and summary...', true);
   return (await startLiveNotes(ticket)) || updated;
 }
 
@@ -1422,13 +1613,13 @@ function toggleLiveNotes() {
   updateLiveNotesUi();
   if (!policy.enabled) {
     cancelLiveNotes();
-    setStatus('Live notes off. Summarize still writes notes on the whole transcript.');
+    setStatus('Live notes off. Update notes now still adds notes while recording, and Summarize works when stopped.');
     return;
   }
   const every = intervalText(settings.intervalMinutes);
   setStatus(state.recording
-    ? 'Live notes on: the notes are updated every ' + every + ' while recording.'
-    : 'Live notes on: while recording, the notes are updated every ' + every + '.', !state.recording);
+    ? 'Live notes on: every ' + every + ', notes on what was said are added by time and the summary at the top is refreshed.'
+    : 'Live notes on: while recording, notes are added by time every ' + every + '; Stop writes the full summary.', !state.recording);
 }
 
 // ---------- Output ----------
@@ -1472,7 +1663,7 @@ function downloadMarkdown() {
     lengthMs: sessionElapsedMs(),
     transcript: el.transcript.value,
     notes: el.notes.value,
-    notesHeading: state.notesStyle
+    notesHeading: documentHeading(el.notes.value, state.notesStyle)
   });
   const name = exportFileName(date);
   const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
@@ -1569,6 +1760,7 @@ async function finishClear(mark) {
     state.notesStyle = CFG.defaultStyle;
     state.notesUpdatedAt = null;
     state.liveNotesFailed = false;
+    state.notesProblem = '';
     state.saveId = '';
     state.changeVersion = 0;
     state.savedVersion = 0;
@@ -1653,13 +1845,14 @@ el.transcript.addEventListener('input', () => {
 });
 el.notes.addEventListener('input', () => {
   updateNotesHeader();
+  updateNotesControls();
   markChanged();
 });
 el.style.addEventListener('change', () => {
   settings.style = normalizeStyle(el.style.value);
   saveSettings();
 });
-el.summarize.addEventListener('click', summarize);
+el.summarize.addEventListener('click', summarizeClick);
 el.liveNotes.addEventListener('click', toggleLiveNotes);
 el.interval.addEventListener('change', () => {
   settings.intervalMinutes = normalizeInterval(el.interval.value);
@@ -1698,7 +1891,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', persistNow);
 window.addEventListener('beforeunload', e => {
   persistNow();
-  if (state.recording || state.finishing || stopPromise || queue.length > 0) {
+  if (state.recording || state.finishing || stopPromise || queue.length > 0 || summaryJob || liveJob) {
     e.preventDefault();
     e.returnValue = '';
   }
@@ -1713,7 +1906,6 @@ const restored = restoreSession();
 updateUi();
 updateWords();
 updateNotesHeader();
-updateSummaryUi();
 updateLiveNotesUi();
 if (restored) el.transcript.scrollTop = el.transcript.scrollHeight;
 
@@ -1726,7 +1918,7 @@ if (isPhone) {
 if (!window.isSecureContext || !navigator.mediaDevices) {
   setStatus('Recording needs the https:// address of the remote. Open the address shown in the desktop app under Settings > Phone Remote.', true);
 } else if (restored) {
-  setStatus('Restored the transcript from before the page was reloaded. Press Start to continue it, or Clear to start a new one.', true);
+  setStatus('Restored your last session from ' + restored.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) + '. Clear starts a new one.', true);
 } else {
   setStatus(canShareTab ? 'Ready. Choose Microphone or Tab / system audio and press Start.' : 'Ready. Press Start to transcribe the microphone.', true);
 }
