@@ -120,6 +120,31 @@ public sealed class TextRanker
             .ToList();
     }
 
+    /// <summary>The distinct search words of a query (as <see cref="Rank"/> uses them).</summary>
+    public static IReadOnlyCollection<string> QueryTermsOf(string? query) => QueryTerms(query);
+
+    /// <summary>
+    /// Share (0..1) of the query words' coverage weight that <paramref name="words"/> contains, for
+    /// example the words of a file's name; weighted like <see cref="Coverage"/>, so a rare query word
+    /// in the name counts for more than a common one.
+    /// </summary>
+    public double WeightShare(IReadOnlyCollection<string>? queryTerms, IReadOnlySet<string>? words)
+    {
+        if (queryTerms == null || queryTerms.Count == 0 || words == null || words.Count == 0)
+            return 0;
+
+        double total = 0, matched = 0;
+        foreach (var term in queryTerms)
+        {
+            var weight = CoverageWeight(term);
+            total += weight;
+            if (words.Contains(term))
+                matched += weight;
+        }
+
+        return total > 0 ? Math.Min(1, matched / total) : 0;
+    }
+
     private double ScoreTerms(IReadOnlyCollection<string> terms, int index)
     {
         var counts = _termCounts[index];

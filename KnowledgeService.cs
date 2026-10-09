@@ -8,23 +8,25 @@ using System.Threading.Tasks;
 
 namespace VoiceChatbot;
 
-/// <summary>Knowledge folder status for the sidebar. Details lists unreadable files (tooltip).</summary>
+/// <summary>Knowledge folder status for the sidebar. Details explains unreadable and skipped files (tooltip).</summary>
 public sealed record KnowledgeStatus(bool IsIndexing, string Message, string Details = "");
 
 /// <summary>
 /// Keeps the knowledge folder index (Core/KnowledgeIndex) up to date and searchable. A reindex runs on
 /// the thread pool, reads only new or changed files with DocumentTextService, skips files over 25 MB
-/// and saves the index to %APPDATA%\VoiceChatbot\knowledge-index.json. Search can be called from any
-/// thread, also while a reindex runs; it uses the last published index, which is never changed again.
+/// and saves the index to %APPDATA%\VoiceChatbot\knowledge-index.json. Every file the scan sees is
+/// accounted for (indexed, unreadable, unsupported type, too large) for the status line and the Files
+/// list. BuildContext can be called from any thread, also while a reindex runs; it uses the last
+/// published index, which is never changed again.
 /// </summary>
 public sealed class KnowledgeService
 {
-    public const long MaxFileBytes = 25L * 1024 * 1024;
+    public const long MaxFileBytes = KnowledgeReport.MaxFileBytes;
     // A huge CSV or log is indexed on its first ~3 million characters only.
     private const int MaxIndexedCharsPerFile = 3_000_000;
     // Stop an accidental pick of a whole drive from scanning, reading and holding in memory forever.
-    private const int MaxFiles = 10_000;
-    private const int MaxTotalChunks = 50_000;
+    private const int MaxFiles = KnowledgeReport.MaxFiles;
+    private const int MaxTotalChunks = KnowledgeReport.MaxTotalChunks;
     private const int MaxUnreadableDetails = 10;
     // While a long first index runs, what is read so far becomes searchable this often.
     private static readonly TimeSpan PublishInterval = TimeSpan.FromSeconds(20);
@@ -39,16 +41,18 @@ public sealed class KnowledgeService
         "VoiceChatbot",
         "knowledge-index.json");
 
+    // The Files list keeps at most this many unsupported files; the counts cover all of them.
+    private const int MaxListedSkippedFiles = 5_000;
+
     private readonly DocumentTextService _extractor;
     private readonly string _indexPath;
     // One reindex at a time; a cancelled run finishes (and saves its progress) before the next starts.
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile KnowledgeIndex? _index;
     private volatile KnowledgeStatus _status = new(false, "");
+    // The last scan's files that are not in the index (unsupported, too large, not read yet), for the Files list.
+    private volatile ScanReport? _lastScan;
     private bool _savedIndexLoaded; // only used under _gate
-    private int _tooLargeCount;     // from the last scan, only used under _gate
-    private bool _scanTruncated;    // from the last scan, only used under _gate
-    private bool _indexFull;        // the last reindex hit MaxTotalChunks, only used under _gate
 
     public KnowledgeService(DocumentTextService extractor, string indexPath)
     {
@@ -70,39 +74,81 @@ public sealed class KnowledgeService
                SupportedExtensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase);
     }
 
+    // Office lock files and Explorer/Finder bookkeeping are not documents, so they are not even "skipped".
+    private static bool IsHousekeepingFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        return string.IsNullOrEmpty(name) ||
+               name.StartsWith("~$", StringComparison.Ordinal) ||
+               name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True when <paramref name="folder"/> is the indexed folder and has files (with text or not).</summary>
+    public bool HasFiles(string? folder)
+    {
+        var index = _index;
+        return index != null && KnowledgeIndex.SameFolder(index.Folder, folder) && index.FileCount > 0;
+    }
+
     /// <summary>
-    /// Best excerpts for a chat message from the index of <paramref name="folder"/>; empty when that
-    /// folder is not indexed (yet) or nothing in it is relevant.
+    /// What the model gets from <paramref name="folder"/> for a message (see <see cref="KnowledgeContext.Build"/>);
+    /// <see cref="KnowledgeContextResult.None"/> when that folder is not indexed (yet).
     /// </summary>
-    public IReadOnlyList<KnowledgeHit> Search(string? query, string? folder, int maxChunks)
+    public KnowledgeContextResult BuildContext(string? folder, string? query, string? followUp, int minExcerpts, int budgetTokens)
     {
         var index = _index;
         if (index == null || !KnowledgeIndex.SameFolder(index.Folder, folder))
-            return Array.Empty<KnowledgeHit>();
+            return KnowledgeContextResult.None;
 
-        return index.Search(query, KnowledgeIndex.ClampMaxChunks(maxChunks));
+        return KnowledgeContext.Build(index, query, followUp, KnowledgeIndex.ClampMaxChunks(minExcerpts), budgetTokens);
+    }
+
+    /// <summary>Every file the last scan of <paramref name="folder"/> saw, with what happened to it (the Files list).</summary>
+    public KnowledgeFileList GetFileList(string? folder)
+    {
+        var root = KnowledgeIndex.NormalizeFolder(folder);
+        var index = _index;
+        var scan = _lastScan;
+        if (index != null && !KnowledgeIndex.SameFolder(index.Folder, root))
+            index = null;
+        if (scan != null && !KnowledgeIndex.SameFolder(scan.Folder, root))
+            scan = null;
+
+        var others = scan == null
+            ? Enumerable.Empty<KnowledgeFileEntry>()
+            : scan.Skipped.Concat(scan.TooLarge).Concat(scan.Pending);
+        return new KnowledgeFileList(
+            root,
+            KnowledgeReport.BuildFileList(index, others),
+            UnlistedSkipped: scan == null ? 0 : Math.Max(0, scan.SkippedTotal - scan.Skipped.Count),
+            Scanned: scan != null);
     }
 
     /// <summary>
     /// Brings the index up to date with <paramref name="folder"/> on the thread pool. A different folder
     /// starts a new index. With <paramref name="retryFailed"/>, files that gave no text are read again.
-    /// Cancelling keeps (and saves) the files read so far. Errors are reported through the status.
+    /// Cancelling keeps (and saves) the files read so far and gives a Stopped result. Errors are
+    /// reported through the status and the result.
     /// </summary>
-    public Task ReindexAsync(string? folder, bool retryFailed, CancellationToken ct) =>
+    public Task<KnowledgeReindexResult> ReindexAsync(string? folder, bool retryFailed, CancellationToken ct) =>
         Task.Run(() => ReindexCoreAsync(folder, retryFailed, ct), ct);
 
-    private async Task ReindexCoreAsync(string? folder, bool retryFailed, CancellationToken ct)
+    private async Task<KnowledgeReindexResult> ReindexCoreAsync(string? folder, bool retryFailed, CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
+        var root = KnowledgeIndex.NormalizeFolder(folder);
+        var run = new RunCounts();
         KnowledgeIndex? working = null;
+        ScanReport? scan = null;
         var changed = false;
         try
         {
-            var root = KnowledgeIndex.NormalizeFolder(folder);
             if (root.Length == 0)
             {
                 Report(false, "Choose a folder with your documents.");
-                return;
+                return new KnowledgeReindexResult { Outcome = KnowledgeReindexOutcome.NoFolder };
             }
 
             if (!_savedIndexLoaded)
@@ -113,45 +159,61 @@ public sealed class KnowledgeService
             if (!Directory.Exists(root))
             {
                 Report(false, $"Folder not found: {root}");
-                return;
+                return new KnowledgeReindexResult { Outcome = KnowledgeReindexOutcome.FolderNotFound, Folder = root };
             }
 
             Report(true, "Scanning the folder...");
-            var files = ScanFolder(root, ct);
+            scan = ScanFolder(root, ct);
+            _lastScan = scan;
 
             var current = _index;
             var sameFolder = current != null && KnowledgeIndex.SameFolder(current.Folder, root);
             working = sameFolder ? current!.Clone() : new KnowledgeIndex(root);
             changed = !sameFolder;
 
-            var plan = working.Plan(files, retryFailed);
+            var plan = working.Plan(scan.Files, retryFailed);
+            run.ToRead = plan.ToRead.Count;
             foreach (var path in plan.Removed)
-                changed |= working.Remove(path);
+            {
+                if (working.Remove(path))
+                {
+                    changed = true;
+                    run.Removed++;
+                }
+            }
 
             var sincePublish = Stopwatch.StartNew();
-            var sinceProgress = Stopwatch.StartNew();
             var totalChunks = working.ChunkCount;
-            _indexFull = false;
+            var activeFile = 0;
             for (var i = 0; i < plan.ToRead.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 if (totalChunks >= MaxTotalChunks)
                 {
-                    _indexFull = true;
+                    run.IndexFull = true;
                     break;
                 }
 
                 var file = plan.ToRead[i];
-                if (i == 0 || sinceProgress.Elapsed >= ProgressInterval)
+                var number = i + 1;
+                var name = Path.GetFileName(file.Path);
+                activeFile = number;
+                Report(true, KnowledgeReport.FormatReadingProgress(number, plan.ToRead.Count, name));
+                // OCR and other slow readers say how far they are ("OCR page 2 of 8").
+                var progress = new InlineProgress(detail =>
                 {
-                    Report(true, $"Indexing {i + 1:N0} of {plan.ToRead.Count:N0}: {Path.GetFileName(file.Path)}");
-                    sinceProgress.Restart();
-                }
+                    if (activeFile == number)
+                        Report(true, KnowledgeReport.FormatReadingProgress(number, plan.ToRead.Count, name, detail));
+                });
 
-                var record = await ReadFileAsync(file, ct).ConfigureAwait(false);
+                var record = await ReadFileAsync(file, progress, ct).ConfigureAwait(false);
+                activeFile = 0;
                 totalChunks += record.Chunks.Count - (working.TryGetFile(file.Path, out var previous) ? previous.Chunks.Count : 0);
                 working.Upsert(record);
                 changed = true;
+                run.Read++;
+                if (record.Chunks.Count == 0)
+                    run.Failed++;
 
                 if (sincePublish.Elapsed >= PublishInterval)
                 {
@@ -160,11 +222,16 @@ public sealed class KnowledgeService
                 }
             }
 
+            if (run.IndexFull)
+                _lastScan = scan = scan with { Pending = PendingEntries(plan.ToRead.Skip(run.Read), "the index is full") };
+
             working.LastIndexedUtc = DateTime.UtcNow;
             Publish(working, save: changed);
-            Report(false, Describe(_index!), DescribeUnreadable(_index!));
+            var result = BuildResult(KnowledgeReindexOutcome.Completed, root, _index, scan, run);
+            Report(false, KnowledgeReport.FormatStatus(result, DateTime.Now), KnowledgeReport.FormatDetails(result, MaxUnreadableDetails));
+            return result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Keep what was read so far; the next reindex carries on from there.
             if (working != null && changed)
@@ -175,19 +242,71 @@ public sealed class KnowledgeService
             }
 
             var index = _index;
-            Report(false, index == null ? "Indexing stopped." : "Indexing stopped. " + Describe(index));
-            throw;
+            if (index != null && !KnowledgeIndex.SameFolder(index.Folder, root))
+                index = null;
+            if (scan != null && working != null)
+            {
+                var unread = working.Plan(scan.Files).ToRead;
+                _lastScan = scan with { Pending = PendingEntries(unread, "indexing stopped") };
+            }
+
+            var result = BuildResult(KnowledgeReindexOutcome.Stopped, root, index, scan, run);
+            Report(false, index == null ? "Indexing stopped." : "Indexing stopped. " + KnowledgeReport.FormatStatus(result, DateTime.Now),
+                KnowledgeReport.FormatDetails(result, MaxUnreadableDetails));
+            return result;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Knowledge indexing failed: {ex}");
             Report(false, $"Indexing failed: {ex.Message}");
+            return new KnowledgeReindexResult { Outcome = KnowledgeReindexOutcome.Failed, Folder = root, Error = ex.Message };
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    private sealed class RunCounts
+    {
+        public int ToRead;
+        public int Read;
+        public int Failed;
+        public int Removed;
+        public bool IndexFull;
+    }
+
+    private static KnowledgeReindexResult BuildResult(KnowledgeReindexOutcome outcome, string root, KnowledgeIndex? index,
+        ScanReport? scan, RunCounts run)
+    {
+        var unreadable = index == null
+            ? new List<KnowledgeFileEntry>()
+            : index.Files
+                .Where(f => f.Chunks.Count == 0)
+                .Select(f => new KnowledgeFileEntry(f.Path, KnowledgeFileState.Unreadable, 0, f.Size, f.Error ?? ""))
+                .ToList();
+
+        return new KnowledgeReindexResult
+        {
+            Outcome = outcome,
+            Folder = root,
+            IndexedFiles = index?.IndexedFileCount ?? 0,
+            Chunks = index?.ChunkCount ?? 0,
+            FilesToRead = run.ToRead,
+            FilesRead = run.Read,
+            FailedThisRun = run.Failed,
+            Removed = run.Removed,
+            Unreadable = unreadable,
+            Skipped = scan?.SkippedCounts ?? Array.Empty<KnowledgeExtensionCount>(),
+            TooLarge = scan?.TooLarge ?? Array.Empty<KnowledgeFileEntry>(),
+            ScanTruncated = scan?.Truncated ?? false,
+            IndexFull = run.IndexFull,
+            CheckedUtc = index?.LastIndexedUtc
+        };
+    }
+
+    private static IReadOnlyList<KnowledgeFileEntry> PendingEntries(IEnumerable<KnowledgeFileStamp> files, string reason) =>
+        files.Select(f => new KnowledgeFileEntry(f.Path, KnowledgeFileState.Pending, 0, f.Size, reason)).ToList();
 
     private void Publish(KnowledgeIndex working, bool save)
     {
@@ -240,11 +359,27 @@ public sealed class KnowledgeService
         }
     }
 
-    private List<KnowledgeFileStamp> ScanFolder(string root, CancellationToken ct)
+    /// <summary>What a folder scan found: the files to index, and the rest, which the Files list shows.</summary>
+    private sealed record ScanReport(
+        string Folder,
+        IReadOnlyList<KnowledgeFileStamp> Files,
+        IReadOnlyList<KnowledgeFileEntry> Skipped,
+        int SkippedTotal,
+        IReadOnlyList<KnowledgeExtensionCount> SkippedCounts,
+        IReadOnlyList<KnowledgeFileEntry> TooLarge,
+        bool Truncated)
+    {
+        public IReadOnlyList<KnowledgeFileEntry> Pending { get; init; } = Array.Empty<KnowledgeFileEntry>();
+    }
+
+    private ScanReport ScanFolder(string root, CancellationToken ct)
     {
         var files = new List<KnowledgeFileStamp>();
-        _tooLargeCount = 0;
-        _scanTruncated = false;
+        var skipped = new List<KnowledgeFileEntry>();
+        var skippedCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var skippedTotal = 0;
+        var tooLarge = new List<KnowledgeFileEntry>();
+        var truncated = false;
         var options = new EnumerationOptions
         {
             RecurseSubdirectories = true,
@@ -252,22 +387,40 @@ public sealed class KnowledgeService
             AttributesToSkip = FileAttributes.Hidden | FileAttributes.System
         };
 
-        foreach (var path in Directory.EnumerateFiles(root, "*", options))
+        var seen = 0;
+        var sinceProgress = Stopwatch.StartNew();
+        // FileInfo from the enumeration already has the size and write time: no extra disk access per file.
+        foreach (var info in new DirectoryInfo(root).EnumerateFiles("*", options))
         {
             ct.ThrowIfCancellationRequested();
-            if (!IsSupportedFile(path) || string.Equals(path, _indexPath, StringComparison.OrdinalIgnoreCase))
+            if (++seen % 50 == 0 && sinceProgress.Elapsed >= ProgressInterval)
+            {
+                Report(true, $"Scanning the folder... {seen:N0} files so far");
+                sinceProgress.Restart();
+            }
+
+            var path = info.FullName;
+            if (string.Equals(path, _indexPath, StringComparison.OrdinalIgnoreCase) || IsHousekeepingFile(path))
                 continue;
 
             try
             {
-                var info = new FileInfo(path);
-                if (info.Length > MaxFileBytes)
+                if (!IsSupportedFile(path))
                 {
-                    _tooLargeCount++;
+                    skippedTotal++;
+                    KnowledgeReport.AddToCounts(skippedCounts, path);
+                    if (skipped.Count < MaxListedSkippedFiles)
+                        skipped.Add(new KnowledgeFileEntry(path, KnowledgeFileState.Unsupported, 0, info.Length));
                     continue;
                 }
 
-                files.Add(new KnowledgeFileStamp(info.FullName, info.Length, info.LastWriteTimeUtc));
+                if (info.Length > MaxFileBytes)
+                {
+                    tooLarge.Add(new KnowledgeFileEntry(path, KnowledgeFileState.TooLarge, 0, info.Length));
+                    continue;
+                }
+
+                files.Add(new KnowledgeFileStamp(path, info.Length, info.LastWriteTimeUtc));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -276,21 +429,21 @@ public sealed class KnowledgeService
 
             if (files.Count >= MaxFiles)
             {
-                _scanTruncated = true;
+                truncated = true;
                 break;
             }
         }
 
-        return files;
+        return new ScanReport(root, files, skipped, skippedTotal, KnowledgeReport.SortCounts(skippedCounts), tooLarge, truncated);
     }
 
-    private async Task<KnowledgeFileRecord> ReadFileAsync(KnowledgeFileStamp file, CancellationToken ct)
+    private async Task<KnowledgeFileRecord> ReadFileAsync(KnowledgeFileStamp file, IProgress<string> progress, CancellationToken ct)
     {
         var record = new KnowledgeFileRecord { Path = file.Path, Size = file.Size, LastWriteUtc = file.LastWriteUtc };
         DocumentTextResult result;
         try
         {
-            result = await _extractor.ExtractAsync(file.Path, ct).ConfigureAwait(false);
+            result = await _extractor.ExtractAsync(file.Path, ct, progress).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -311,48 +464,14 @@ public sealed class KnowledgeService
         return record;
     }
 
-    private string Describe(KnowledgeIndex index)
+    // Calls back on the reporting thread right away (Progress<T> would post to the thread pool, out of order).
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
     {
-        var files = index.IndexedFileCount;
-        var chunks = index.ChunkCount;
-        var text = $"{files:N0} {(files == 1 ? "file" : "files")}, {chunks:N0} {(chunks == 1 ? "chunk" : "chunks")}";
-        if (index.LastIndexedUtc is DateTime indexed)
-            text += $" · last indexed {FormatWhen(indexed)}";
-
-        var unreadable = index.UnreadableFileCount;
-        if (unreadable > 0)
-            text += $" · {unreadable:N0} could not be read";
-        if (_tooLargeCount > 0)
-            text += $" · {_tooLargeCount:N0} over 25 MB skipped";
-        if (_scanTruncated)
-            text += $" · stopped at {MaxFiles:N0} files";
-        if (_indexFull)
-            text += $" · index full ({MaxTotalChunks:N0} chunks), some files left out";
-        return text;
-    }
-
-    private static string DescribeUnreadable(KnowledgeIndex index)
-    {
-        var failed = index.Files
-            .Where(f => f.Chunks.Count == 0)
-            .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (failed.Count == 0)
-            return "";
-
-        var lines = failed
-            .Take(MaxUnreadableDetails)
-            .Select(f => $"{KnowledgeIndex.DisplayName(f.Path, index.Folder)}: {f.Error ?? "No readable text."}")
-            .ToList();
-        if (failed.Count > MaxUnreadableDetails)
-            lines.Add($"...and {failed.Count - MaxUnreadableDetails:N0} more");
-        return "Could not read:\n" + string.Join("\n", lines) + "\n\nReindex tries these again.";
-    }
-
-    private static string FormatWhen(DateTime utc)
-    {
-        var local = utc.ToLocalTime();
-        return local.Date == DateTime.Today ? $"today {local:t}" : local.ToString("g");
+        public void Report(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                report(value);
+        }
     }
 
     private void Report(bool indexing, string message, string details = "")

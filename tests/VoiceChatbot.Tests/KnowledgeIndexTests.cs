@@ -309,6 +309,84 @@ public class KnowledgeIndexTests
         Assert.Equal(1, hits[0].ChunkIndex);
     }
 
+    // A pool rules file and a newsletter that says "pool" far more often.
+    private static KnowledgeIndex PoolIndex()
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(Record(P("HOA", "Pool rules.md"), "Open 9am to 8pm daily. Children under 12 need an adult. Hours may change in winter."));
+        index.Upsert(Record(P("Newsletter.md"), "Pool party! The pool is busy, pool toys are welcome and the pool hours will be posted at the pool."));
+        index.Upsert(Record(P("Lease.md"), "Rent is due on the first. Parking space 14 is assigned to the tenant."));
+        index.Upsert(Record(P("Car", "Manual.md"), "Change the engine oil every 5000 miles."));
+        return index;
+    }
+
+    [Fact]
+    public void Search_FileAndFolderNamesBoostTheirChunks()
+    {
+        var index = PoolIndex();
+
+        // Without the name boost the newsletter's many "pool"s win; with it, the file named for the topic does.
+        Assert.Equal(P("Newsletter.md"), index.Search("pool hours", nameBoost: 0)[0].Path);
+        var hits = index.Search("pool hours");
+        Assert.Equal(P("HOA", "Pool rules.md"), hits[0].Path);
+        Assert.True(hits[0].Score > index.Search("pool hours", nameBoost: 0).Single(h => h.Path == P("HOA", "Pool rules.md")).Score);
+        // Only the names that hold query words are boosted.
+        Assert.Equal(index.Search("pool hours", nameBoost: 0).Single(h => h.Path == P("Newsletter.md")).Score,
+            hits.Single(h => h.Path == P("Newsletter.md")).Score, 9);
+    }
+
+    [Fact]
+    public void Search_FollowUpRanksChunksThatAlsoMatchThePreviousQuestion()
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(Record(P("HOA", "Bylaws.md"), "Article 7. Each unit has two parking spaces. Guests use the visitor lot."));
+        index.Upsert(Record(P("Lease.md"), "Parking: space 14 is assigned. Parking parking parking."));
+        index.Upsert(Record(P("Car", "Manual.md"), "Change the engine oil every 5000 miles."));
+
+        Assert.Equal(P("Lease.md"), index.Search("and parking?")[0].Path);
+        Assert.Equal(P("HOA", "Bylaws.md"), index.Search("and parking?", followUpContext: "What do the HOA bylaws say about pets?")[0].Path);
+        // The previous question only ranks; it does not add chunks that miss the follow-up's own words.
+        Assert.DoesNotContain(index.Search("and parking?", followUpContext: "engine oil"), h => h.Path == P("Car", "Manual.md"));
+    }
+
+    [Fact]
+    public void Search_AMessageWithoutWordsOfItsOwnSearchesForThePreviousQuestion()
+    {
+        var index = SampleIndex();
+
+        Assert.Empty(index.Search("What about it?"));
+        Assert.Equal(P("Car", "Honda manual.md"), index.Search("What about it?", followUpContext: "How often do I change the engine oil?")[0].Path);
+        Assert.Equal(P("Car", "Honda manual.md"), index.Search("Tell me more", followUpContext: "engine oil")[0].Path);
+    }
+
+    [Theory]
+    [InlineData("and the parking rules?", true)]
+    [InlineData("what about it?", true)]
+    [InlineData("Tell me more", true)]
+    [InlineData("What does the HOA say about guest parking at the visitor lot?", false)]
+    [InlineData("How often should I change the engine oil in my car?", false)]
+    public void IsShortFollowUp(string text, bool expected) => Assert.Equal(expected, KnowledgeIndex.IsShortFollowUp(text));
+
+    [Fact]
+    public void Search_SummarizeAndFileTypeWordsAreFiller()
+    {
+        var index = SampleIndex();
+
+        Assert.Equal(P("Home", "Lease 2025.pdf"), index.Search("Summarize the lease pdf")[0].Path);
+        Assert.Empty(index.Search("summarize the pdf"));
+    }
+
+    [Fact]
+    public void FilesInOrder_SplitsReadableAndUnreadable()
+    {
+        var index = SampleIndex();
+        index.Upsert(new KnowledgeFileRecord { Path = P("Scan.pdf"), Error = "No readable text." });
+
+        Assert.Equal(new[] { P("Car", "Honda manual.md"), P("Home", "Lease 2025.pdf"), P("Recipes.txt") },
+            index.IndexedFilesInOrder().Select(f => f.Path));
+        Assert.Equal(new[] { P("Scan.pdf") }, index.UnreadableFilesInOrder().Select(f => f.Path));
+    }
+
     [Fact]
     public void Search_SeesChangesAfterUpsertAndRemove()
     {
@@ -342,23 +420,23 @@ public class KnowledgeIndexTests
     // ==================== Prompt text ====================
 
     [Fact]
-    public void FormatContextAndNote()
+    public void FormatExcerptsAndNote()
     {
         var index = SampleIndex();
         var hits = index.Search("engine oil tire pressure", maxChunks: 4);
 
-        var context = KnowledgeIndex.FormatContext(hits, Root);
-        var note = KnowledgeIndex.FormatNote(hits);
+        var context = KnowledgeContext.FormatExcerpts(hits, Root);
+        var note = KnowledgeContext.FormatNote(hits);
 
-        Assert.StartsWith(KnowledgeIndex.ContextHeading, context);
+        Assert.StartsWith("Excerpts found by keyword search", context);
         Assert.Contains("[1] " + Path.Combine("Car", "Honda manual.md"), context);
         Assert.Contains("5000 miles", context);
         Assert.Equal($"Using {hits.Count} excerpts from: Honda manual.md", note);
 
         var single = new[] { new KnowledgeHit(P("a.pdf"), 0, "text", 1, 1) };
-        Assert.Equal("Using 1 excerpt from: a.pdf", KnowledgeIndex.FormatNote(single));
-        Assert.Equal("", KnowledgeIndex.FormatNote(Array.Empty<KnowledgeHit>()));
-        Assert.Equal("", KnowledgeIndex.FormatContext(Array.Empty<KnowledgeHit>()));
+        Assert.Equal("Using 1 excerpt from: a.pdf", KnowledgeContext.FormatNote(single));
+        Assert.Equal("", KnowledgeContext.FormatNote(Array.Empty<KnowledgeHit>()));
+        Assert.Equal("", KnowledgeContext.FormatExcerpts(Array.Empty<KnowledgeHit>()));
     }
 
     [Fact]
@@ -371,7 +449,15 @@ public class KnowledgeIndexTests
             new KnowledgeHit(P("b.md"), 2, "z", 1, 1),
         };
 
-        Assert.Equal("Using 3 excerpts from: b.md, a.pdf", KnowledgeIndex.FormatNote(hits));
+        Assert.Equal("Using 3 excerpts from: b.md, a.pdf", KnowledgeContext.FormatNote(hits));
+    }
+
+    [Fact]
+    public void FormatNote_NamesAtMostThreeFiles()
+    {
+        var hits = Enumerable.Range(1, 5).Select(i => new KnowledgeHit(P($"f{i}.txt"), 0, "x", 10 - i, 1)).ToList();
+
+        Assert.Equal("Using 5 excerpts from: f1.txt, f2.txt, f3.txt and 2 more", KnowledgeContext.FormatNote(hits));
     }
 
     [Fact]

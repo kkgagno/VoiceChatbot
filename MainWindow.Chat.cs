@@ -867,7 +867,7 @@ public partial class MainWindow
                 }
             }
 
-            await AddKnowledgeContextAsync(messagesForModel, userText, ct);
+            await AddKnowledgeContextAsync(messagesForModel, userText, model, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);

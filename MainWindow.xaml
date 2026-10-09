@@ -600,7 +600,7 @@
                             <StackPanel>
                                 <ToggleButton x:Name="KnowledgeToggle" Content="Use my documents" IsChecked="False"
                                               Style="{StaticResource SwitchToggle}" Click="KnowledgeToggle_Click"
-                                              ToolTip="Search the folder for passages that match each message and send the best ones to the model"/>
+                                              ToolTip="Tell the model which documents are in the folder and send it the passages that match each message"/>
                                 <StackPanel Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Folder" Style="{StaticResource SectionLabel}"/>
                                     <Grid>
@@ -621,22 +621,27 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Excerpts per message" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock Text="Excerpts per message (at least)" Style="{StaticResource SectionLabel}"/>
                                     <TextBlock x:Name="KnowledgeMaxChunksValue" Grid.Column="1" Text="4" Style="{StaticResource SliderValue}"/>
                                 </Grid>
                                 <Slider x:Name="KnowledgeMaxChunksSlider" Minimum="1" Maximum="10" Value="4" SmallChange="1" LargeChange="2"
                                         IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,0,0,10"
                                         ValueChanged="KnowledgeMaxChunksSlider_ValueChanged"
-                                        ToolTip="Most excerpts (about 900 characters each) added to one message"/>
+                                        ToolTip="Fewest excerpts (about 900 characters each) added to a message about your documents. More are added while they match well and the model's context window has room, and a folder that fits is sent whole."/>
                                 <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
                                     <TextBlock x:Name="KnowledgeStatusText" Text="Off. Turn on to let answers use your documents."
                                                FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 </Border>
-                                <Button x:Name="KnowledgeReindexBtn" Content="Reindex" local:Ui.Icon="&#xE72C;"
-                                        Style="{StaticResource SecondaryButton}" Click="KnowledgeReindex_Click" Margin="0,0,0,8"
-                                        ToolTip="Read new and changed files now, and retry files that could not be read"/>
+                                <UniformGrid Columns="2" Margin="0,0,0,8">
+                                    <Button x:Name="KnowledgeReindexBtn" Content="Reindex" local:Ui.Icon="&#xE72C;"
+                                            Style="{StaticResource SecondaryButton}" Click="KnowledgeReindex_Click" Margin="0,0,3,0"
+                                            ToolTip="Read new and changed files now, and retry files that could not be read"/>
+                                    <Button x:Name="KnowledgeFilesBtn" Content="Files" local:Ui.Icon="&#xE8FD;"
+                                            Style="{StaticResource SecondaryButton}" Click="KnowledgeFiles_Click" Margin="3,0,0,0"
+                                            ToolTip="Every file in the folder: indexed, could not be read, or skipped and why"/>
+                                </UniformGrid>
                                 <TextBlock Style="{StaticResource FieldHint}"
-                                           Text="Reads PDF, Word (.docx), text, Markdown, CSV, JSON, XML and log files, including subfolders. Files over 25 MB are skipped. Only the few passages that match your message are sent with it, and the chat shows which files were used."/>
+                                           Text="Reads the documents in the folder and its subfolders; Files shows which were indexed, skipped or could not be read. Each message tells the model which documents you have and adds the passages that match it (the whole folder when it is small enough), and the chat shows which files were used."/>
                             </StackPanel>
                         </Expander>
 
