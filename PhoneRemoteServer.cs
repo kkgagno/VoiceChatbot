@@ -179,9 +179,9 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
             if (!IsAuthorized(request))
                 return Results.Unauthorized();
 
-            var transcript = await TranscribeRequestAsync(request, ct);
+            var (transcript, hint) = await TranscribeRequestAsync(request, ct);
             if (string.IsNullOrWhiteSpace(transcript))
-                return Results.Json(new { transcript = "", response = "I did not catch that.", audioUrl = "" });
+                return Results.Json(new { transcript = "", response = hint, audioUrl = "" });
 
             var response = await BuildResponseAsync(new PhoneRemoteUserInput(transcript), ct);
             return Results.Json(response);
@@ -192,10 +192,12 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
             if (!IsAuthorized(request))
                 return Results.Unauthorized();
 
-            var transcript = await TranscribeRequestAsync(request, ct);
+            var (transcript, hint) = await TranscribeRequestAsync(request, ct);
             return Results.Json(new
             {
-                transcript = transcript.Trim()
+                transcript = transcript.Trim(),
+                // Why nothing was heard, shown by the page instead of a bare "I did not catch that."
+                hint = string.IsNullOrWhiteSpace(transcript) ? hint : ""
             });
         });
 
@@ -254,18 +256,52 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
         });
     }
 
-    private async Task<string> TranscribeRequestAsync(HttpRequest request, CancellationToken ct)
+    private const string NotCaughtMessage = "I did not catch that.";
+
+    /// <summary>
+    /// Transcribes the "audio" file of a phone request. Returns the words, or "" with a short reason the
+    /// page shows: no audio arrived, the recording was silent or too quiet (the phone's microphone), or
+    /// transcription failed on the PC. Every request is logged with the recording's length and level.
+    /// </summary>
+    private async Task<(string Transcript, string Hint)> TranscribeRequestAsync(HttpRequest request, CancellationToken ct)
     {
         if (!request.HasFormContentType)
-            return "";
+        {
+            AppLog.Warn("Phone remote: a voice request arrived without audio (not a form upload).");
+            return ("", "No recording reached the PC. Try again; if it keeps happening, reload the page or app.");
+        }
 
         var form = await request.ReadFormAsync(ct);
         var audio = form.Files.GetFile("audio");
         if (audio == null || audio.Length == 0)
-            return "";
+        {
+            AppLog.Warn("Phone remote: a voice request arrived with an empty recording.");
+            return ("", "The recording was empty: the phone's microphone gave no audio. Check that this app or browser may use the microphone.");
+        }
 
-        await using var stream = audio.OpenReadStream();
-        return (await _transcribeAsync(stream, ct)).Trim();
+        byte[] bytes;
+        await using (var upload = audio.OpenReadStream())
+        using (var buffer = new MemoryStream())
+        {
+            await upload.CopyToAsync(buffer, ct);
+            bytes = buffer.ToArray();
+        }
+
+        var levels = WavLevels.Analyze(bytes);
+        string transcript;
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            transcript = (await _transcribeAsync(stream, ct)).Trim();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Error($"Phone remote: transcription failed ({levels}).", ex);
+            return ("", $"Transcription failed on the PC: {ex.GetBaseException().Message}");
+        }
+
+        AppLog.Info($"Phone remote: {levels} of audio, {(transcript.Length == 0 ? "no words" : $"{transcript.Length} characters")}.");
+        return transcript.Length > 0 ? (transcript, "") : ("", levels.ExplainEmptyTranscript() ?? NotCaughtMessage);
     }
 
     private async Task<PhoneRemoteUserInput> BuildUserInputFromFormAsync(HttpRequest request, CancellationToken ct)
@@ -1244,7 +1280,7 @@ async function sendChunks(autoPlay) {
     const first = await transcribe.json();
     const transcript = (first.transcript || '').trim();
     if (!transcript) {
-      add('sys', 'I did not catch that.');
+      add('sys', first.hint || 'I did not catch that.');
       return;
     }
 

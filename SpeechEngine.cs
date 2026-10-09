@@ -934,9 +934,14 @@ public partial class SpeechEngine : IDisposable
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
+            // A stuck NPU command must not hold the Ryzen lock forever: every later transcription (desktop,
+            // phone, transcriber) waits on it. Allow 1.5x the audio length, at least two minutes.
+            var audioSeconds = new FileInfo(inputPath).Length / 32000.0;
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(TimeSpan.FromSeconds(Math.Max(120, audioSeconds * 1.5)));
             try
             {
-                await process.WaitForExitAsync(ct).ConfigureAwait(false);
+                await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -951,6 +956,8 @@ public partial class SpeechEngine : IDisposable
                 {
                     // Already exited, or could not be stopped.
                 }
+                if (!ct.IsCancellationRequested)
+                    throw new TimeoutException("The AMD Ryzen AI Whisper command did not finish in time and was stopped.");
                 throw;
             }
 
