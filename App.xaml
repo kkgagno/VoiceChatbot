@@ -849,6 +849,8 @@
                  ============================================================ -->
             <Style x:Key="ExpanderHeaderToggle" TargetType="ToggleButton">
                 <Setter Property="Cursor" Value="Hand"/>
+                <!-- Without this the header text takes Windows' default (black) control text, unreadable in the dark theme. -->
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ToggleButton">
@@ -907,6 +909,7 @@
                                     BorderThickness="1" CornerRadius="12">
                                 <DockPanel>
                                     <ToggleButton DockPanel.Dock="Top" Style="{StaticResource ExpanderHeaderToggle}"
+                                                  Foreground="{TemplateBinding Foreground}"
                                                   IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                         <StackPanel Orientation="Horizontal">
                                             <Border Width="26" Height="26" CornerRadius="7" Background="{DynamicResource PrimarySoftBrush}"
