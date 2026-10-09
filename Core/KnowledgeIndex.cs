@@ -83,9 +83,10 @@ public sealed class KnowledgeIndex
     public const int FormatVersion = 1;
     /// <summary>
     /// The version of the PDF reader. Bump it when PDF text extraction changes, so PDFs indexed by an
-    /// older reader are read again on the next reindex (2: lines laid out by position, form values).
+    /// older reader are read again on the next reindex (2: lines laid out by position, form values;
+    /// 3: words of slightly turned lines kept apart, columns of running text read one after the other).
     /// </summary>
-    public const int PdfExtractorVersion = 2;
+    public const int PdfExtractorVersion = 3;
     public const int DefaultChunkChars = 900;
     public const int DefaultOverlapChars = 150;
     public const int DefaultMaxChunks = 4;

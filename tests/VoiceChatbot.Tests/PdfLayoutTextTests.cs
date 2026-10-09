@@ -89,7 +89,7 @@ public class PdfLayoutTextTests
     }
 
     [Fact]
-    public void TwoColumns_StayApartOnEachRow()
+    public void TwoColumnsOfText_ReadOneColumnAfterTheOther()
     {
         var left = new[] { "The left column starts here and", "continues on its second line", "and ends." };
         var right = new[] { "The right column begins and", "keeps going on its second line", "until it ends." };
@@ -98,15 +98,107 @@ public class PdfLayoutTextTests
             words.AddRange(Words(320, 700 - i * 12, right[i]));
         for (var i = 0; i < 3; i++)
             words.AddRange(Words(50, 700 - i * 12, left[i]));
+        words.AddRange(Words(50, 730, "Newsletter of the Maple Court homeowners association for the month of October"));
+        words.AddRange(Words(50, 650, "A footer line runs across both of the columns and closes the page right here"));
 
         var lines = PdfLayoutText.BuildLines(words);
 
         Assert.Equal(new[]
         {
-            "The left column starts here and | The right column begins and",
-            "continues on its second line | keeps going on its second line",
-            "and ends. | until it ends."
+            "Newsletter of the Maple Court homeowners association for the month of October",
+            "",
+            "The left column starts here and",
+            "continues on its second line",
+            "and ends.",
+            "",
+            "The right column begins and",
+            "keeps going on its second line",
+            "until it ends.",
+            "",
+            "A footer line runs across both of the columns and closes the page right here"
         }, lines);
+    }
+
+    [Fact]
+    public void ColumnsWhoseLinesDoNotLineUp_AreNotReadAcross()
+    {
+        // The right column starts 5 points lower, so no line of one column is on a row with the other's.
+        var left = new[] { "Pool hours are 9 am to 8 pm on", "weekdays and 10 am to 6 pm on", "weekends during the summer.", "Guests must be accompanied." };
+        var right = new[] { "Trash pickup is every Tuesday", "morning. Recycling is collected", "every other Thursday. Bulk items", "need a call to the office." };
+        var words = new List<PdfLayoutWord>();
+        for (var i = 0; i < 4; i++)
+        {
+            words.AddRange(Words(50, 700 - i * 12, left[i]));
+            words.AddRange(Words(320, 695 - i * 12, right[i]));
+        }
+
+        Assert.Equal(left.Concat(new[] { "" }).Concat(right), PdfLayoutText.BuildLines(words));
+    }
+
+    [Fact]
+    public void AmountsHalfARowOffTheirLabels_StayNextToThem()
+    {
+        var words = new List<PdfLayoutWord>();
+        var rows = new[] { ("9", "Total income", "114,423"), ("10", "Adjustments to income", "2,165"), ("11", "Adjusted gross income", "112,258") };
+        for (var i = 0; i < rows.Length; i++)
+        {
+            var y = 614 - i * 14;
+            words.AddRange(FormRow(y, rows[i].Item1, rows[i].Item2, "", withAmount: false));
+            var amount = rows[i].Item3;
+            words.Add(new PdfLayoutWord(amount, 570 - amount.Length * CharWidth, y - 6, 570, y - 6 + Cap));
+        }
+
+        Assert.Equal(new[]
+        {
+            "9 Total income ... 9", "114,423",
+            "10 Adjustments to income ... 10", "2,165",
+            "11 Adjusted gross income ... 11", "112,258"
+        }, PdfLayoutText.BuildLines(words));
+    }
+
+    [Fact]
+    public void TableWithLongTextCellsAndAnAmountColumn_StaysRows()
+    {
+        // Two cells of several words each look like columns of text; the amounts beside them make it a table.
+        var rows = new[]
+        {
+            ("Annual dental cleaning and routine exam visit", "covered twice per calendar year", "120.00"),
+            ("Emergency room visit after an accident at home", "copay applies before the deductible", "250.00"),
+            ("Prescription drugs from the preferred pharmacy list", "generic drugs cost the least", "15.00"),
+            ("Physical therapy sessions after a covered surgery", "limited to twenty visits a year", "40.00"),
+        };
+        var words = new List<PdfLayoutWord>();
+        for (var i = 0; i < rows.Length; i++)
+        {
+            words.AddRange(Words(40, 700 - i * 12, rows[i].Item1));
+            words.AddRange(Words(300, 700 - i * 12, rows[i].Item2));
+            words.Add(new PdfLayoutWord(rows[i].Item3, 570 - rows[i].Item3.Length * CharWidth, 700 - i * 12, 570, 700 - i * 12 + Cap));
+        }
+
+        Assert.Equal(rows.Select(r => $"{r.Item1} | {r.Item2} | {r.Item3}"), PdfLayoutText.BuildLines(words));
+    }
+
+    [Fact]
+    public void TableRows_StayRowsAcrossTheirGaps()
+    {
+        var words = new List<PdfLayoutWord>();
+        var rows = new[] { ("01/05", "Electric bill payment", "142.10"), ("01/09", "Transfer to savings account", "500.00"), ("01/12", "Grocery store", "87.45") };
+        for (var i = 0; i < rows.Length; i++)
+        {
+            words.AddRange(Words(50, 700 - i * 12, rows[i].Item1));
+            words.AddRange(Words(120, 700 - i * 12, rows[i].Item2));
+            words.AddRange(Words(500, 700 - i * 12, rows[i].Item3));
+        }
+        // A wrapped description: one row has text on one side of the gaps only.
+        words.AddRange(Words(120, 700 - 3 * 12, "reference 99812 online banking"));
+
+        Assert.Equal(new[]
+        {
+            "01/05 | Electric bill payment | 142.10",
+            "01/09 | Transfer to savings account | 500.00",
+            "01/12 | Grocery store | 87.45",
+            "reference 99812 online banking"
+        }, PdfLayoutText.BuildLines(words));
     }
 
     [Fact]
@@ -226,6 +318,56 @@ public class PdfLayoutTextTests
         Assert.Equal("Upside down\nnext", PdfLayoutText.BuildText(upsideDown));
     }
 
+    [Theory]
+    [InlineData(1, 0, PdfWordOrientation.Horizontal)]
+    [InlineData(1, 0.007, PdfWordOrientation.Horizontal)]      // a scan's text layer turned 0.4 degrees
+    [InlineData(1, -0.08, PdfWordOrientation.Horizontal)]      // 4.6 degrees the other way
+    [InlineData(1, 0.1, PdfWordOrientation.Other)]             // 5.7 degrees: really turned
+    [InlineData(1, 1, PdfWordOrientation.Other)]               // a diagonal stamp
+    [InlineData(0.01, -1, PdfWordOrientation.Rotate90)]        // reads top to bottom
+    [InlineData(-0.02, 1, PdfWordOrientation.Rotate270)]       // reads bottom to top
+    [InlineData(-1, -0.01, PdfWordOrientation.Rotate180)]
+    [InlineData(-1, 0.01, PdfWordOrientation.Rotate180)]
+    [InlineData(0, 0, PdfWordOrientation.Other)]
+    [InlineData(double.NaN, 1, PdfWordOrientation.Other)]
+    public void OrientationOf_SnapsANearlyStraightBaselineToItsAxis(double dx, double dy, PdfWordOrientation expected)
+    {
+        Assert.Equal(expected, PdfLayoutText.OrientationOf(dx, dy));
+    }
+
+    [Fact]
+    public void SlightlyTurnedLines_AreReadWithTheStraightOnesInOrder()
+    {
+        // Every second line of a scan's text layer has a tiny slope: the reader snaps it to Horizontal.
+        var words = new List<PdfLayoutWord>();
+        for (var i = 0; i < 4; i++)
+        {
+            var orientation = PdfLayoutText.OrientationOf(1, i % 2 == 1 ? 0.0035 : 0);
+            words.AddRange(Words(72, 700 - i * 16, $"{i + 1}. Clause number {i + 1} of the lease.").Select(w => w with { Orientation = orientation }));
+        }
+
+        Assert.Equal(new[]
+        {
+            "1. Clause number 1 of the lease.", "2. Clause number 2 of the lease.",
+            "3. Clause number 3 of the lease.", "4. Clause number 4 of the lease."
+        }, PdfLayoutText.BuildLines(words));
+    }
+
+    [Theory]
+    [InlineData(0, PdfWordOrientation.Horizontal)]
+    [InlineData(90, PdfWordOrientation.Rotate90)]
+    [InlineData(180, PdfWordOrientation.Rotate180)]
+    [InlineData(270, PdfWordOrientation.Rotate270)]
+    [InlineData(90 - 90, PdfWordOrientation.Horizontal)]       // a turned page whose field turns its text back upright (/MK /R 90)
+    [InlineData(0 - 90, PdfWordOrientation.Rotate270)]         // a field turned on an upright page
+    [InlineData(270 - 180, PdfWordOrientation.Rotate90)]
+    [InlineData(450, PdfWordOrientation.Rotate90)]
+    [InlineData(-450, PdfWordOrientation.Rotate270)]
+    public void OrientationOfTurn_WrapsAroundAQuarterAtATime(int clockwiseDegrees, PdfWordOrientation expected)
+    {
+        Assert.Equal(expected, PdfLayoutText.OrientationOfTurn(clockwiseDegrees));
+    }
+
     [Fact]
     public void LargePdf_IsLaidOutQuickly()
     {
@@ -245,8 +387,10 @@ public class PdfLayoutTextTests
         var text = pages.Select(PdfLayoutText.BuildText).ToList();
         watch.Stop();
 
-        Assert.Equal(60, text[199].Split('\n').Length);
-        Assert.StartsWith("page 199 row 0 left column words one two three four five | right column", text[199]);
+        // Two columns of text: the left one, a blank line, the right one.
+        Assert.Equal(121, text[199].Split('\n').Length);
+        Assert.StartsWith("page 199 row 0 left column words one two three four five\npage 199 row 1 left", text[199]);
+        Assert.Contains("page 199 row 59 left column words one two three four five\n\nright column words six seven eight nine ten 0\n", text[199]);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"took {watch.Elapsed}");
     }
 

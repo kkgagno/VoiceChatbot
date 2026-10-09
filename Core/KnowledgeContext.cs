@@ -235,9 +235,10 @@ public static class KnowledgeContext
     /// The catalog: the folder's name, the relative paths of its indexed files (at most
     /// <paramref name="maxNames"/>, then "...and N more"), files that could not be read, and what the
     /// model should do with the text that follows (which depends on <paramref name="mode"/>).
+    /// <paramref name="briefQuoteRule"/> asks for quotes with <see cref="QuoteTheSourceBrief"/>, for a small budget.
     /// </summary>
     public static string FormatCatalog(string folderName, IReadOnlyList<string> files, IReadOnlyList<string>? unreadable,
-        KnowledgeContextMode mode, int maxNames = MaxCatalogNames)
+        KnowledgeContextMode mode, int maxNames = MaxCatalogNames, bool briefQuoteRule = false)
     {
         files ??= Array.Empty<string>();
         var sb = new StringBuilder();
@@ -259,7 +260,7 @@ public static class KnowledgeContext
         }
 
         sb.Append($"These are the owner's documents in the knowledge folder '{folderName}' ({Plural(files.Count, "file")}).");
-        sb.AppendLine(" " + Instruction(mode));
+        sb.AppendLine(" " + Instruction(mode, briefQuoteRule));
 
         maxNames = Math.Max(0, maxNames);
         foreach (var name in files.Take(maxNames))
@@ -279,7 +280,7 @@ public static class KnowledgeContext
         return sb.ToString().TrimEnd();
     }
 
-    private static string Instruction(KnowledgeContextMode mode) => (mode switch
+    private static string Instruction(KnowledgeContextMode mode, bool briefQuoteRule) => (mode switch
     {
         KnowledgeContextMode.WholeFolder =>
             "The full text of every document is below. Use it when relevant and say which file you used; if it does not contain the answer, say so, and do not invent contents.",
@@ -289,7 +290,7 @@ public static class KnowledgeContext
             "No passage matched the message's words, so the beginning of each document is below. If they do not contain the answer, say which documents might, and do not invent contents.",
         _ =>
             "No passage matched this message, so only the file names are listed. If the question is about these documents, say which ones might have the answer, and do not invent their contents."
-    }) + " " + QuoteTheSource + " " + IgnoreWhenUnrelated;
+    }) + " " + (briefQuoteRule ? QuoteTheSourceBrief : QuoteTheSource) + " " + IgnoreWhenUnrelated;
 
     /// <summary>
     /// Added to every knowledge text with documents: a small model pairs a form's labels and amounts
@@ -300,6 +301,10 @@ public static class KnowledgeContext
         "Text from forms and tables can come out of order (in PDFs each line is one row of the page, with \" | \" between columns), " +
         "so if a label and its value are not clearly on the same line, say it is unclear instead of guessing. " +
         "If the owner says an answer is wrong, re-read the text and quote it rather than offering another guess.";
+
+    /// <summary><see cref="QuoteTheSource"/> in short, for a catalog that would not fit the budget with the full rule.</summary>
+    public const string QuoteTheSourceBrief =
+        "Quote the exact line and file a number, date or name came from; if a label and its value are unclear, say so.";
 
     /// <summary>Added to every knowledge text: the documents ride along on a guess, so the model must be free to ignore them.</summary>
     public const string IgnoreWhenUnrelated =
@@ -342,16 +347,20 @@ public static class KnowledgeContext
         return nameWords.Count > 0 && TextRanker.Tokenize(text).Any(nameWords.Contains);
     }
 
-    // Fewer names until the catalog takes at most MaxCatalogShare of the budget; "" when not even that fits.
+    // Fewer names until the catalog takes at most MaxCatalogShare of the budget, then the same with the
+    // short quoting rule (a small window); "" when not even that fits.
     private static string FitCatalog(string folderName, IReadOnlyList<string> files, IReadOnlyList<string> unreadable,
         KnowledgeContextMode mode, long budgetChars)
     {
         var limit = (long)(budgetChars * MaxCatalogShare);
-        foreach (var maxNames in new[] { MaxCatalogNames, 30, 15, 5, 0 })
+        foreach (var brief in new[] { false, true })
         {
-            var catalog = FormatCatalog(folderName, files, maxNames == 0 ? Array.Empty<string>() : unreadable, mode, maxNames);
-            if (catalog.Length <= limit)
-                return catalog;
+            foreach (var maxNames in new[] { MaxCatalogNames, 30, 15, 5, 0 })
+            {
+                var catalog = FormatCatalog(folderName, files, maxNames == 0 ? Array.Empty<string>() : unreadable, mode, maxNames, brief);
+                if (catalog.Length <= limit)
+                    return catalog;
+            }
         }
 
         return "";

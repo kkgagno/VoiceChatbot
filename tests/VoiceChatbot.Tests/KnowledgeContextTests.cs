@@ -125,6 +125,40 @@ public class KnowledgeContextTests
         Assert.Contains("adjusted gross income ... 11 | 112,258", result.Text);
     }
 
+    [Theory]
+    [InlineData("What is my adjusted gross income in the tax documents?")]
+    [InlineData("Which of my documents talk about the boat?")]
+    public void Build_InASmallWindow_StillSendsTheCatalogWithAShortQuotingRule(string question)
+    {
+        var index = new KnowledgeIndex(Root);
+        index.Upsert(Record(P("Taxes", "1040 2022.pdf"),
+            "11 Subtract line 10 from line 9. This is your adjusted gross income ... 11 | 112,258"));
+        index.Upsert(Record(P("Taxes", "1040 2021.pdf"),
+            "11 Subtract line 10 from line 9. This is your adjusted gross income ... 11 | 104,880"));
+        // A 4,096-token window with 2,048 tokens for the reply.
+        var budget = KnowledgeContext.BudgetTokens(4096, 2048, 20);
+        Assert.InRange(budget, 550, 650);
+
+        var result = KnowledgeContext.Build(index, question, null, 4, budget);
+
+        Assert.NotEqual(KnowledgeContextMode.None, result.Mode);
+        Assert.StartsWith(KnowledgeContext.ContextHeading, result.Text);
+        Assert.Contains("do not invent", result.Text);
+        Assert.Contains(KnowledgeContext.QuoteTheSourceBrief, result.Text);
+        Assert.Contains(KnowledgeContext.IgnoreWhenUnrelated, result.Text);
+        Assert.Contains("1040 2022.pdf", result.Text);
+        Assert.True(KnowledgeContext.EstimateTokens(result.Text) <= budget);
+    }
+
+    [Fact]
+    public void Build_WithRoomToSpare_UsesTheFullQuotingRule()
+    {
+        var result = KnowledgeContext.Build(SmallIndex(), "Who is my insurance with?", null, 4, 5000);
+
+        Assert.Contains(KnowledgeContext.QuoteTheSource, result.Text);
+        Assert.DoesNotContain(KnowledgeContext.QuoteTheSourceBrief, result.Text);
+    }
+
     [Fact]
     public void FormatCatalog_CapsTheListAndCountsTheRest()
     {

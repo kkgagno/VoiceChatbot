@@ -66,9 +66,10 @@ internal sealed class PdfPageText
         IEnumerable<Word> words;
         try
         {
-            // Spaces only separate words, which the extractor finds by distance; leaving them out is faster.
-            var letters = page.Letters.Where(l => !string.IsNullOrWhiteSpace(l.Value)).ToList();
-            words = WordExtractor.GetWords(letters).ToList();
+            // With the spaces: a space letter keeps the words on either side of it apart, which matters
+            // on a slightly turned line (the extractor then allows wider gaps) and for text drawn twice.
+            // Space-only words are dropped below.
+            words = WordExtractor.GetWords(page.Letters).ToList();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -88,33 +89,52 @@ internal sealed class PdfPageText
         var result = new List<PdfLayoutWord>();
         foreach (var word in words)
         {
-            var text = WordText(word);
+            var (dx, dy) = BaselineDirection(word);
+            var text = WordText(word, dx, dy);
             if (string.IsNullOrWhiteSpace(text))
                 continue;
+            // A line turned a little (a crooked scan's OCR layer) is read with the straight lines around it.
+            var orientation = word.TextOrientation == TextOrientation.Other
+                ? PdfLayoutText.OrientationOf(dx, dy)
+                : Orientation(word.TextOrientation);
             var (left, bottom, right, top) = Bounds(word.BoundingBox);
-            result.Add(new PdfLayoutWord(text, left, bottom, right, top, Orientation(word.TextOrientation)));
+            result.Add(new PdfLayoutWord(text, left, bottom, right, top, orientation));
         }
 
         return result;
     }
 
+    // The way a word's baseline runs: the sum of its letters' baselines (letters without width: its orientation).
+    private static (double Dx, double Dy) BaselineDirection(Word word)
+    {
+        double dx = 0, dy = 0;
+        foreach (var letter in word.Letters ?? (IReadOnlyList<Letter>)Array.Empty<Letter>())
+        {
+            dx += letter.EndBaseLine.X - letter.StartBaseLine.X;
+            dy += letter.EndBaseLine.Y - letter.StartBaseLine.Y;
+        }
+
+        if (dx != 0 || dy != 0)
+            return (dx, dy);
+        return word.TextOrientation switch
+        {
+            TextOrientation.Horizontal => (1, 0),
+            TextOrientation.Rotate180 => (-1, 0),
+            TextOrientation.Rotate90 => (0, -1),
+            TextOrientation.Rotate270 => (0, 1),
+            _ => (0, 0)
+        };
+    }
+
     // The nearest-neighbour extractor does not sort a word's letters, so a word whose letters the PDF
-    // draws out of order would read scrambled: put them in reading order along the word.
-    private static string WordText(Word word)
+    // draws out of order would read scrambled: put them in reading order along the word's baseline.
+    private static string WordText(Word word, double dx, double dy)
     {
         var letters = word.Letters;
-        if (letters == null || letters.Count < 2)
+        if (letters == null || letters.Count < 2 || (dx == 0 && dy == 0))
             return word.Text ?? "";
 
-        IEnumerable<Letter> ordered = word.TextOrientation switch
-        {
-            TextOrientation.Horizontal => letters.OrderBy(l => l.StartBaseLine.X),
-            TextOrientation.Rotate180 => letters.OrderByDescending(l => l.StartBaseLine.X),
-            TextOrientation.Rotate90 => letters.OrderByDescending(l => l.StartBaseLine.Y),
-            TextOrientation.Rotate270 => letters.OrderBy(l => l.StartBaseLine.Y),
-            _ => letters
-        };
-        return string.Concat(ordered.Select(l => l.Value));
+        return string.Concat(letters.OrderBy(l => l.StartBaseLine.X * dx + l.StartBaseLine.Y * dy).Select(l => l.Value));
     }
 
     private static PdfWordOrientation Orientation(TextOrientation orientation) => orientation switch
@@ -136,11 +156,14 @@ internal sealed class PdfPageText
 
     // ==================== Form fields ====================
 
+    // Only whether the document has a form: PdfPig's own form reader (TryGetForm) follows a broken field
+    // tree that lists a field as its own kid until the stack overflows, which no catch can stop. The
+    // values come from the pages' widget annotations instead, read with a depth limit.
     private bool HasFormFields()
     {
         try
         {
-            return _document.TryGetForm(out var form) && form?.Fields.Count > 0;
+            return _document.Structure.Catalog.CatalogDictionary.ContainsKey(NameToken.AcroForm);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -158,14 +181,6 @@ internal sealed class PdfPageText
     private IReadOnlyList<PdfLayoutWord> GetFormValues(Page page)
     {
         var values = new List<PdfLayoutWord>();
-        // A turned page turns its fields' text with it, like its own text.
-        var orientation = page.Rotation.Value switch
-        {
-            90 => PdfWordOrientation.Rotate90,
-            180 => PdfWordOrientation.Rotate180,
-            270 => PdfWordOrientation.Rotate270,
-            _ => PdfWordOrientation.Horizontal
-        };
         try
         {
             foreach (var annotation in page.GetAnnotations())
@@ -178,6 +193,9 @@ internal sealed class PdfPageText
                 if (string.IsNullOrWhiteSpace(value))
                     continue;
 
+                // A turned page turns its fields' text with it, like its own text, unless the field
+                // turns it back (/MK /R, as on a sideways scan made fillable after rotating it upright).
+                var orientation = PdfLayoutText.OrientationOfTurn(page.Rotation.Value - FieldTurn(annotation.AnnotationDictionary));
                 var (left, bottom, right, top) = Bounds(annotation.Rectangle);
                 values.Add(new PdfLayoutWord(value, left, bottom, right, top, orientation));
             }
@@ -231,6 +249,13 @@ internal sealed class PdfPageText
                 return null;
         }
     }
+
+    // How far a widget turns its text counter-clockwise on the page (/MK /R), in degrees.
+    private int FieldTurn(DictionaryToken widget) =>
+        widget.TryGet(NameToken.Mk, out var mk) && Resolve(mk) is DictionaryToken appearance &&
+        appearance.TryGet(NameToken.R, out var r) && Resolve(r) is NumericToken degrees
+            ? degrees.Int
+            : 0;
 
     // A choice field's value is the option's export value; show the option's name when it has one.
     private string DisplayName(string exportValue, IToken? options)
