@@ -44,6 +44,8 @@ You need at least one chat backend.
 5. Set the URL to the server's `/v1` endpoint, for example `http://192.168.1.50:8080/v1`.
 6. Click **Refresh Models**.
 
+**Context window.** The app asks the server how many tokens one request can use and plans the chat history to fit: llama.cpp's per-slot `n_ctx` (from `/props`, or `/slots`), vLLM's `max_model_len` or LM Studio's loaded context length. The model's training context (`n_ctx_train`) is never used, and nothing is guessed from the model name for a local or self-hosted server. The line under **Context window** (Chat Backend) shows the value in use and where it came from, for example `llama.cpp server: 16,384 tokens per request (detected)`. On llama.cpp the window is set with `-c` / `--ctx-size` on `llama-server`; with `-np` parallel slots each request gets one slot's share. The value is checked again every five minutes, after **Refresh Models** and when the URL or model changes, so a restarted server with a new `-c` is picked up without restarting the app. When the server reports nothing, the **Context window** box is used. If the server still rejects a request as too long, the app reads the window again, leaves out older messages and sends it once more; if that fails too, it tells you the server's size. With Ollama the box is sent as `num_ctx`, capped at the model's maximum.
+
 The server controls and Hermes commands expect model batch files in `C:\llama.cpp` on the SSH host. The desktop model dropdown discovers files named `start-*.bat`.
 
 ### Tools and formatting

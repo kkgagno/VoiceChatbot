@@ -180,6 +180,8 @@ public partial class MainWindow
             // Web text in this turn (the forced search or a web tool result) can carry instructions aimed
             // at the model; it must not be able to plant memories that every later conversation loads.
             var webContentInTurn = skipWebSearchTool;
+            // A round the server rejects as too long for its context window is sent once more, shorter.
+            var overflowRetried = false;
             ChatTurnResult turn;
 
             for (var round = 0; ; round++)
@@ -212,6 +214,20 @@ public partial class MainWindow
                 {
                     turn = await _ollama.ChatStreamWithToolsAsync(model, working, toolSystemPrompt, temperature,
                         maxTokens, contextTokens, offerTools ? roundTools : null, onToken, ct);
+                }
+                catch (ContextOverflowException overflow) when (!overflowRetried && streamed.Length == 0)
+                {
+                    overflowRetried = true;
+                    var refit = await RefitAfterContextOverflowAsync(model, overflow, working, toolSystemPrompt, modelUserText,
+                        contextTokens, maxTokens, toolTurn: true, ct);
+                    if (refit is null)
+                        throw;
+
+                    contextTokens = refit.ContextTokens;
+                    maxTokens = refit.MaxTokens;
+                    AddSystemMessage(DescribeContextRefit(refit));
+                    round--; // The same round again.
+                    continue;
                 }
                 catch (ToolsNotSupportedException ex)
                 {
@@ -323,19 +339,25 @@ public partial class MainWindow
     /// request fits the context budget again; the current question and this turn's tool calls and
     /// results always stay together (a tool result without its call breaks the request).
     /// </summary>
-    private static void TrimToolTurnToContextBudget(List<ChatMessage> working, string systemPrompt, int contextTokens, int maxTokens)
+    /// <returns>How many messages were left out.</returns>
+    private static int TrimToolTurnToContextBudget(List<ChatMessage> working, string systemPrompt, int contextTokens, int maxTokens,
+        double estimateScale = 1.0)
     {
         if (contextTokens <= 0)
-            return;
+            return 0;
 
-        var budget = Math.Max(4096, contextTokens - maxTokens - ContextSafetyTokens);
+        var budget = TokenBudget.PromptBudget(contextTokens, maxTokens, estimateScale);
         var currentQuestion = working.FindLastIndex(m =>
             m.Role.Equals("user", StringComparison.OrdinalIgnoreCase) && !m.HasToolData());
+        var dropped = 0;
         while (currentQuestion > 0 && EstimatePromptTokens(working, systemPrompt) > budget)
         {
             working.RemoveAt(0);
             currentQuestion--;
+            dropped++;
         }
+
+        return dropped;
     }
 
     private void MoveAssistantBubbleToEnd(AssistantMessageUi assistantMessage)

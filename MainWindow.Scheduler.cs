@@ -263,7 +263,23 @@ public partial class MainWindow
         var contextTokens = await GetContextTokensForRequestAsync(model, ct);
         maxTokens = GetMaxTokensForRequest(prompt, contextTokens);
         TrimMessagesToContextBudget(messages, systemPrompt, contextTokens, maxTokens);
-        var response = await _ollama.ChatAsync(model, messages, systemPrompt, temperature, maxTokens, ct, contextTokens);
+        string response;
+        try
+        {
+            response = await _ollama.ChatAsync(model, messages, systemPrompt, temperature, maxTokens, ct, contextTokens);
+        }
+        catch (ContextOverflowException overflow)
+        {
+            // Too long for the server's window: detect it again and send once more, shorter.
+            var refit = await RefitAfterContextOverflowAsync(model, overflow, messages, systemPrompt, prompt,
+                contextTokens, maxTokens, toolTurn: false, ct);
+            if (refit is null)
+                throw new InvalidOperationException(DescribeContextOverflow(overflow, _lastContextWindow), overflow);
+
+            contextTokens = refit.ContextTokens;
+            maxTokens = refit.MaxTokens;
+            response = await _ollama.ChatAsync(model, messages, systemPrompt, temperature, maxTokens, ct, contextTokens);
+        }
         response = await CompleteCodeArtifactIfNeededAsync(
             response,
             prompt,
