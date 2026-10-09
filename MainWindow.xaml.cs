@@ -656,8 +656,12 @@ public partial class MainWindow : Window
         _speech.KokoroRemoteUrl = _settings.KokoroRemoteUrl;
         _speech.KokoroMode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
         _speech.TtsBackendUsed += backend => Dispatcher.BeginInvoke(() => UpdateTtsStatus(backend, ok: true));
+        // A remote failure starts the background check, which switches back to the remote host once it answers.
+        _speech.RemoteKokoroFailed += _ => Dispatcher.BeginInvoke(() => StartKokoroAutoCheck(TimeSpan.FromSeconds(5), restart: false));
 
         _speech.Initialize();
+        // Check the remote Kokoro host now, like the Test button, instead of waiting for the first reply to find out.
+        StartKokoroAutoCheck(TimeSpan.Zero);
 
         // Show any init errors
         if (!string.IsNullOrEmpty(_speech.InitError))
@@ -817,6 +821,8 @@ public partial class MainWindow : Window
             _settings.KokoroRemoteUrl = KokoroHostBox.Text.Trim();
             _speech.KokoroRemoteUrl = _settings.KokoroRemoteUrl;
             _speech.ResetRemoteKokoroBackoff();
+            // Check the new host once typing pauses.
+            StartKokoroAutoCheck(TimeSpan.FromSeconds(1.5));
             UpdateKokoroHint();
         };
 

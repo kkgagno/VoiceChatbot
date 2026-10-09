@@ -116,6 +116,8 @@ public partial class SpeechEngine : IDisposable
     public string LastTranscriptionBackendUsed { get; private set; } = "Whisper.net";
     public string LastTtsBackendUsed { get; private set; } = "";
     public event Action<string>? TtsBackendUsed;
+    /// <summary>Raised (on a speech thread) when the remote Kokoro host fails and Auto mode falls back to local Kokoro.</summary>
+    public event Action<string>? RemoteKokoroFailed;
     /// <summary>Raised once when the Ryzen AI command does not exist on this PC; the engine has already switched to Whisper.net.</summary>
     public event Action<string>? RyzenTranscriberUnavailable;
 
@@ -1236,7 +1238,10 @@ public partial class SpeechEngine : IDisposable
         _remoteKokoroFailedUrl = remoteBase;
         _remoteKokoroRetryAfterUtc = DateTime.UtcNow.AddSeconds(60);
         if (firstFailure)
+        {
             Log?.Invoke($"[TTS] Remote Kokoro at {remoteBase} failed ({reason}).{(KokoroEndpoint.NormalizeMode(KokoroMode) == KokoroEndpoint.ModeAuto ? " Using local Kokoro for now." : "")}");
+            try { RemoteKokoroFailed?.Invoke(reason); } catch { }
+        }
     }
 
     /// <summary>Clears the remote back-off so the next utterance retries the remote host immediately.</summary>
@@ -1279,7 +1284,13 @@ public partial class SpeechEngine : IDisposable
         using var response = KokoroEndpoint.Http.PostAsync(KokoroEndpoint.SpeechUrl(remoteBase), content).GetAwaiter().GetResult();
 
         if (!response.IsSuccessStatusCode)
-            return false;
+        {
+            // Say why (a wrong voice name gives HTTP 400 with a reason), so the log explains the fallback.
+            var body = "";
+            try { body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult(); } catch { }
+            body = body.ReplaceLineEndings(" ").Trim();
+            throw new InvalidOperationException($"HTTP {(int)response.StatusCode}{(body.Length > 0 ? ": " + body[..Math.Min(body.Length, 200)] : "")}");
+        }
 
         var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
         var audioBytes = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();

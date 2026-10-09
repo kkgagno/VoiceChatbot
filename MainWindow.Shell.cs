@@ -15,6 +15,12 @@ namespace VoiceChatbot;
 public partial class MainWindow
 {
     private bool _kokoroTestRunning;
+    // The background check of the remote Kokoro host (startup, host or mode change, after a failure); null when idle.
+    private System.Threading.CancellationTokenSource? _kokoroCheckCts;
+    // Waits between background checks while the host does not answer: quick at first (Wi-Fi coming up,
+    // the Kokoro server still starting), then once a minute.
+    private static readonly int[] KokoroCheckRetrySeconds = { 5, 10, 20, 30 };
+    private const int KokoroCheckSteadySeconds = 60;
 
     // ==================== Kokoro ====================
 
@@ -44,7 +50,92 @@ public partial class MainWindow
         _settings.KokoroMode = GetSelectedKokoroMode();
         _speech.KokoroMode = _settings.KokoroMode;
         _speech.ResetRemoteKokoroBackoff();
+        StartKokoroAutoCheck(TimeSpan.Zero);
         UpdateKokoroHint();
+    }
+
+    /// <summary>
+    /// Checks the remote Kokoro host in the background, the way the Test button does, and keeps checking
+    /// until it answers. When it answers, the remote back-off is cleared (the next reply uses it right
+    /// away), the status turns green and the host's voice list is loaded. Does nothing for Local only or
+    /// without a host. <paramref name="restart"/> false leaves a check that is already running alone.
+    /// UI thread.
+    /// </summary>
+    private void StartKokoroAutoCheck(TimeSpan delay, bool restart = true)
+    {
+        if (_settings == null || _speech == null)
+            return;
+        if (!restart && _kokoroCheckCts != null)
+            return;
+
+        _kokoroCheckCts?.Cancel();
+        _kokoroCheckCts = null;
+
+        var mode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
+        var host = _settings.KokoroRemoteUrl ?? "";
+        if (mode == KokoroEndpoint.ModeLocalOnly || KokoroEndpoint.NormalizeBaseUrl(host).Length == 0)
+            return;
+
+        var cts = new System.Threading.CancellationTokenSource();
+        _kokoroCheckCts = cts;
+        _ = RunKokoroAutoCheckAsync(host, mode, delay, cts);
+    }
+
+    private async Task RunKokoroAutoCheckAsync(string host, string mode, TimeSpan delay, System.Threading.CancellationTokenSource cts)
+    {
+        var ct = cts.Token;
+        var authority = new Uri(KokoroEndpoint.NormalizeBaseUrl(host)).Authority;
+        try
+        {
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, ct);
+
+            for (var attempt = 0; !ct.IsCancellationRequested; attempt++)
+            {
+                if (attempt == 0 && string.IsNullOrEmpty(_speech.LastTtsBackendUsed))
+                {
+                    TtsStatusText.Text = $"Kokoro: checking {authority}...";
+                    TtsStatusText.Foreground = FindResource("TextSecondaryBrush") as Brush;
+                }
+
+                var result = await KokoroEndpoint.ProbeAsync(host, ct);
+                if (ct.IsCancellationRequested)
+                    return;
+
+                if (result.Ok)
+                {
+                    _speech.ResetRemoteKokoroBackoff();
+                    UpdateTtsStatus($"Kokoro: {authority} ready", ok: true);
+                    if (!_kokoroTestRunning && result.Voices.Count > 0)
+                        ReplaceVoiceList(result.Voices);
+                    AppLog.Info($"Kokoro: {authority} answered ({result.Message}){(attempt > 0 ? $" after {attempt + 1} checks" : "")}.");
+                    return;
+                }
+
+                if (attempt == 0)
+                    AppLog.Warn($"Kokoro: {authority} did not answer ({result.Message}); checking again in the background.");
+                UpdateTtsStatus(mode == KokoroEndpoint.ModeRemoteOnly
+                    ? $"Kokoro: {authority} not answering - speech is silent until it does (retrying)"
+                    : $"Kokoro: {authority} not answering - local voice for now (retrying)", ok: false);
+
+                var wait = attempt < KokoroCheckRetrySeconds.Length ? KokoroCheckRetrySeconds[attempt] : KokoroCheckSteadySeconds;
+                await Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Replaced by a newer check, or the window is closing.
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Kokoro: the background check failed.", ex);
+        }
+        finally
+        {
+            if (ReferenceEquals(_kokoroCheckCts, cts))
+                _kokoroCheckCts = null;
+            cts.Dispose();
+        }
     }
 
     private void UpdateKokoroHint()
@@ -80,7 +171,7 @@ public partial class MainWindow
         {
             var target = mode == KokoroEndpoint.ModeLocalOnly || baseUrl.Length == 0
                 ? "Kokoro: local"
-                : $"Kokoro: {new Uri(baseUrl).Authority}{(mode == KokoroEndpoint.ModeAuto ? " (local fallback)" : "")}";
+                : $"Kokoro: {new Uri(baseUrl).Authority}{(mode == KokoroEndpoint.ModeAuto ? " (not checked yet)" : "")}";
             TtsStatusText.Text = target;
             TtsStatusText.Foreground = FindResource("TextSecondaryBrush") as Brush;
             TtsStatusDot.Fill = muted;
