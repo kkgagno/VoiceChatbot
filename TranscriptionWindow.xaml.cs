@@ -1569,6 +1569,13 @@ public partial class TranscriptionWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         // Esc is deliberately not handled: it never stops recording, clears or closes anything.
+        if (e.Key == Key.F1)
+        {
+            HelpWindow.Open(HelpContent.LiveTranscriberId, this);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control)
             return;
 

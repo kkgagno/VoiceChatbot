@@ -93,6 +93,7 @@ public partial class MainWindow : Window
                 TranscriptionWindow.TranscriptsFolder));
 
         WireMessageInput();
+        HelpWindow.RevealSidebarSection = RevealSidebarSection;
         Loaded += MainWindow_Loaded;
         SizeChanged += (_, _) => UpdateChatBubbleWidths();
     }

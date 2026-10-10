@@ -413,7 +413,12 @@ public partial class MainWindow
     {
         var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
 
-        if (ctrl && e.Key == Key.B)
+        if (e.Key == Key.F1)
+        {
+            OpenHelp(ContextHelpTopicId(e.OriginalSource as DependencyObject));
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.B)
         {
             SetSidebarVisible(SidebarPanel.Visibility != Visibility.Visible);
             e.Handled = true;

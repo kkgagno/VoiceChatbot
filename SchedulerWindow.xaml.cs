@@ -90,6 +90,15 @@ public partial class SchedulerWindow : Window
 
     private bool IsEdited(string field) => _editedFields.Contains(field);
 
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.F1)
+            return;
+
+        HelpWindow.Open(HelpContent.SchedulerId, this);
+        e.Handled = true;
+    }
+
     private void NewTask_Click(object sender, RoutedEventArgs e) => CreateTask(select: true);
 
     private void DeleteTask_Click(object sender, RoutedEventArgs e)

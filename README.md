@@ -17,6 +17,14 @@ Mini does not have:
 - **Face Presence**: no camera, face profiles or identity gating; voice input is always allowed.
 - **Model Server Control**: no Hermes SSH commands and no buttons or commands that start, stop or switch models. Start your model server yourself; Mini connects to it.
 
+## Help inside the app
+
+Click **Help** in the top bar (or press **F1**) to open the Help window. It walks through every sidebar section and top-bar control in plain language, with **Getting started**, **What you need** (how to install Ollama and pull a model, or point Mini at llama.cpp, LM Studio or another OpenAI-compatible server; Kokoro; Whisper), the Live Transcriber, the scheduler, the phone remote, and **Troubleshooting** (where the logs are and the common problems). Type in its search box to find a topic, and use **Next** to go through them in order.
+
+- **F1** inside a settings section opens the topic for that section, and the topic's **Show this section** link opens that section in the sidebar. F1 also works in the Live Transcriber and the Scheduler.
+- New chats show a **New here? Open Help** link under the suggestions.
+- The help text lives in `Core/HelpContent.cs` (topics with paragraphs, lists and tips; `**bold**` for labels, `` `code` `` for things to type). Its unit tests check that every sidebar section has a topic and that links between topics resolve.
+
 ## Download and install
 
 Download the latest `VoiceChatbotMini-Setup-*-win-x64.exe` from the GitHub release named **Voice Chatbot Mini** and run it.
@@ -124,7 +132,7 @@ Optional transcription tools:
 
 ### Kokoro speech output
 
-Kokoro is optional. Without it, other available Windows speech paths may still work.
+Kokoro is optional. Without it (no local install and no remote Kokoro host), answers are shown as text but not spoken.
 
 To install local Kokoro:
 
@@ -307,16 +315,17 @@ These tools can be installed with WinGet where packages are available.
 
 | Shortcut | Action |
 | --- | --- |
+| F1 | Help (inside a settings section: the help for that section) |
 | Enter or Shift+Enter | Send |
 | Ctrl+Enter | New line |
-| Ctrl+L | Listen for one question |
+| Ctrl+L | Listen / Stop listening |
 | Esc | Stop generating, speaking and listening |
 | Ctrl+B | Show or hide the settings sidebar |
 | Ctrl+K | Focus the message box |
 | Ctrl+H | Show or hide saved conversations |
 | Ctrl+N | Start a new chat |
 | Ctrl+V | Paste text or an image |
-| Ctrl+Alt+Space (any app) | Listen for one question; press again to stop listening |
+| Ctrl+Alt+Space (any app) | Listen / Stop listening |
 
 ### Tray and hotkey
 

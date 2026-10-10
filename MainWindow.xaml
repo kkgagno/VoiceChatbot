@@ -782,6 +782,10 @@
                                     ToolTip="Open live transcription and summarization window"/>
                             <Button x:Name="SchedulerBtn" Content="Scheduler" local:Ui.Icon="&#xE787;" Style="{StaticResource SecondaryButton}"
                                     Click="Scheduler_Click" Margin="0,0,6,0" ToolTip="Scheduled prompts"/>
+                            <!-- Help window (F1), see MainWindow.Help.cs and Core/HelpContent.cs -->
+                            <Button x:Name="HelpBtn" Content="Help" local:Ui.Icon="&#xE897;" Style="{StaticResource SecondaryButton}"
+                                    Click="Help_Click" Margin="0,0,6,0"
+                                    ToolTip="How to set up and use the app: every menu and option explained (F1)"/>
                             <Button x:Name="StopBtn" Content="Stop" local:Ui.Icon="&#xE71A;" Style="{StaticResource DangerButton}"
                                     Click="StopAll_Click" ToolTip="Stop generating, speaking and listening (Esc)"/>
                         </WrapPanel>
@@ -823,6 +827,10 @@
                                     <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE943;" Click="Suggestion_Click"
                                             Content="Write a PowerShell script" Tag="Write a PowerShell script that "/>
                                 </WrapPanel>
+                                <Button Style="{StaticResource GhostButton}" local:Ui.Icon="&#xE897;" HorizontalAlignment="Center"
+                                        Foreground="{DynamicResource PrimaryLightBrush}" Click="Help_Click"
+                                        Content="New here? Open Help to set up a model, the voice and the microphone (F1)"
+                                        ToolTip="Step-by-step setup and an explanation of every menu option"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -880,7 +888,7 @@
                         </Grid>
                     </Border>
                     <TextBlock HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
-                               Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings"/>
+                               Text="Enter or Shift+Enter send  ·  Ctrl+Enter new line  ·  Ctrl+L listen  ·  Esc stop  ·  Ctrl+B settings  ·  F1 help"/>
                 </StackPanel>
             </Border>
 
