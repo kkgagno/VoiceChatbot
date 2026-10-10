@@ -311,6 +311,14 @@ License: Apache 2.0
 KokoroSharp
 Source: https://github.com/Lyrcaxis/KokoroSharp
 License: MIT
+
+ONNX Runtime with DirectML (onnxruntime.dll), runs Kokoro on the graphics card or the processor
+Source: https://github.com/microsoft/onnxruntime
+License: MIT
+
+DirectML (DirectML.dll)
+Source: https://www.nuget.org/packages/Microsoft.AI.DirectML
+License: see the Microsoft.AI.DirectML package license (redistributable with applications)
 "@
 Set-Content (Join-Path $publishDir "THIRD-PARTY-NOTICES.txt") $aiNotices -Encoding utf8
 

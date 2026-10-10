@@ -9,8 +9,8 @@ public partial class MainWindow
 {
     // ==================== Streaming speech ====================
     // "Start speaking before the reply finishes" (off by default): speaks a streamed reply in pieces of
-    // a few sentences while the model is still writing it. With the switch off, the whole reply is
-    // spoken in one go once it is finished (SpeakLastResponse).
+    // a few sentences while the model is still writing it. With the switch off, the reply is spoken once
+    // it is finished (SpeakLastResponse): in pieces with the built-in Kokoro, else in one go.
 
     // Kokoro garbles very short clips ("Sure!"), so every piece holds at least this many characters.
     private const int StreamingSpeechMinPieceLength = 120;
@@ -84,6 +84,14 @@ public partial class MainWindow
         {
             var session = _speech.BeginSpeechSession(GetAssistantAudioDirectory());
             AddAudioButtonsWhenSpoken(session, assistantMessage);
+            var messageClock = MessageClockElapsed();
+            session.Completed += _ => Dispatcher.BeginInvoke(() =>
+            {
+                // A session that handed the reply over to SpeakLastResponse before anything played has no line.
+                var timing = session.GetTiming(whileWriting: true);
+                if (timing.FirstAudio != null)
+                    AddSpeechTimingDiagnostic(timing, messageClock);
+            });
             return new StreamingSpeech(session);
         }
         catch (Exception ex)

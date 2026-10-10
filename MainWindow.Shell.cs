@@ -21,8 +21,34 @@ public partial class MainWindow
     // the Kokoro server still starting), then once a minute.
     private static readonly int[] KokoroCheckRetrySeconds = { 5, 10, 20, 30 };
     private const int KokoroCheckSteadySeconds = 60;
+    // The built-in Kokoro warm-up the SPEECH line waits for (shown once); null until one was started.
+    private Task? _builtInKokoroWarmUp;
 
     // ==================== Kokoro ====================
+
+    /// <summary>
+    /// Gets the built-in Kokoro ready in the background when it speaks the replies now (it picks the graphics
+    /// card or the processor then), so the first answer does not wait for it. Once it is ready, the SPEECH line
+    /// shows where it runs. Safe to call often: the warm-up runs once. UI thread.
+    /// </summary>
+    private void WarmUpBuiltInKokoroIfUsed()
+    {
+        if (_speech is not { TtsEnabled: true } || !_speech.WillUseBuiltInKokoro)
+            return;
+
+        // Voice names look like "am_onyx (American Male)"; Kokoro wants just the id.
+        var warmUp = BundledKokoro.WarmUp((_speech.VoiceName ?? "").Split('(')[0].Trim());
+        if (ReferenceEquals(warmUp, _builtInKokoroWarmUp))
+            return;
+
+        _builtInKokoroWarmUp = warmUp;
+        _ = warmUp.ContinueWith(_ => Dispatcher.BeginInvoke(() =>
+        {
+            // A reply already put the Kokoro it used on the line.
+            if (string.IsNullOrEmpty(_speech.LastTtsBackendUsed) && BundledKokoro.Device.Length > 0 && _speech.WillUseBuiltInKokoro)
+                UpdateTtsStatus($"Built-in Kokoro ({BundledKokoro.Device})", ok: true);
+        }), TaskScheduler.Default);
+    }
 
     private void SelectKokoroModeCombo(string mode)
     {
@@ -52,6 +78,9 @@ public partial class MainWindow
         _speech.ResetRemoteKokoroBackoff();
         StartKokoroAutoCheck(TimeSpan.Zero);
         UpdateKokoroHint();
+        // While the settings are applied the engine does not have the host yet; startup warms Kokoro up itself.
+        if (!_applyingSettings)
+            WarmUpBuiltInKokoroIfUsed();
     }
 
     /// <summary>
@@ -170,7 +199,7 @@ public partial class MainWindow
         if (string.IsNullOrEmpty(_speech?.LastTtsBackendUsed))
         {
             var target = mode == KokoroEndpoint.ModeLocalOnly || baseUrl.Length == 0
-                ? "Kokoro: local"
+                ? BundledKokoro.Device.Length > 0 ? $"Built-in Kokoro ({BundledKokoro.Device})" : "Kokoro: local"
                 : $"Kokoro: {new Uri(baseUrl).Authority}{(mode == KokoroEndpoint.ModeAuto ? " (not checked yet)" : "")}";
             TtsStatusText.Text = target;
             TtsStatusText.Foreground = FindResource("TextSecondaryBrush") as Brush;

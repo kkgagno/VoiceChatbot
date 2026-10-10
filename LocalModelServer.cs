@@ -25,9 +25,11 @@ public enum LocalModelState
 /// Runs the bundled llama.cpp server (llama\llama-server.exe in the app folder) on 127.0.0.1 with the chosen
 /// model and, when it is on this PC, the model's picture support file (vision projector, --mmproj), for the
 /// "Built-in model" chat provider. It tries the graphics card first and falls back to the processor when that
-/// fails; a picture support file that does not load is left out, so the model still starts text only. It
-/// restarts when the model, picture support or context size changes, and is tied to this app with a Windows
-/// job object, so it never outlives it (not even after a crash). Its output goes to logs\llama-server.log.
+/// fails; a picture support file that does not load is left out, so the model still starts text only. With
+/// "Hide model thinking" it answers without its thinking phase (--reasoning off) where llama-server has that.
+/// It restarts when the model, picture support, context size or thinking choice changes, and is tied to this
+/// app with a Windows job object, so it never outlives it (not even after a crash). Its output goes to
+/// logs\llama-server.log.
 /// </summary>
 public sealed class LocalModelServer : IDisposable
 {
@@ -44,7 +46,7 @@ public sealed class LocalModelServer : IDisposable
     private Process? _process;
     private Task<bool>? _startTask;
     private CancellationTokenSource? _startCts;
-    private (string Path, string Alias, int Context, string Projector)? _wanted;
+    private (string Path, string Alias, int Context, string Projector, bool ThinkingOff)? _wanted;
     private LlamaServerFeatures? _features;
     private StreamWriter? _log;
     private int _port;
@@ -64,6 +66,12 @@ public sealed class LocalModelServer : IDisposable
 
     /// <summary>The picture support file (vision projector) the server was started with; "" for none.</summary>
     public string ProjectorPath { get; private set; } = "";
+
+    /// <summary>
+    /// True when the server was started to answer without thinking ("Hide model thinking"): with --reasoning off
+    /// when this llama-server has it.
+    /// </summary>
+    public bool ThinkingOff { get; private set; }
 
     /// <summary>
     /// True when the running server loaded its picture support file, so it can look at attached pictures.
@@ -104,18 +112,18 @@ public sealed class LocalModelServer : IDisposable
 
     /// <summary>
     /// Starts the server with <paramref name="modelPath"/> and, when given, its picture support file
-    /// <paramref name="projectorPath"/>, or restarts it when another model, picture support or context size is
-    /// asked for. Returns the start, which completes with true once the model is loaded (with pictures or,
-    /// when the picture support file does not load, text only). Calling it again with the same settings while
-    /// it starts or runs returns the same task.
+    /// <paramref name="projectorPath"/>, or restarts it when another model, picture support, context size or
+    /// <paramref name="thinkingOff"/> (answer without thinking) is asked for. Returns the start, which completes
+    /// with true once the model is loaded (with pictures or, when the picture support file does not load, text
+    /// only). Calling it again with the same settings while it starts or runs returns the same task.
     /// </summary>
-    public Task<bool> StartAsync(string modelPath, string alias, int contextTokens, string? projectorPath = null)
+    public Task<bool> StartAsync(string modelPath, string alias, int contextTokens, string? projectorPath = null, bool thinkingOff = false)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             var projector = projectorPath ?? "";
-            var wanted = (modelPath, alias, contextTokens, projector);
+            var wanted = (modelPath, alias, contextTokens, projector, thinkingOff);
             if (_startTask != null && _wanted == wanted && State is LocalModelState.Starting or LocalModelState.Ready &&
                 (State == LocalModelState.Starting || _process is { HasExited: false }))
                 return _startTask;
@@ -126,12 +134,13 @@ public sealed class LocalModelServer : IDisposable
             ModelPath = modelPath;
             ContextTokens = contextTokens;
             ProjectorPath = projector;
+            ThinkingOff = thinkingOff;
             RunningOnProcessor = false;
             VisionEnabled = false;
             CrashedAfterReady = false;
             var cts = new CancellationTokenSource();
             _startCts = cts;
-            _startTask = Task.Run(() => RunAsync(modelPath, alias, contextTokens, projector, cts.Token));
+            _startTask = Task.Run(() => RunAsync(modelPath, alias, contextTokens, projector, thinkingOff, cts.Token));
             return _startTask;
         }
     }
@@ -146,7 +155,7 @@ public sealed class LocalModelServer : IDisposable
         for (var replaced = 0; ; replaced++)
         {
             Task<bool>? start;
-            (string Path, string Alias, int Context, string Projector)? restart = null;
+            (string Path, string Alias, int Context, string Projector, bool ThinkingOff)? restart = null;
             lock (_gate)
             {
                 start = _startTask;
@@ -155,7 +164,7 @@ public sealed class LocalModelServer : IDisposable
             }
 
             if (restart is { } again)
-                start = StartAsync(again.Path, again.Alias, again.Context, again.Projector);
+                start = StartAsync(again.Path, again.Alias, again.Context, again.Projector, again.ThinkingOff);
             if (start == null)
                 throw new InvalidOperationException("The built-in model is not started. Choose a model under Chat Backend.");
 
@@ -182,7 +191,7 @@ public sealed class LocalModelServer : IDisposable
         SetState(LocalModelState.Stopped, "Stopped");
     }
 
-    private async Task<bool> RunAsync(string modelPath, string alias, int contextTokens, string projectorPath, CancellationToken ct)
+    private async Task<bool> RunAsync(string modelPath, string alias, int contextTokens, string projectorPath, bool thinkingOff, CancellationToken ct)
     {
         try
         {
@@ -225,7 +234,7 @@ public sealed class LocalModelServer : IDisposable
                 {
                     ct.ThrowIfCancellationRequested();
                     var port = EnsurePort(newPort: false);
-                    var args = LlamaServerArgs.Build(modelPath, port, alias, contextTokens, useGpu, _features, pictures ? projectorPath : null);
+                    var args = LlamaServerArgs.Build(modelPath, port, alias, contextTokens, useGpu, _features, pictures ? projectorPath : null, thinkingOff);
                     SetState(LocalModelState.Starting, (useGpu, pictures || !withPictures) switch
                     {
                         (true, true) => $"Loading {alias}...",
@@ -257,6 +266,16 @@ public sealed class LocalModelServer : IDisposable
                     if (LlamaServerArgs.IsPortInUse(output) && portRetries++ < 3)
                     {
                         EnsurePort(newPort: true);
+                        continue;
+                    }
+
+                    // Its --help lists --reasoning, but it refused its command line: the same start once more
+                    // without it, and never again with this llama-server (the request still asks for no thinking).
+                    if (thinkingOff && _features.Reasoning && LlamaServerArgs.IsArgumentError(output))
+                    {
+                        _features = _features with { Reasoning = false };
+                        Write($"llama-server refused its options ({ShortArgumentError(output)}); starting it again without {LlamaServerArgs.ReasoningOption} off. " +
+                              "The model may think before it answers, so replies can start later.");
                         continue;
                     }
 
@@ -327,7 +346,7 @@ public sealed class LocalModelServer : IDisposable
             var help = (await stdout.ConfigureAwait(false)) + (await stderr.ConfigureAwait(false));
             var features = LlamaServerFeatures.FromHelp(help);
             Write($"llama-server options: fit={features.Fit}, jinja={features.Jinja}, no-webui={features.NoWebUi}, device={features.Device}, " +
-                  $"mmproj={features.Mmproj}, no-mmproj-offload={features.NoMmprojOffload}.");
+                  $"mmproj={features.Mmproj}, no-mmproj-offload={features.NoMmprojOffload}, reasoning={features.Reasoning}.");
             return features;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -460,6 +479,13 @@ public sealed class LocalModelServer : IDisposable
     {
         lock (_recentOutput)
             return string.Join("\n", _recentOutput);
+    }
+
+    // The line of llama-server's output that names the refused option, for the log.
+    private static string ShortArgumentError(string output)
+    {
+        var line = output.Split('\n').FirstOrDefault(LlamaServerArgs.IsArgumentError)?.Trim() ?? "an option was not accepted";
+        return line.Length > 200 ? line[..200] + "..." : line;
     }
 
     private void OpenLog()

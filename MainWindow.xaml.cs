@@ -161,10 +161,7 @@ public partial class MainWindow : Window
             }
 
             // Load the built-in Kokoro voice now when it will speak, so the first answer is not delayed by it.
-            var kokoroMode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
-            if (_settings.TtsEnabled && (kokoroMode == KokoroEndpoint.ModeLocalOnly ||
-                                         (kokoroMode == KokoroEndpoint.ModeAuto && KokoroEndpoint.NormalizeBaseUrl(_settings.KokoroRemoteUrl).Length == 0)))
-                BundledKokoro.WarmUp();
+            WarmUpBuiltInKokoroIfUsed();
 
             // First start: pick the model before anything connects.
             if (!_settings.ModelSetupDone)
@@ -554,8 +551,13 @@ public partial class MainWindow : Window
         _speech.KokoroRemoteUrl = _settings.KokoroRemoteUrl;
         _speech.KokoroMode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
         _speech.TtsBackendUsed += backend => Dispatcher.BeginInvoke(() => UpdateTtsStatus(backend, ok: true));
-        // A remote failure starts the background check, which switches back to the remote host once it answers.
-        _speech.RemoteKokoroFailed += _ => Dispatcher.BeginInvoke(() => StartKokoroAutoCheck(TimeSpan.FromSeconds(5), restart: false));
+        // A remote failure starts the background check, which switches back to the remote host once it answers;
+        // meanwhile the built-in Kokoro speaks, so it gets ready.
+        _speech.RemoteKokoroFailed += _ => Dispatcher.BeginInvoke(() =>
+        {
+            StartKokoroAutoCheck(TimeSpan.FromSeconds(5), restart: false);
+            WarmUpBuiltInKokoroIfUsed();
+        });
 
         _speech.Initialize();
         // Check the remote Kokoro host now, like the Test button, instead of waiting for the first reply to find out.
@@ -690,6 +692,7 @@ public partial class MainWindow : Window
             // Check the new host once typing pauses.
             StartKokoroAutoCheck(TimeSpan.FromSeconds(1.5));
             UpdateKokoroHint();
+            WarmUpBuiltInKokoroIfUsed();
         };
 
         ModelCombo.SelectionChanged += (s, e) =>
@@ -903,6 +906,9 @@ public partial class MainWindow : Window
         _settings.DisableModelThinking = HideThinkingToggle.IsChecked == true;
         _ollama.DisableThinking = _settings.DisableModelThinking;
         SaveSettings();
+        // The built-in model starts again with or without its thinking (llama-server's --reasoning).
+        if (IsBuiltInProvider)
+            EnsureLocalModelRunning();
     }
 
     private static bool IsPlanningNotesOnlyNotice(string? text) =>

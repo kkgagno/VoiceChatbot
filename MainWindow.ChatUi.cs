@@ -425,17 +425,20 @@ public partial class MainWindow
     private int _renderingReplySpeech;
 
     /// <summary>
-    /// Speaks a finished reply in one go: the whole cleaned reply goes to Kokoro in one request, then
-    /// plays, and the bubble gets Replay/Download buttons for that file. One clip sounds natural, where
-    /// sentence-sized clips came out garbled. When it plays, SpeechFinished ends the turn once playback
-    /// is over or stopped; otherwise the turn ends here, so it always ends exactly once.
+    /// Speaks a finished reply. With the built-in Kokoro it is spoken in pieces, so the first sentence or
+    /// two play while the rest is made (<see cref="TrySpeakReplyInPieces"/>). Otherwise (remote Kokoro, a
+    /// reply with code, or a reply that is one piece anyway) the whole cleaned reply goes to Kokoro in one
+    /// request, then plays; sentence-sized clips from the remote and Python Kokoro came out garbled. Either
+    /// way the bubble gets Replay/Download buttons for the whole reply. When speech starts, SpeechFinished
+    /// ends the turn once it is over or stopped; otherwise the turn ends here, so it always ends exactly once.
     /// </summary>
     private async void SpeakLastResponse(string text, AssistantMessageUi? assistantMessage = null)
     {
         try
         {
-            if (await TrySpeakWholeReplyAsync(text, assistantMessage))
-                return; // SpeechFinished ends the turn and restarts auto-listen.
+            // SpeechFinished ends the turn and restarts auto-listen.
+            if (TrySpeakReplyInPieces(text, assistantMessage) || await TrySpeakWholeReplyAsync(text, assistantMessage))
+                return;
         }
         catch (Exception ex)
         {
@@ -445,6 +448,62 @@ public partial class MainWindow
         // Nothing plays (TTS off, empty text, cancelled turn, stopped while rendering or a speech error).
         if (!_shutdownStarted)
             FinishTurn();
+    }
+
+    /// <summary>
+    /// Speaks a finished reply with the built-in Kokoro piece by piece through a speech session: a short
+    /// first piece plays while the next, longer one is made (see <see cref="SpeechPieces"/>). Like the
+    /// one-clip path, Stop, Esc, the mic button and a replay stop it, and Clear Chat or another conversation
+    /// before it starts playing drops it. A reply stopped while it plays still gets its Replay/Download buttons
+    /// for the whole reply, like one spoken in one go: the rest is made in the background and joined. Returns
+    /// true once the session has the reply: it then ends the turn through SpeechFinished, also when it is
+    /// stopped or Kokoro fails. False leaves the reply to <see cref="TrySpeakWholeReplyAsync"/>.
+    /// </summary>
+    private bool TrySpeakReplyInPieces(string text, AssistantMessageUi? assistantMessage)
+    {
+        // Stop/Esc/Clear Chat during the turn: the reply may still arrive, but it is not spoken.
+        // Code and script answers keep the one-clip path, like remote Kokoro.
+        if (string.IsNullOrWhiteSpace(text) || TtsToggle.IsChecked != true || IsCurrentTurnCancelled ||
+            ContainsFencedCodeBlock(text) || !_speech.WillUseBuiltInKokoro)
+            return false;
+
+        var pieces = SpeechPieces.Split(CleanSpeechText(text));
+        if (pieces.Count < 2)
+            return false;
+
+        var epoch = _conversationEpoch;
+        var messageClock = MessageClockElapsed();
+        var session = _speech.BeginSpeechSession(GetAssistantAudioDirectory(), builtInKokoro: true,
+            mayStartPlaying: () => Volatile.Read(ref _conversationEpoch) == epoch && !_shutdownStarted,
+            keepWholeReplyWhenStopped: true);
+        try
+        {
+            // Esc sees the app as busy until the session stops speaking; it is Speaking once the first piece
+            // plays. A stopped reply may still be saved for Replay after that (Completed).
+            _renderingReplySpeech++;
+            session.SpeechEnded += () => Dispatcher.BeginInvoke(() =>
+            {
+                _renderingReplySpeech--;
+                var timing = session.GetTiming();
+                if (timing.FirstAudio != null)
+                    AddSpeechTimingDiagnostic(timing, messageClock);
+                else if (timing.Pieces == 0 && !timing.Stopped)
+                    AppLog.Warn("The reply could not be spoken: Kokoro returned no audio.");
+            });
+            AddAudioButtonsWhenSpoken(session, assistantMessage);
+            StateLabel.Text = "Preparing speech...";
+            foreach (var piece in pieces)
+                session.Enqueue(piece);
+        }
+        catch
+        {
+            // Not completed, so it would wait for more text forever; the caller ends the turn.
+            session.Abandon();
+            throw;
+        }
+
+        session.Complete();
+        return true;
     }
 
     /// <summary>Returns true once the reply plays.</summary>
@@ -463,6 +522,8 @@ public partial class MainWindow
         // another conversation change the epoch.
         var stopToken = _speech.SpeechStopToken;
         var epoch = _conversationEpoch;
+        var clock = Stopwatch.StartNew();
+        var messageClock = MessageClockElapsed();
         var render = _speech.CreateSpeechAudioFileAsync(speechText, GetAssistantAudioDirectory());
         var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _renderingReplySpeech++;
@@ -500,11 +561,25 @@ public partial class MainWindow
             return false;
         }
 
+        var synthesis = clock.Elapsed;
         if (assistantMessage != null)
             AddAudioButtons(assistantMessage, audioPath);
         _speech.PlayAudioFile(audioPath);
+        var firstAudio = clock.Elapsed;
+        AddSpeechTimingDiagnostic(new SpeechTiming(firstAudio, synthesis, SpeechEngine.GetAudioLength(audioPath), 1, _speech.LastTtsBackendUsed),
+            messageClock);
         return true;
     }
+
+    /// <summary>
+    /// The "Speech timing" line of a spoken reply: in the app log, and in the chat with Show diagnostics.
+    /// <paramref name="messageClockAtStart"/> is the time since the user's message when the speech started.
+    /// </summary>
+    private void AddSpeechTimingDiagnostic(SpeechTiming timing, TimeSpan? messageClockAtStart) =>
+        AddDiagnosticMessage(timing.Describe(messageClockAtStart + timing.FirstAudio));
+
+    /// <summary>The time since the user's message (SendMessage); null when there was none.</summary>
+    private TimeSpan? MessageClockElapsed() => _messageClock.IsRunning ? _messageClock.Elapsed : null;
 
     private static string GetAssistantAudioDirectory()
     {

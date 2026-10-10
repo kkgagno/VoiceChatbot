@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -20,11 +21,18 @@ public partial class SpeechEngine
     /// <summary>
     /// Starts speaking a reply sentence by sentence: call <see cref="SpeechSession.Enqueue"/> for each
     /// sentence as it is written, then <see cref="SpeechSession.Complete"/>. Replaces any earlier session.
+    /// With <paramref name="builtInKokoro"/> every piece is made by the built-in Kokoro (the remote host is
+    /// not tried in the middle of the reply). <paramref name="mayStartPlaying"/>, when given, is asked on the
+    /// player thread right before the first piece plays; false cancels the session (the reply is not wanted
+    /// any more). With <paramref name="keepWholeReplyWhenStopped"/>, a session that was completed and had
+    /// started playing still makes its remaining pieces when it is stopped (<see cref="SpeechSession.Cancel"/>),
+    /// so <see cref="SpeechSession.Completed"/> reports the whole reply for Replay/Download.
     /// </summary>
-    public SpeechSession BeginSpeechSession(string outputDirectory)
+    public SpeechSession BeginSpeechSession(string outputDirectory, bool builtInKokoro = false, Func<bool>? mayStartPlaying = null,
+        bool keepWholeReplyWhenStopped = false)
     {
         var (voice, lang) = ResolveKokoroVoice();
-        var session = new SpeechSession(this, outputDirectory, voice, lang);
+        var session = new SpeechSession(this, outputDirectory, voice, lang, builtInKokoro, mayStartPlaying, keepWholeReplyWhenStopped);
         Interlocked.Exchange(ref _activeSession, session)?.Abandon();
         session.Start();
         return session;
@@ -37,8 +45,8 @@ public partial class SpeechEngine
         Interlocked.Exchange(ref _activeSession, null)?.Cancel();
     }
 
-    internal string? RenderSpeechClip(string text, string voice, string lang) =>
-        TtsEnabled && !_disposed ? GenerateKokoroAudioSync(text, voice, lang) : null;
+    internal string? RenderSpeechClip(string text, string voice, string lang, bool builtInKokoro) =>
+        TtsEnabled && !_disposed ? GenerateKokoroAudioSync(text, voice, lang, skipRemote: builtInKokoro) : null;
 
     internal float PlaybackVolume => Math.Max(0.01f, Math.Min(Volume / 100f, 1f));
 
@@ -91,6 +99,9 @@ public partial class SpeechEngine
 /// at a time while a player thread plays finished clips in order, so sentence N+1 is rendered while
 /// sentence N plays. When everything has played, the clips are joined into one WAV in the output
 /// directory and <see cref="Completed"/> reports its path (null when cancelled or nothing was spoken).
+/// A session made to keep the whole reply when stopped, and stopped after it was completed and started
+/// playing, stops only its playback: the rest is still rendered, then joined and reported the same way.
+/// <see cref="GetTiming"/> measures it from the moment the session was started.
 /// </summary>
 public sealed class SpeechSession
 {
@@ -100,9 +111,14 @@ public sealed class SpeechSession
     private readonly string _outputDirectory;
     private readonly string _voice;
     private readonly string _lang;
+    private readonly bool _builtInKokoro;
+    private readonly Func<bool>? _mayStartPlaying;
+    private readonly bool _keepWholeReplyWhenStopped;
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly BlockingCollection<string> _sentences = new();
     private readonly BlockingCollection<string> _clips = new();
-    private readonly CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();          // stops the player (and the generator)
+    private readonly CancellationTokenSource _generatorCts = new(); // stops the generator
     private readonly List<string> _tempFiles = new(); // every rendered clip; lock the list itself
     private readonly object _gate = new();
     private bool _cancelled;
@@ -110,18 +126,45 @@ public sealed class SpeechSession
     private bool _completeRequested;
     private bool _startedPlayback;
     private bool _ended;
+    private bool _savingAfterStop; // stopped, but the generator still renders the rest to keep the whole reply
+    private Thread? _generator;
     private int _runningThreads = 2;
     private int _problemReported;
+    // Timing (under _gate): when the first clip started playing, time spent rendering, audio rendered.
+    private TimeSpan? _firstAudio;
+    private TimeSpan _synthesis;
+    private TimeSpan _audio;
+    private int _renderedClips;
 
     /// <summary>Raised once when the session ends, with the combined WAV path or null.</summary>
     public event Action<string?>? Completed;
 
-    internal SpeechSession(SpeechEngine engine, string outputDirectory, string voice, string lang)
+    /// <summary>
+    /// Raised once when the session stops speaking (finished, stopped, or never started), before
+    /// <see cref="Completed"/>; a stopped session that keeps the whole reply raises Completed later.
+    /// </summary>
+    public event Action? SpeechEnded;
+
+    internal SpeechSession(SpeechEngine engine, string outputDirectory, string voice, string lang, bool builtInKokoro = false,
+        Func<bool>? mayStartPlaying = null, bool keepWholeReplyWhenStopped = false)
     {
         _engine = engine;
         _outputDirectory = outputDirectory;
         _voice = voice;
         _lang = lang;
+        _builtInKokoro = builtInKokoro;
+        _mayStartPlaying = mayStartPlaying;
+        _keepWholeReplyWhenStopped = keepWholeReplyWhenStopped;
+    }
+
+    /// <summary>
+    /// How the reply was spoken so far, measured from the start of the session: final once
+    /// <see cref="Completed"/> was raised. <paramref name="whileWriting"/>: the session started with the request.
+    /// </summary>
+    public SpeechTiming GetTiming(bool whileWriting = false)
+    {
+        lock (_gate)
+            return new SpeechTiming(_firstAudio, _synthesis, _audio, _renderedClips, _engine.LastTtsBackendUsed, whileWriting, _cancelled);
     }
 
     /// <summary>True once the session was stopped early (StopSpeaking, Cancel, Abandon or a newer session).</summary>
@@ -132,7 +175,8 @@ public sealed class SpeechSession
 
     internal void Start()
     {
-        new Thread(GenerateLoop) { IsBackground = true, Name = "Speech generator" }.Start();
+        _generator = new Thread(GenerateLoop) { IsBackground = true, Name = "Speech generator" };
+        _generator.Start();
         new Thread(PlayLoop) { IsBackground = true, Name = "Speech player" }.Start();
     }
 
@@ -165,7 +209,10 @@ public sealed class SpeechSession
         try { _sentences.CompleteAdding(); } catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
     }
 
-    /// <summary>Stops playback now and drops everything still queued.</summary>
+    /// <summary>
+    /// Stops playback now and drops everything still queued; a session that keeps the whole reply when
+    /// stopped (see <see cref="SpeechEngine.BeginSpeechSession"/>) still renders the rest for <see cref="Completed"/>.
+    /// </summary>
     public void Cancel() => Stop(abandon: false);
 
     /// <summary>
@@ -188,21 +235,29 @@ public sealed class SpeechSession
 
     private void Stop(bool abandon)
     {
+        bool stopGenerator;
         lock (_gate)
         {
             if (_cancelled || _ended)
                 return;
             _cancelled = true;
             _abandoned = abandon;
+            // A finished reply that was already playing is still rendered to the end, so it can be replayed.
+            _savingAfterStop = !abandon && _keepWholeReplyWhenStopped && _startedPlayback && _completeRequested;
+            stopGenerator = !_savingAfterStop;
         }
 
-        // Wakes both threads; the player stops its clip itself so NAudio is only used from one thread.
+        // Wakes the threads; the player stops its clip itself so NAudio is only used from one thread.
         try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+        if (stopGenerator)
+        {
+            try { _generatorCts.Cancel(); } catch (ObjectDisposedException) { }
+        }
     }
 
     private void GenerateLoop()
     {
-        var token = _cts.Token;
+        var token = _generatorCts.Token;
         var failuresInARow = 0;
         try
         {
@@ -213,13 +268,25 @@ public sealed class SpeechSession
                     continue;
 
                 string? clip = null;
+                var started = _clock.Elapsed;
                 try
                 {
-                    clip = _engine.RenderSpeechClip(sentence, _voice, _lang);
+                    clip = _engine.RenderSpeechClip(sentence, _voice, _lang, _builtInKokoro);
                 }
                 catch (Exception ex)
                 {
                     ReportProblemOnce($"[TTS] Could not render speech: {ex.Message}");
+                }
+
+                var length = string.IsNullOrWhiteSpace(clip) ? TimeSpan.Zero : SpeechEngine.GetAudioLength(clip);
+                lock (_gate)
+                {
+                    _synthesis += _clock.Elapsed - started;
+                    if (length > TimeSpan.Zero)
+                    {
+                        _audio += length;
+                        _renderedClips++;
+                    }
                 }
 
                 if (string.IsNullOrWhiteSpace(clip))
@@ -259,11 +326,20 @@ public sealed class SpeechSession
             {
                 if (!_startedPlayback)
                 {
+                    // Not wanted any more (for example the chat was cleared while the first piece was made):
+                    // end like a stopped session.
+                    if (_mayStartPlaying != null && !SafeMayStartPlaying())
+                    {
+                        Stop(abandon: false);
+                        break;
+                    }
+
                     lock (_gate)
                     {
                         if (_cancelled)
                             break;
                         _startedPlayback = true;
+                        _firstAudio = _clock.Elapsed;
                     }
 
                     _engine.OnSessionPlaybackStarting(this);
@@ -285,6 +361,19 @@ public sealed class SpeechSession
         finally
         {
             Finish(finishedNormally, played);
+        }
+    }
+
+    private bool SafeMayStartPlaying()
+    {
+        try
+        {
+            return _mayStartPlaying!();
+        }
+        catch (Exception ex)
+        {
+            ReportProblemOnce($"[TTS] Speech check failed: {ex.Message}");
+            return false;
         }
     }
 
@@ -326,10 +415,12 @@ public sealed class SpeechSession
     private void Finish(bool finishedNormally, List<string> played)
     {
         bool raiseSpeechFinished;
+        bool savingAfterStop;
         lock (_gate)
         {
             _ended = true;
             finishedNormally &= !_cancelled;
+            savingAfterStop = _savingAfterStop;
             // A cancelled session still reports the end of speech it started (auto-listen relies on it);
             // one that never started and was never completed leaves the UI to its caller.
             raiseSpeechFinished = !_abandoned && (_startedPlayback || _completeRequested);
@@ -344,9 +435,22 @@ public sealed class SpeechSession
             ReportProblemOnce($"[TTS] Speech end handling failed: {ex.Message}");
         }
 
+        try { SpeechEnded?.Invoke(); } catch { }
+
         string? combinedPath = null;
-        if (finishedNormally && played.Count > 0)
+        if (savingAfterStop)
+        {
+            // Stopped while a finished reply played: wait for the rest and keep every clip, played or not.
+            _generator?.Join();
+            List<string> rendered;
+            lock (_tempFiles)
+                rendered = new List<string>(_tempFiles);
+            combinedPath = TryCombineClips(rendered);
+        }
+        else if (finishedNormally && played.Count > 0)
+        {
             combinedPath = TryCombineClips(played);
+        }
 
         try { Completed?.Invoke(combinedPath); } catch { }
         ThreadFinished();
@@ -393,6 +497,7 @@ public sealed class SpeechSession
         _sentences.Dispose();
         _clips.Dispose();
         _cts.Dispose();
+        _generatorCts.Dispose();
     }
 
     private void ReportProblemOnce(string message)

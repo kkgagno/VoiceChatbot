@@ -49,6 +49,12 @@ public class OllamaClient : IDisposable
     public int? LastPromptTokens { get; private set; }
     public int? LastCompletionTokens { get; private set; }
 
+    /// <summary>
+    /// How long the last chat request took (first words, end, thinking received and, from llama-server, its
+    /// own prompt and reply speeds); null when it failed or none was made yet.
+    /// </summary>
+    public ReplyTiming? LastReplyTiming { get; private set; }
+
     public string BaseUrl
     {
         get => _baseUrl;
@@ -125,17 +131,20 @@ public class OllamaClient : IDisposable
         if (IsOpenAiCompatible)
             return await ChatOpenAiCompatibleAsync(model, messages, systemPrompt, temperature, maxTokens, ct);
 
+        var timer = new ReplyTimer();
         using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
             BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: false, skipThinking: skipThinking)),
-            HttpCompletionOption.ResponseContentRead, ct);
+            HttpCompletionOption.ResponseContentRead, ct, timer);
         await EnsureSuccessWithBodyAsync(resp, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(json);
         CaptureOllamaResponseMetadata(doc.RootElement);
-        return doc.RootElement.TryGetProperty("message", out var msg) &&
-               msg.TryGetProperty("content", out var c)
+        var answer = doc.RootElement.TryGetProperty("message", out var msg) &&
+                     msg.TryGetProperty("content", out var c)
             ? c.GetString() ?? ""
             : "";
+        LastReplyTiming = timer.Finish(streamed: false);
+        return answer;
     }
 
     // ---- Chat (streaming) ----
@@ -158,9 +167,10 @@ public class OllamaClient : IDisposable
 
         try
         {
+            var timer = new ReplyTimer();
             using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
                 BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, skipThinking: skipThinking)),
-                HttpCompletionOption.ResponseHeadersRead, ct);
+                HttpCompletionOption.ResponseHeadersRead, ct, timer);
             await EnsureSuccessWithBodyAsync(resp, ct);
 
             var fullResponse = new StringBuilder();
@@ -188,9 +198,12 @@ public class OllamaClient : IDisposable
                             msg.TryGetProperty("content", out var c))
                         {
                             var token = c.GetString() ?? "";
+                            timer.Answer(token);
                             fullResponse.Append(token);
                             onToken(token);
                         }
+                        if (msg.ValueKind == JsonValueKind.Object)
+                            timer.Thinking(ExtractOllamaThinking(msg));
                         if (chunk.RootElement.TryGetProperty("done", out var done) && done.GetBoolean())
                         {
                             CaptureOllamaResponseMetadata(chunk.RootElement);
@@ -203,6 +216,7 @@ public class OllamaClient : IDisposable
 
             // Stop/Esc/Clear Chat: no partial reply is completed (saved or spoken).
             ct.ThrowIfCancellationRequested();
+            LastReplyTiming = timer.Finish(streamed: true);
             onComplete(fullResponse.ToString());
         }
         catch (OperationCanceledException) { throw; }
@@ -244,9 +258,10 @@ public class OllamaClient : IDisposable
         double temperature, int maxTokens, int contextTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken,
         CancellationToken ct)
     {
+        var timer = new ReplyTimer();
         using var resp = await SendChatRequestAsync(_baseUrl, skipThinking => CreateOllamaChatRequest(
             BuildChatBody(model, messages, systemPrompt, temperature, maxTokens, contextTokens, stream: true, tools, skipThinking)),
-            HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            HttpCompletionOption.ResponseHeadersRead, ct, timer).ConfigureAwait(false);
         await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
 
         var content = new StringBuilder();
@@ -276,10 +291,12 @@ public class OllamaClient : IDisposable
                         var token = c.GetString() ?? "";
                         if (token.Length > 0)
                         {
+                            timer.Answer(token);
                             content.Append(token);
                             onToken?.Invoke(token);
                         }
                     }
+                    timer.Thinking(ExtractOllamaThinking(msg));
                     toolCalls.AddRange(ChatToolWire.ParseOllamaToolCalls(msg));
                 }
 
@@ -293,15 +310,17 @@ public class OllamaClient : IDisposable
         }
 
         ct.ThrowIfCancellationRequested();
+        LastReplyTiming = timer.Finish(streamed: true);
         return new ChatTurnResult(content.ToString(), toolCalls, LastFinishReason);
     }
 
     private async Task<ChatTurnResult> StreamOpenAiTurnAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, IReadOnlyList<ToolSpec>? tools, Action<string>? onToken, CancellationToken ct)
     {
+        var timer = new ReplyTimer();
         using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
             BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, tools, skipThinking)),
-            HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            HttpCompletionOption.ResponseHeadersRead, ct, timer).ConfigureAwait(false);
         await EnsureSuccessWithBodyAsync(resp, ct, toolsSent: tools is not null).ConfigureAwait(false);
 
         var content = new StringBuilder();
@@ -328,6 +347,7 @@ public class OllamaClient : IDisposable
                 if (root.ValueKind != JsonValueKind.Object) continue;
                 ThrowIfStreamError(root, tools is not null);
                 CaptureOpenAiUsage(root);
+                timer.ReadServerTimings(root);
 
                 if (!root.TryGetProperty("choices", out var choices) ||
                     choices.ValueKind != JsonValueKind.Array ||
@@ -342,6 +362,7 @@ public class OllamaClient : IDisposable
                     var choice = choices[0];
                     CaptureOpenAiChoiceMetadata(choice);
                     token = ExtractOpenAiChoiceText(choice);
+                    timer.Thinking(ExtractOpenAiReasoningText(choice));
 
                     if (choice.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object &&
                         delta.TryGetProperty("tool_calls", out var deltaCalls))
@@ -361,6 +382,7 @@ public class OllamaClient : IDisposable
 
                 if (!string.IsNullOrEmpty(token))
                 {
+                    timer.Answer(token);
                     content.Append(token);
                     onToken?.Invoke(token);
                 }
@@ -368,6 +390,7 @@ public class OllamaClient : IDisposable
         }
 
         ct.ThrowIfCancellationRequested();
+        LastReplyTiming = timer.Finish(streamed: true);
         return new ChatTurnResult(content.ToString(), toolCalls.Build(), LastFinishReason);
     }
 
@@ -462,17 +485,21 @@ public class OllamaClient : IDisposable
     private async Task<string> ChatOpenAiCompatibleAsync(string model, List<ChatMessage> messages, string systemPrompt,
         double temperature, int maxTokens, CancellationToken ct)
     {
+        var timer = new ReplyTimer();
         using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
             BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: false, skipThinking: skipThinking)),
-            HttpCompletionOption.ResponseContentRead, ct);
+            HttpCompletionOption.ResponseContentRead, ct, timer);
         await EnsureSuccessWithBodyAsync(resp, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(json);
         CaptureOpenAiResponseMetadata(doc.RootElement);
-        return doc.RootElement.TryGetProperty("choices", out var choices) &&
-               choices.GetArrayLength() > 0
-            ? ExtractOpenAiChoiceText(choices[0])
-            : "";
+        var hasChoice = doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0;
+        var answer = hasChoice ? ExtractOpenAiChoiceText(choices[0]) : "";
+        if (hasChoice)
+            timer.Thinking(ExtractOpenAiReasoningText(choices[0]));
+        timer.ReadServerTimings(doc.RootElement);
+        LastReplyTiming = timer.Finish(streamed: false);
+        return answer;
     }
 
     private async Task ChatOpenAiCompatibleStreamAsync(string model, List<ChatMessage> messages, string systemPrompt,
@@ -481,9 +508,10 @@ public class OllamaClient : IDisposable
     {
         try
         {
+            var timer = new ReplyTimer();
             using var resp = await SendChatRequestAsync(_openAiBaseUrl, skipThinking => CreateOpenAiChatRequest(
                 BuildOpenAiChatBody(model, messages, systemPrompt, temperature, maxTokens, stream: true, skipThinking: skipThinking)),
-                HttpCompletionOption.ResponseHeadersRead, ct);
+                HttpCompletionOption.ResponseHeadersRead, ct, timer);
             await EnsureSuccessWithBodyAsync(resp, ct);
 
             var fullResponse = new StringBuilder();
@@ -511,16 +539,20 @@ public class OllamaClient : IDisposable
 
                     try
                     {
-                        // With stream_options.include_usage the last chunk carries usage and no choices.
+                        // With stream_options.include_usage the last chunk carries usage and no choices
+                        // (and, from llama-server, its timings).
                         CaptureOpenAiUsage(chunk.RootElement);
+                        timer.ReadServerTimings(chunk.RootElement);
                         if (!chunk.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                             continue;
 
                         var choice = choices[0];
                         CaptureOpenAiChoiceMetadata(choice);
+                        timer.Thinking(ExtractOpenAiReasoningText(choice));
                         var token = ExtractOpenAiChoiceText(choice);
                         if (!string.IsNullOrEmpty(token))
                         {
+                            timer.Answer(token);
                             fullResponse.Append(token);
                             onToken(token);
                         }
@@ -534,6 +566,7 @@ public class OllamaClient : IDisposable
 
             // Stop/Esc/Clear Chat: no partial reply is completed (saved or spoken).
             ct.ThrowIfCancellationRequested();
+            LastReplyTiming = timer.Finish(streamed: true);
             onComplete(fullResponse.ToString());
         }
         catch (OperationCanceledException) { throw; }
@@ -875,10 +908,11 @@ public class OllamaClient : IDisposable
     /// first adjusted to what it accepts (<see cref="OpenAiRequestCompat"/>). When the server answers HTTP 400:
     /// a refused tuning parameter (max_tokens, temperature, ...) is learned and the request sent again without
     /// it; otherwise, if the skip-thinking fields were sent, it is sent once more without them, and when that
-    /// works they are left out for that server for the rest of the session.
+    /// works they are left out for that server for the rest of the session. <paramref name="timer"/> learns when
+    /// the request went out (after waiting for the built-in model).
     /// </summary>
     private async Task<HttpResponseMessage> SendChatRequestAsync(string baseUrl, Func<bool, HttpRequestMessage> createRequest,
-        HttpCompletionOption completion, CancellationToken ct)
+        HttpCompletionOption completion, CancellationToken ct, ReplyTimer? timer = null)
     {
         const int MaxAttempts = 4;
         if (BeforeChatRequestAsync is { } beforeRequest)
@@ -889,6 +923,8 @@ public class OllamaClient : IDisposable
             if (usesOpenAiUrl)
                 baseUrl = _openAiBaseUrl;
         }
+        // The reply timing counts from here: after any wait for the built-in model to load.
+        timer?.Sent();
 
         var skipThinking = ShouldSendSkipThinkingFields(baseUrl);
         var droppedThinking = false;
@@ -1121,6 +1157,29 @@ public class OllamaClient : IDisposable
         return ExtractOpenAiContentText(choice);
     }
 
+    /// <summary>
+    /// Thinking an OpenAI-compatible server sent apart from the answer: llama.cpp's reasoning_content (or
+    /// reasoning, on some other servers). It is never shown; only counted for the reply timing.
+    /// </summary>
+    private static string ExtractOpenAiReasoningText(JsonElement choice)
+    {
+        foreach (var part in new[] { "delta", "message" })
+        {
+            if (!choice.TryGetProperty(part, out var message) || message.ValueKind != JsonValueKind.Object)
+                continue;
+            foreach (var field in new[] { "reasoning_content", "reasoning" })
+            {
+                if (message.TryGetProperty(field, out var text) && text.ValueKind == JsonValueKind.String)
+                    return text.GetString() ?? "";
+            }
+        }
+        return "";
+    }
+
+    // Ollama sends a thinking model's thinking in message.thinking (only counted for the reply timing).
+    private static string ExtractOllamaThinking(JsonElement message) =>
+        message.TryGetProperty("thinking", out var thinking) && thinking.ValueKind == JsonValueKind.String ? thinking.GetString() ?? "" : "";
+
     private static string ExtractOpenAiContentText(JsonElement element)
     {
         if (element.TryGetProperty("content", out var content))
@@ -1159,6 +1218,7 @@ public class OllamaClient : IDisposable
         LastStopReason = "";
         LastPromptTokens = null;
         LastCompletionTokens = null;
+        LastReplyTiming = null;
     }
 
     private void CaptureOllamaResponseMetadata(JsonElement root)

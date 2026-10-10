@@ -430,6 +430,9 @@ public partial class MainWindow
                normalized.Contains("num_predict", StringComparison.Ordinal);
     }
 
+    // Runs from the user's message (SendMessage), for the reply timing line ("... after your message").
+    private readonly Stopwatch _messageClock = new();
+
     private void AddBackendFinishDiagnostic(string label, int? responseChars = null, int? requestedMaxTokens = null, int? requestedContextTokens = null)
     {
         var message = new StringBuilder();
@@ -460,10 +463,19 @@ public partial class MainWindow
         if (!string.IsNullOrWhiteSpace(_ollama.LastStopReason))
             message.AppendLine($"Stop reason: {_ollama.LastStopReason}");
 
-        var text = message.ToString().Trim();
-        AddDiagnosticMessage(!hasUsage
+        var text = !hasUsage
             ? "Tokens: backend did not return usage metadata."
-            : text);
+            : message.ToString().Trim();
+
+        // Where a reply's time goes: one line per reply in the app log, and with the token counts in the chat.
+        if (_ollama.LastReplyTiming is { } timing)
+        {
+            var timingLine = timing.Describe(_messageClock.IsRunning ? _messageClock.Elapsed : null);
+            AppLog.Info(timingLine);
+            if (_settings?.ShowDiagnostics == true)
+                text += "\n" + timingLine;
+        }
+        AddDiagnosticMessage(text);
     }
 
     private static bool IsIncompleteCodeArtifact(string text, string userText)
@@ -580,6 +592,7 @@ public partial class MainWindow
     private async void SendMessage(string userText)
     {
         if (string.IsNullOrWhiteSpace(userText)) return;
+        _messageClock.Restart();
 
         // A scheduled prompt is running on the shared history (typed chat is disabled meanwhile).
         if (_schedulerRunning)

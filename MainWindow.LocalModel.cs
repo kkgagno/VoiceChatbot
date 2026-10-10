@@ -62,8 +62,9 @@ public partial class MainWindow
 
     /// <summary>
     /// Starts the built-in model server with the chosen model, and its picture support when that is on this PC,
-    /// when that provider is selected (or restarts it when the model, picture support or context size changed,
-    /// or with <paramref name="restart"/>), and stops it otherwise so its video memory is free.
+    /// when that provider is selected (or restarts it when the model, picture support, context size or Hide
+    /// model thinking changed, or with <paramref name="restart"/>), and stops it otherwise so its video memory
+    /// is free.
     /// </summary>
     private void EnsureLocalModelRunning(bool restart = false)
     {
@@ -103,9 +104,11 @@ public partial class MainWindow
         var projector = FindLocalProjectorFile(model) ?? "";
         var bytes = FileLength(path) + FileLength(projector);
         var context = LocalModelCatalog.ChooseContext(_settings.ContextWindow, model.MaxContext, VulkanProbe.Gpu, bytes);
+        // Hide model thinking: the server itself answers without thinking (Gemma 4 can think despite the request).
+        var thinkingOff = _settings.DisableModelThinking;
 
         if (!restart && _localModel.ModelPath == path && _localModel.Alias == model.Id && _localModel.ContextTokens == context &&
-            _localModel.ProjectorPath == projector && _localModel.State != LocalModelState.Stopped)
+            _localModel.ProjectorPath == projector && _localModel.ThinkingOff == thinkingOff && _localModel.State != LocalModelState.Stopped)
         {
             UpdateLocalModelUi();
             return; // Already running, starting, or failed with these settings (Restart tries again).
@@ -115,8 +118,9 @@ public partial class MainWindow
             _localModel.Stop();
         _lastLocalModelFailureShown = "";
         AppLog.Info($"Built-in model: starting {model.Name} ({path}) with a {context}-token context, " +
-                    (projector.Length > 0 ? $"with picture support ({projector})." : "text only (no picture support on this PC)."));
-        _ = _localModel.StartAsync(path, model.Id, context, projector);
+                    (projector.Length > 0 ? $"with picture support ({projector})" : "text only (no picture support on this PC)") +
+                    (thinkingOff ? ", answering without thinking." : ", thinking allowed."));
+        _ = _localModel.StartAsync(path, model.Id, context, projector, thinkingOff);
         UpdateLocalModelUi();
     }
 
@@ -176,15 +180,17 @@ public partial class MainWindow
         ShowBuiltInConnectionStatus();
     }
 
-    private string LocalModelDisplayName => (LocalModelCatalog.Find(_localModel.Alias) ?? LocalModelCatalog.Find(_settings.LocalModelId))?.Name
-                                            ?? _settings.LocalModelId;
+    private LocalModelInfo? LocalModelShown => LocalModelCatalog.Find(_localModel.Alias) ?? LocalModelCatalog.Find(_settings.LocalModelId);
+
+    private string LocalModelDisplayName => LocalModelShown?.Name ?? _settings.LocalModelId;
 
     private void UpdateLocalModelUi()
     {
         if (LocalModelStatusText == null)
             return;
 
-        var name = LocalModelDisplayName;
+        // "Gemma 4 E4B (default): ready on ...", so it is clear which model came with the app.
+        var name = LocalModelShown is { } shown ? LocalModelCatalog.NameWithDefaultMark(shown) : _settings.LocalModelId;
         switch (_localModel.State)
         {
             case LocalModelState.Starting:

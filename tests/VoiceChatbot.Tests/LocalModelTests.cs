@@ -49,6 +49,19 @@ public class LocalModelTests
     }
 
     [Fact]
+    public void TheDefaultModelIsMarkedAsDefault()
+    {
+        Assert.True(LocalModelCatalog.IsDefault(LocalModelCatalog.Default));
+        Assert.True(LocalModelCatalog.IsDefault(LocalModelCatalog.Find("GEMMA-4-E4B")));
+        Assert.Single(LocalModelCatalog.Models, LocalModelCatalog.IsDefault);
+        Assert.False(LocalModelCatalog.IsDefault(LocalModelCatalog.Find("gemma-4-12b")));
+        Assert.False(LocalModelCatalog.IsDefault(null));
+
+        Assert.Equal("Gemma 4 E4B (default)", LocalModelCatalog.NameWithDefaultMark(LocalModelCatalog.Default));
+        Assert.Equal("Gemma 4 12B", LocalModelCatalog.NameWithDefaultMark(LocalModelCatalog.Find("gemma-4-12b")!));
+    }
+
+    [Fact]
     public void ContextFollowsTheSettingOrTheFreeVideoMemory()
     {
         var gpu = new GpuInfo("RTX", 24 * GiB, true);
@@ -642,6 +655,52 @@ public class LocalModelTests
     }
 
     [Theory]
+    [InlineData("-rea, --reasoning [on|off|auto]   use reasoning/thinking in the chat ('on', 'off', or 'auto', default: 'auto')", true)]
+    [InlineData("--reasoning-format FORMAT\n--reasoning\n", true)]
+    [InlineData("--reasoning=off", true)]
+    [InlineData("--reasoning-budget N   controls the amount of thinking allowed\n--reasoning-format FORMAT   controls whether thought tags are allowed", false)]
+    [InlineData("--jinja\n--fit", false)]
+    [InlineData("", false)]
+    public void KnowsWhetherTheServerCanTurnThinkingOff(string help, bool expected)
+    {
+        Assert.Equal(expected, LlamaServerFeatures.FromHelp(help).Reasoning);
+    }
+
+    [Fact]
+    public void ThinkingIsTurnedOffOnTheServerWhenItCan()
+    {
+        var features = LlamaServerFeatures.FromHelp("--fit [on|off]\n--jinja\n--no-webui\n-rea, --reasoning [on|off|auto]\n--reasoning-budget N");
+        var off = LlamaServerArgs.Build("m.gguf", 1, "x", 8192, useGpu: true, features, thinkingOff: true);
+        Assert.Equal(new[] { "--jinja", "--no-webui", "--reasoning", "off" }, off.TakeLast(4));
+        Assert.Single(off, a => a == "--reasoning");
+
+        // Thinking allowed, or a llama-server without the option: the command line as before.
+        Assert.DoesNotContain("--reasoning", LlamaServerArgs.Build("m.gguf", 1, "x", 8192, useGpu: true, features, thinkingOff: false));
+        var older = LlamaServerFeatures.FromHelp("--fit\n--jinja\n--reasoning-budget N\n--reasoning-format FORMAT");
+        Assert.Equal(LlamaServerArgs.Build("m.gguf", 1, "x", 8192, true, older), LlamaServerArgs.Build("m.gguf", 1, "x", 8192, true, older, thinkingOff: true));
+
+        // With picture support on the processor: the projector options come first, the processor ones last.
+        var processor = LlamaServerArgs.Build("m.gguf", 1, "x", 8192, useGpu: false, features with { Mmproj = true, Device = true }, "p.gguf", thinkingOff: true);
+        Assert.Equal(new[] { "--mmproj", "p.gguf", "--jinja", "--no-webui", "--reasoning", "off", "-ngl", "0", "--device", "none" }, processor.Skip(12));
+    }
+
+    [Theory]
+    [InlineData("error: invalid argument: --reasoning", true)]
+    [InlineData("load_backend: loaded Vulkan backend\nerror: unknown argument: --reasoning\n", true)]
+    [InlineData("error while handling argument \"--reasoning\": invalid value\n\nusage:\n-rea, --reasoning [on|off|auto]", true)]
+    [InlineData("ERROR: Invalid Argument: off", true)]
+    [InlineData("llama_model_load: failed to open m.gguf: Invalid argument", false)]
+    [InlineData("gguf_init: error: Invalid argument\n", false)]
+    [InlineData("couldn't bind HTTP server socket", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void RecognizesARefusedCommandLine(string? output, bool expected)
+    {
+        Assert.Equal(expected, LlamaServerArgs.IsArgumentError(output));
+    }
+
+    [Theory]
+    [InlineData("error: invalid argument: --reasoning", "this llama.cpp does not accept one of its start options")]
     [InlineData("llama_model_load: error loading model: failed to open file", "the model file could not be loaded (damaged or incomplete?)")]
     [InlineData("ggml_vulkan: Device memory allocation of size 4000000 failed. ErrorOutOfDeviceMemory", "not enough memory for this model")]
     [InlineData("couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8080", "its port is in use by another program")]

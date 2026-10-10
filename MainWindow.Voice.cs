@@ -260,6 +260,7 @@ public partial class MainWindow
     {
         var enabled = TtsToggle.IsChecked == true;
         _speech.TtsEnabled = enabled;
+        WarmUpBuiltInKokoroIfUsed();
     }
 
     private void StreamToggle_Click(object sender, RoutedEventArgs e)

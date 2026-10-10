@@ -313,7 +313,7 @@ public static class HelpContent
                 "Voice Chatbot Mini is a voice and text assistant. It comes with an AI model that runs on your own PC, so it works right after installing, without internet. Five steps get you talking to it.")
             .Keywords("start", "setup", "first", "begin", "quick start", "introduction", "overview", "offline")
             .Steps(
-                "Start the app. The included model, Gemma 4 E4B, works right away: there is nothing to set up. The first time, the model chooser opens; keep the included model, pick a bigger one, or click **Skip for now**. To change it later, click **Choose AI model...** under **Chat Backend**. See **Choose a chat model**.",
+                "Start the app. The default model, Gemma 4 E4B, comes with the app and works right away: there is nothing to set up. The first time, the model chooser opens; the default model has the **Default** badge. Keep it with **Use the default model**, pick a bigger one, or click **Skip for now**. To change it later, click **Choose AI model...** under **Chat Backend**. See **Choose a chat model**.",
                 "Open the settings sidebar (the three-line button at the top left, or Ctrl+B). The CHAT line at the top shows Loading... while the model starts and Ready when it can answer.",
                 "Type a message in the box at the bottom and press Enter.",
                 "To talk instead of typing: open **Voice Input**, pick a **Whisper model**, click **Download Model** once and choose your **Microphone**. Then press **Listen** in the top bar.",
@@ -349,7 +349,7 @@ public static class HelpContent
                 "A Whisper speech recognition model. Pick a size under **Voice Input** and click **Download Model**. It is downloaded once and runs on this PC, on the processor or the graphics card. Your voice is not sent to the internet.")
             .Heading("To hear it (voice output)")
             .Bullets(
-                "Nothing extra: Kokoro speech is built into the app and runs on the processor. Python is no longer needed.",
+                "Nothing extra: Kokoro speech is built into the app. It runs on the graphics card or the processor, whichever is faster on this PC. Python is no longer needed.",
                 "Or a Kokoro-FastAPI server on another computer (port 8880), entered as **Remote Kokoro host**.")
             .Heading("Optional")
             .Bullets(
@@ -371,12 +371,13 @@ public static class HelpContent
             .Bullets(
                 "Click **Choose AI model...** at the top of **Chat Backend**. It also opens by itself the first time the app starts; **Skip for now** keeps the included model.",
                 "At the top it shows what this PC has, for example \"This PC: NVIDIA GeForce RTX 4060 with 8 GB of video memory, and 32 GB of memory\". Video memory is the memory on the graphics card; a model that fits in it answers fastest.",
+                "The default model, Gemma 4 E4B, has a filled **Default** badge with a star and the line \"The default model: ready right away, no download needed.\" It came with the app and is used unless you choose another; its button reads **Use the default model**.",
                 "Each model on this PC gets a badge: **Fits your graphics card** (fast), **Part runs on the processor: slower**, **Runs on the processor: slow** or **Too big for this PC**.",
                 "Pick one and click **Use this model**, or **Download and use** for a model that is not on this PC yet. You can change your mind any time.",
                 "The **Pictures** line says whether the model can look at pictures you attach. A model on this PC without its picture support shows **Add picture support** (a download of about 1 GB) and **Use without pictures**.")
             .Heading("Gemma 4 models that run on this PC")
             .Bullets(
-                "**Gemma 4 E4B**: included, no download. Small and quick; good for everyday chat, voice and short documents. Needs about 6.5 GB of video memory: a graphics card with 8 GB or more, such as an RTX 3060 Ti, RTX 4060, RX 7600 or Arc A750. 6 GB cards work with a little on the processor.",
+                "**Gemma 4 E4B**: the default; included, no download. Small and quick; good for everyday chat, voice and short documents. Needs about 6.5 GB of video memory: a graphics card with 8 GB or more, such as an RTX 3060 Ti, RTX 4060, RX 7600 or Arc A750. 6 GB cards work with a little on the processor.",
                 "**Gemma 4 12B**: download about 8.5 GB. Clearly smarter, with better answers about your documents. Needs about 9.5 GB of video memory: a 12 GB card, such as an RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT or Arc B580.",
                 "**Gemma 4 26B A4B**: download about 18 GB. A \"mixture of experts\" model: close to the top model's quality, but quick. Needs about 19 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX. 16 GB cards run it with part on the processor.",
                 "**Gemma 4 31B**: download about 19.5 GB. The smartest, but slower. Needs about 21 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX.")
@@ -542,7 +543,7 @@ public static class HelpContent
             .Bullets(
                 "**Choose AI model...**: opens the model chooser, with the Gemma 4 models that can run on this PC (and how well each suits it), Ollama, a llama.cpp server and OpenAI. See **Choose a chat model**.",
                 "**Provider**: `Built-in model` (the default) runs a model on this PC; `Ollama` uses an Ollama server; `OpenAI-compatible` is for llama.cpp, LM Studio, vLLM, OpenAI and similar servers.",
-                "**Built-in model** and **Restart**: the state of the model on this PC, such as \"Gemma 4 E4B: loading...\", \"Gemma 4 E4B: ready on NVIDIA GeForce RTX 4060 (16K context, sees pictures)\", or \"could not start\" with the reason. \"text only\" means it cannot see pictures; the line says how to add picture support. **Restart** starts it again.",
+                "**Built-in model** and **Restart**: the state of the model on this PC, such as \"Gemma 4 E4B (default): loading...\", \"Gemma 4 E4B (default): ready on NVIDIA GeForce RTX 4060 (16K context, sees pictures)\", or \"could not start\" with the reason. \"(default)\" marks the model that came with the app. \"text only\" means it cannot see pictures; the line says how to add picture support. **Restart** starts it again.",
                 "While a model downloads, a progress bar shows here with **Pause**. To go on, pick the model again in **Choose AI model...**; it continues where it stopped.",
                 "**Ollama URL**: shown with `Ollama` only. Where Ollama runs, normally `http://localhost:11434`.",
                 "**OpenAI / llama.cpp URL** and **OpenAI API key (optional)**: shown with `OpenAI-compatible` only. The server's address ending in `/v1`, such as `http://localhost:8080/v1`, or `https://api.openai.com/v1` for OpenAI. The key is only for servers that need one; it is saved encrypted.",
@@ -553,7 +554,7 @@ public static class HelpContent
                 "**Context window**: how much text one request may hold. The built-in model is started with this size (16384 unless you change it; `0` means as much as the graphics card has room for), and changing it restarts the model. With a server, the line under it shows what the server reports and where that came from; the box is used when the server reports nothing, and is sent to Ollama as num_ctx (0 means the model's full window). A larger window uses more video memory.",
                 "**Let the model use tools**: the model can search the web, check the date and time, get stock quotes, read web pages and save memories by itself. Models without tool support simply chat.",
                 "**Format replies (Markdown)**: shows headings, lists, tables, links and code blocks in finished answers. Formatting is never read aloud.",
-                "**Hide model thinking**: asks the server to skip the model's thinking phase, so answers start sooner. Thinking text is never shown, saved or spoken.")
+                "**Hide model thinking** (on by default): asks the server to skip the model's thinking phase, so answers start sooner. With the built-in model it also turns thinking off in its llama.cpp server, because Gemma 4 can still think first otherwise; that makes replies much faster. Changing it restarts the built-in model. Thinking text is never shown, saved or spoken.")
             .Tip("The built-in model runs a llama.cpp server on this PC (on `127.0.0.1`, so other computers cannot reach it); the app starts and stops it by itself. If the graphics card cannot hold the model, it runs on the processor (slower) and the chat says so; a smaller model or a smaller **Context window** helps. Its log is `%APPDATA%\\VoiceChatbotMini\\logs\\llama-server.log`.")
             .Paragraph("The PERSONAS part of this section is explained under **Personas**.")
             .SeeAlso("chat-server", "personas", "troubleshooting")
@@ -562,17 +563,22 @@ public static class HelpContent
         new TopicBuilder("voice-output", "Voice Output", GroupSidebar, "\uE767",
                 "Spoken answers with Kokoro, built into the app or on another computer.")
             .Sidebar("Voice Output")
-            .Keywords("kokoro", "built-in kokoro", "tts", "text to speech", "speech", "speak", "voice", "sound", "speaker", "audio", "offline", "8880", "kokoro-fastapi")
+            .Keywords("kokoro", "built-in kokoro", "tts", "text to speech", "speech", "speak", "voice", "sound", "speaker", "audio", "offline", "8880", "kokoro-fastapi",
+                "graphics card", "gpu", "directml", "processor", "speech timing")
             .Bullets(
                 "**Speak responses**: reads answers aloud. Turn it off for text only. Code blocks are never read.",
-                "**Start speaking before the reply finishes**: speaks in parts while the model is still writing (needs **Stream responses** under Conversation). Off sounds the most natural.",
+                "**Start speaking before the reply finishes**: speaks in parts while the model is still writing (needs **Stream responses** under Conversation). When it is off, the reply is spoken once it is finished: the built-in Kokoro starts with the first sentence or two while it makes the rest, and a remote Kokoro speaks the whole reply in one go. Off sounds the most natural.",
                 "**Remote Kokoro host** and **Test**: the address of a Kokoro-FastAPI server, such as `192.168.1.50` (port 8880 is assumed), `192.168.1.50:8880` or `http://tts-box:8880/v1`. **Test** checks it and loads its voices. Leave it blank to use only the built-in Kokoro.",
                 "**Engine**: **Auto** tries the remote host first and falls back to the built-in Kokoro; **Remote only** uses just the remote host, and **Local only** just the built-in Kokoro.",
                 "**Voice** and the play button next to it: choose a voice and hear a sample.",
                 "**Speech rate** (-5 to +5) and **Volume**.")
-            .Paragraph("The SPEECH line at the top of the sidebar shows which Kokoro is in use (Built-in Kokoro, or Remote Kokoro with the host's address) and whether it answers.")
+            .Paragraph("The SPEECH line at the top of the sidebar shows which Kokoro is in use (Built-in Kokoro (graphics card), Built-in Kokoro (processor), or Remote Kokoro with the host's address) and whether it answers.")
             .Heading("Built-in Kokoro")
-            .Paragraph("The app includes Kokoro (the Kokoro 82M voice model, in the `kokoro` folder of the app). It runs on the processor, works without internet and needs no setup: no Python and no separate server. It loads in the background when the app starts, so the very first answer may take a moment longer.")
+            .Paragraph("The app includes Kokoro (the Kokoro 82M voice model, in the `kokoro` folder of the app). It works without internet and needs no setup: no Python and no separate server.")
+            .Bullets(
+                "It runs on the graphics card or on the processor, whichever is faster on this PC. When the app starts, it loads in the background, speaks a test sentence on both and keeps the faster one; the log says what it measured. Any DirectX 12 graphics card works. If the card has a problem later, the processor takes over by itself.",
+                "A longer finished answer starts playing as soon as its first sentence or two are ready, and the rest is made while you listen; a short one is spoken in one go. The **Replay Audio** and **Download Audio** buttons under the answer are for the whole answer; for one spoken in parts they appear once it has been spoken or stopped.",
+                "The very first answer after starting may take a moment longer if the voice is still getting ready.")
             .Heading("Use Kokoro on another computer")
             .Paragraph("Run Kokoro-FastAPI (https://github.com/remsky/Kokoro-FastAPI) on a computer on your network, for example one with a graphics card. It listens on port 8880. Enter that computer's address in **Remote Kokoro host** and click **Test**. Its firewall must allow port 8880.")
             .SeeAlso("troubleshooting", "personas")
@@ -703,12 +709,12 @@ public static class HelpContent
         new TopicBuilder("app", "App", GroupSidebar, "\uE713",
                 "The look of the app, the tray icon, the listen hotkey and the log files.")
             .Sidebar("App")
-            .Keywords("theme", "dark", "light", "tray", "minimize", "hotkey", "shortcut", "logs", "log file", "diagnostics", "secrets", "encrypted")
+            .Keywords("theme", "dark", "light", "tray", "minimize", "hotkey", "shortcut", "logs", "log file", "diagnostics", "secrets", "encrypted", "timing")
             .Bullets(
                 "**Theme**: Dark, Light, or Use Windows setting (follows the Windows light or dark mode).",
                 "The box with the lock shows that API keys and the phone PIN are saved encrypted for your Windows account.",
                 "**Open logs folder**: shows today's log file (`%APPDATA%\\VoiceChatbotMini\\logs\\app-YYYYMMDD.log`). There is one file per day, kept for 7 days, with keys and passwords masked. The built-in model writes its own log there too, `llama-server.log`. Attach them when you report a problem.",
-                "**Show diagnostics in chat**: shows token counts and the speech recognition backend after each message. They are always written to the log.",
+                "**Show diagnostics in chat**: shows token counts, the reply and speech timing and the speech recognition backend after each message. They are always written to the log. See **Troubleshooting** for what the timing lines mean.",
                 "**Minimize to tray**: minimizing hides the window in the tray (the icons next to the clock) instead of the taskbar. Double-click the tray icon to bring it back; right-click it for Open, **Listen** / **Stop listening**, **Speak responses** and Exit.",
                 "**Listen hotkey**: Ctrl+Alt+Space (the default), Ctrl+Shift+Space, Ctrl+Alt+L or Off. It works in any app, also while Mini is minimized, and turns listening on and off like the **Listen** button. If another app already uses the keys, the box under it says so.")
             .SeeAlso("shortcuts", "privacy", "troubleshooting")
@@ -765,11 +771,13 @@ public static class HelpContent
             .Heading("Slow or empty answers")
             .Bullets(
                 "Very slow answers: try a smaller model, or one that fits your graphics card (see **Choose a chat model**).",
+                "Keep **Hide model thinking** on: the built-in Gemma 4 then answers without thinking first, which is much faster.",
+                "To see where the time goes, look in the log, or turn on **Show diagnostics in chat**. The Reply timing line shows when the first words came, how fast the model read your message (and how much it could reuse from the last one) and how fast it wrote. The Speech timing line shows how long it took until the voice started, how fast Kokoro made the audio (\"0.1 x real time\" means ten times faster than speaking) and whether it ran on the graphics card or the processor.",
                 "\"The model returned an empty answer\": try another model, or turn on **Hide model thinking**.")
             .Heading("No voice: answers are not spoken")
             .Bullets(
                 "Check **Speak responses** and **Volume** under **Voice Output**, and the Windows volume and speakers.",
-                "Look at the SPEECH line in the sidebar. It reads Built-in Kokoro when the voice built into the app is used. If it shows an error, the log has the details (search it for Kokoro); reinstalling the app restores the built-in voice files.",
+                "Look at the SPEECH line in the sidebar. It reads Built-in Kokoro (graphics card) or Built-in Kokoro (processor) when the voice built into the app is used. If it shows an error, the log has the details (search it for Kokoro); reinstalling the app restores the built-in voice files.",
                 "Click the play button next to **Voice** to test a voice.",
                 "**Engine** set to **Remote only** without a host means no speech.")
             .Heading("Remote Kokoro is not reachable")

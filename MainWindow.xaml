@@ -236,7 +236,7 @@
                                 <ToggleButton x:Name="HideThinkingToggle" Content="Hide model thinking" IsChecked="True"
                                               Style="{StaticResource SwitchToggle}" Click="HideThinkingToggle_Click" Margin="0,12,0,2"/>
                                 <TextBlock Style="{StaticResource FieldHint}"
-                                           Text="Asks the server to skip the model's thinking phase, so replies start sooner. Planning notes a model still writes (&quot;The user said hi... Let's try...&quot;) are never shown, saved or spoken."/>
+                                           Text="Asks the server to skip the model's thinking phase, so replies start sooner. The built-in model restarts when you change this. Planning notes a model still writes (&quot;The user said hi... Let's try...&quot;) are never shown, saved or spoken."/>
                                 <!-- Personas: see MainWindow.Personas.cs -->
                                 <Border Style="{StaticResource Divider}" Margin="0,14,0,12"/>
                                 <TextBlock Text="PERSONAS" Style="{StaticResource SubHeading}"/>

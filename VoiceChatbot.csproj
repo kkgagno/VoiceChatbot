@@ -44,13 +44,27 @@
     <!-- GPU Whisper on any Vulkan GPU (AMD Radeon, NVIDIA, Intel); falls back to Whisper.net.Runtime (CPU). -->
     <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.7.1" />
     <PackageReference Include="System.Speech" Version="9.0.0" />
-    <!-- Kokoro text-to-speech inside the app (no Python): see BundledKokoro.cs. -->
-    <PackageReference Include="KokoroSharp.CPU" Version="$(KokoroSharpVersion)" />
+    <!-- Kokoro text-to-speech inside the app (no Python): see BundledKokoro.cs. ONNX Runtime's DirectML
+         build runs it on the graphics card (any DirectX 12 card) or on the processor, whichever is faster.
+         Keep its version on the Microsoft.ML.OnnxRuntime.Managed version that KokoroSharp depends on. -->
+    <PackageReference Include="KokoroSharp" Version="$(KokoroSharpVersion)" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.22.0" />
   </ItemGroup>
 
   <PropertyGroup>
     <KokoroSharpVersion>0.8.4</KokoroSharpVersion>
+    <!-- The DirectML package would also copy its debug layer and debug symbols (about 15 MB); only
+         DirectML.dll is needed, copied below. -->
+    <Microsoft_AI_DirectML_SkipLibraryCopy>true</Microsoft_AI_DirectML_SkipLibraryCopy>
+    <Microsoft_AI_DirectML_SkipDebugLayerCopy>true</Microsoft_AI_DirectML_SkipDebugLayerCopy>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DirectML.dll next to onnxruntime.dll, for Kokoro on the graphics card (BundledKokoro.cs). -->
+    <Content Include="$(Microsoft_AI_DirectML_Bin_Dir_Windows_x64)\DirectML.dll" Link="DirectML.dll"
+             Condition="'$(Microsoft_AI_DirectML_Bin_Dir_Windows_x64)' != ''"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The English (and other v1.0) Kokoro voices, published to kokoro\voices. The model itself

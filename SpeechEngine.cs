@@ -711,14 +711,53 @@ public partial class SpeechEngine : IDisposable
 
     // ==================== TTS ====================
     // A finished reply is rendered in one Kokoro request (CreateSpeechAudioFileAsync) and played with
-    // PlayAudioFile. "Start speaking before the reply finishes" speaks it in pieces through
-    // SpeechSession (BeginSpeechSession). StopSpeaking stops both.
+    // PlayAudioFile, or with the built-in Kokoro in pieces through SpeechSession (BeginSpeechSession), so
+    // the first sentence plays while the rest is made. "Start speaking before the reply finishes" also
+    // speaks in pieces through SpeechSession. StopSpeaking stops both.
 
     /// <summary>
     /// Cancelled by the next StopSpeaking (Stop, Esc, the mic button, a replay). A reply that is still
     /// being rendered watches it, so it is dropped instead of played.
     /// </summary>
     public CancellationToken SpeechStopToken => Volatile.Read(ref _speechStopCts).Token;
+
+    /// <summary>
+    /// True when replies are spoken by the built-in Kokoro now: it is installed and loads, and Kokoro is set
+    /// to Local only, or to Auto with no remote host or while the remote host is skipped after a failure.
+    /// </summary>
+    public bool WillUseBuiltInKokoro
+    {
+        get
+        {
+            if (!BundledKokoro.IsUsable)
+                return false;
+
+            var mode = KokoroEndpoint.NormalizeMode(KokoroMode);
+            if (mode == KokoroEndpoint.ModeLocalOnly)
+                return true;
+            if (mode != KokoroEndpoint.ModeAuto)
+                return false;
+
+            var remoteBase = KokoroEndpoint.NormalizeBaseUrl(KokoroRemoteUrl);
+            return remoteBase.Length == 0 || !ShouldTryRemoteKokoro(remoteBase, mode);
+        }
+    }
+
+    /// <summary>The length of a WAV file's audio; zero when it cannot be read.</summary>
+    public static TimeSpan GetAudioLength(string? wavPath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(wavPath) || !File.Exists(wavPath))
+                return TimeSpan.Zero;
+            using var reader = new NAudio.Wave.WaveFileReader(wavPath);
+            return reader.TotalTime;
+        }
+        catch
+        {
+            return TimeSpan.Zero;
+        }
+    }
 
     private (string Voice, string Lang) ResolveKokoroVoice()
     {
@@ -1168,12 +1207,16 @@ public partial class SpeechEngine : IDisposable
                || word.Equals("more", StringComparison.OrdinalIgnoreCase);
     }
 
-    private string? GenerateKokoroAudioSync(string text, string voice, string lang = "a")
+    /// <summary>
+    /// Renders one WAV with Kokoro: the remote host first (unless Local only, or <paramref name="skipRemote"/>
+    /// for a reply that started on the built-in Kokoro), then the built-in Kokoro, then the old Python paths.
+    /// </summary>
+    private string? GenerateKokoroAudioSync(string text, string voice, string lang = "a", bool skipRemote = false)
     {
         var mode = KokoroEndpoint.NormalizeMode(KokoroMode);
         var remoteBase = KokoroEndpoint.NormalizeBaseUrl(KokoroRemoteUrl);
 
-        if (mode != KokoroEndpoint.ModeLocalOnly && remoteBase.Length > 0 && ShouldTryRemoteKokoro(remoteBase, mode))
+        if (!skipRemote && mode != KokoroEndpoint.ModeLocalOnly && remoteBase.Length > 0 && ShouldTryRemoteKokoro(remoteBase, mode))
         {
             var remoteWav = Path.Combine(Path.GetTempPath(), $"tts_remote_{Guid.NewGuid():N}.wav");
             try
@@ -1213,7 +1256,7 @@ public partial class SpeechEngine : IDisposable
                 var speed = Math.Max(0.5, Math.Min(2.0, 1.0 + (SpeechRate * 0.2)));
                 if (BundledKokoro.TrySynthesizeToWav(text, voice, speed, tempWav, out var error))
                 {
-                    ReportTtsBackend("Built-in Kokoro");
+                    ReportTtsBackend($"Built-in Kokoro ({BundledKokoro.Device})");
                     return tempWav;
                 }
                 Log?.Invoke($"[TTS] Built-in Kokoro failed ({error}).");

@@ -76,7 +76,7 @@ public static class LocalModelCatalog
     {
         new LocalModelInfo(
             "gemma-4-e4b", "Gemma 4 E4B",
-            "Small and quick. Good for everyday chat, voice and short documents. Included with the app, so it works offline right away.",
+            "Small and quick. Good for everyday chat, voice and short documents, and it works offline.",
             "gemma-4-E4B-it-Q4_K_M.gguf", Repositories("E4B"),
             ApproxDownloadGb: 5.3, VramGb: 6.5, MinCardGb: 8,
             ExampleCards: "RTX 3060 Ti, RTX 4060, RX 7600, Arc A750. 6 GB cards work with a little on the processor.",
@@ -105,6 +105,16 @@ public static class LocalModelCatalog
     };
 
     public static LocalModelInfo Default => Find(DefaultId)!;
+
+    /// <summary>
+    /// True for the default model (<see cref="DefaultId"/>): the one included with the app, used until
+    /// another is chosen.
+    /// </summary>
+    public static bool IsDefault(LocalModelInfo? model) =>
+        model != null && string.Equals(model.Id, DefaultId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The model's name for status lines, with "(default)" after the default model's: "Gemma 4 E4B (default)".</summary>
+    public static string NameWithDefaultMark(LocalModelInfo model) => IsDefault(model) ? $"{model.Name} (default)" : model.Name;
 
     public static LocalModelInfo? Find(string? id) =>
         Models.FirstOrDefault(m => string.Equals(m.Id, id?.Trim(), StringComparison.OrdinalIgnoreCase));

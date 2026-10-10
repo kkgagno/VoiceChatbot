@@ -23,7 +23,8 @@ public sealed record ModelSetupChoice(string Provider, string LocalModelId = "",
 /// models the app can run itself (included or downloadable, with the video memory and graphics card each
 /// needs, how it suits this PC and its picture support), Ollama, an OpenAI-compatible server such as
 /// llama.cpp, or OpenAI. A model on this PC without its picture support offers Add picture support, which
-/// downloads only that file, and Use without pictures.
+/// downloads only that file, and Use without pictures. The default model (the one included with the app)
+/// stands out with a filled Default badge.
 /// </summary>
 public partial class ModelSetupWindow : Window
 {
@@ -80,8 +81,8 @@ public partial class ModelSetupWindow : Window
 
         CloseBtn.Content = firstRun ? "Skip for now" : "Cancel";
         if (firstRun)
-            IntroText.Text = "Welcome! Pick the AI model to talk to. The included Gemma 4 E4B is ready right away; bigger models " +
-                             "are smarter but need a stronger graphics card. You can change this any time with Choose AI model... under Chat Backend.";
+            IntroText.Text = $"Welcome! Pick the AI model to talk to. The default, {LocalModelCatalog.Default.Name}, came with the app and is ready right away; " +
+                             "bigger models are smarter but need a stronger graphics card. You can change this any time with Choose AI model... under Chat Backend.";
         PcInfoText.Text = DescribePc(gpu, ramBytes);
 
         BuildOptions();
@@ -165,7 +166,10 @@ public partial class ModelSetupWindow : Window
     private void AddLocalOption(LocalModelInfo model)
     {
         var fit = LocalModelCatalog.Evaluate(model, _gpu, _ramBytes);
+        var isDefault = LocalModelCatalog.IsDefault(model);
         var badges = new List<UIElement>();
+        if (isDefault)
+            badges.Add(DefaultBadge());
         if (model.Included)
             badges.Add(Badge("Included", "PrimaryLightBrush"));
         var fitLabel = LocalModelCatalog.FitLabel(fit);
@@ -187,7 +191,13 @@ public partial class ModelSetupWindow : Window
             Line("", $"Graphics card: {LocalModelCatalog.FormatGb(model.MinCardGb)} or more, for example {model.ExampleCards}")
         };
 
-        var option = BuildCard(model.Id, model.Name, "", model.Summary, badges, lines, inputs: null, model, downloadLine, picturesLine: picturesLine);
+        // The default model says so first: in use unless another is chosen, and (normally) nothing to download.
+        var note = !isDefault ? null
+            : !IsInstalled(model) ? "The default model."
+            : InstalledProjector(model) != null ? "The default model: ready right away, no download needed."
+            : "The default model: ready right away.";
+        var option = BuildCard(model.Id, model.Name, "", model.Summary, badges, lines, inputs: null, model, downloadLine, picturesLine: picturesLine,
+            note: note);
         UpdateDownloadLine(option);
     }
 
@@ -200,9 +210,10 @@ public partial class ModelSetupWindow : Window
         BuildCard(optionKey, title, icon, summary, new List<UIElement>(), lines, inputs, null, null, url, key, model);
     }
 
+    // <paramref name="note"/>: a highlighted line above the summary (the default model's).
     private Option BuildCard(string key, string title, string icon, string summary, List<UIElement> badges, List<UIElement> lines,
         FrameworkElement? inputs, LocalModelInfo? model, TextBlock? downloadLine,
-        TextBox? url = null, PasswordBox? apiKey = null, TextBox? modelBox = null, TextBlock? picturesLine = null)
+        TextBox? url = null, PasswordBox? apiKey = null, TextBox? modelBox = null, TextBlock? picturesLine = null, string? note = null)
     {
         var radio = new RadioButton { GroupName = "model-choice", VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 3, 10, 0) };
 
@@ -214,6 +225,12 @@ public partial class ModelSetupWindow : Window
 
         var body = new StackPanel();
         body.Children.Add(header);
+        if (!string.IsNullOrEmpty(note))
+        {
+            var noteText = new TextBlock { Text = note, TextWrapping = TextWrapping.Wrap, FontSize = 12.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 0) };
+            noteText.SetResourceReference(TextBlock.ForegroundProperty, "PrimaryLightBrush");
+            body.Children.Add(noteText);
+        }
         var summaryText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12.5, Margin = new Thickness(0, 4, 0, 6) };
         summaryText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
         summaryText.Text = summary;
@@ -280,6 +297,30 @@ public partial class ModelSetupWindow : Window
         panel.Children.Add(heading);
         panel.Children.Add(sub);
         return panel;
+    }
+
+    // Filled in the accent color with white text, so it stands out from the outlined badges.
+    private UIElement DefaultBadge()
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        // A filled star (Segoe MDL2 Assets).
+        content.Children.Add(new TextBlock
+        {
+            Text = "\uE735", Style = (Style)FindResource("IconText"), FontSize = 10, Foreground = Brushes.White,
+            Margin = new Thickness(0, 1, 4, 0), VerticalAlignment = VerticalAlignment.Center
+        });
+        content.Children.Add(new TextBlock { Text = "Default", FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center });
+        var border = new Border
+        {
+            Child = content,
+            Padding = new Thickness(8, 2, 8, 3),
+            Margin = new Thickness(0, 2, 6, 2),
+            CornerRadius = new CornerRadius(8),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "The model the app uses unless you choose another"
+        };
+        border.SetResourceReference(Border.BackgroundProperty, "PrimaryBrush");
+        return border;
     }
 
     private static UIElement Badge(string text, string brushKey)
@@ -486,7 +527,9 @@ public partial class ModelSetupWindow : Window
     {
         var model = option.Model!;
         if (IsInstalled(model))
-            return NeedsPictureSupport(option) ? "Add picture support" : "Use this model";
+            return NeedsPictureSupport(option) ? "Add picture support"
+                : LocalModelCatalog.IsDefault(model) ? "Use the default model"
+                : "Use this model";
         return File.Exists(ModelDownloader.PartPath(DownloadTarget(model))) || File.Exists(ModelDownloader.PartPath(ProjectorTarget(model)))
             ? "Continue download"
             : "Download and use";
