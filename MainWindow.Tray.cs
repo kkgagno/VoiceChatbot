@@ -96,7 +96,7 @@ public partial class MainWindow
 
         if (!GlobalHotkeys.TryGetKeys(choice, out var keys))
         {
-            SetHotkeyStatus("Off. Use the Listen button, or Ctrl+L while this window is active.", "", "TextMutedBrush");
+            SetHotkeyStatus("Off. Use the Listen / Stop listening button, or Ctrl+L while this window is active.", "", "TextMutedBrush");
             UpdateTrayText();
             return true;
         }
@@ -186,8 +186,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// The global hotkey and the tray's Listen item: stops listening when the microphone is on, otherwise
-    /// starts a listening turn exactly like the Listen button (face policy included). Works while hidden.
+    /// The global hotkey and the tray's Listen item: work like the Listen / Stop listening switch (face policy
+    /// included). Works while hidden.
     /// </summary>
     private void ToggleListeningFromShortcut()
     {
@@ -196,10 +196,9 @@ public partial class MainWindow
             if (_shutdownStarted || _speech == null)
                 return;
 
-            if (_speech.CurrentState == VoiceState.Listening)
+            if (IsListeningOn)
             {
-                // Same as the Mic button: also turns auto-listen off so listening does not restart by itself.
-                MicToggle_Click(this, new RoutedEventArgs());
+                ToggleListening();
                 return;
             }
 
@@ -211,8 +210,8 @@ public partial class MainWindow
                 return;
             }
 
-            ListenToggle_Click(this, new RoutedEventArgs());
-            if (_speech.CurrentState != VoiceState.Listening)
+            ToggleListening();
+            if (AlwaysListenToggle.IsChecked != true)
                 NotifyWhenInBackground("Could not start listening. Open Voice Chatbot to see why.");
         }
         catch (Exception ex)
@@ -236,7 +235,7 @@ public partial class MainWindow
 
             menu = new Forms.ContextMenuStrip();
             var openItem = new Forms.ToolStripMenuItem("Open Voice Chatbot", null, (_, _) => RunTrayCommand(ShowFromTray));
-            _trayListenItem = new Forms.ToolStripMenuItem("Listen now", null, (_, _) => RunTrayCommand(ToggleListeningFromShortcut));
+            _trayListenItem = new Forms.ToolStripMenuItem("Listen", null, (_, _) => RunTrayCommand(ToggleListeningFromShortcut));
             _traySpeechItem = new Forms.ToolStripMenuItem("Speak responses", null, (_, _) => RunTrayCommand(ToggleSpeechFromTray));
             // Close after the menu finishes its click: closing disposes this menu (DisposeTrayAndHotkey).
             var exitItem = new Forms.ToolStripMenuItem("Exit", null,
@@ -322,7 +321,7 @@ public partial class MainWindow
         if (_trayListenItem == null || _traySpeechItem == null)
             return;
 
-        _trayListenItem.Text = _speech?.CurrentState == VoiceState.Listening ? "Stop listening" : "Listen now";
+        _trayListenItem.Text = _speech != null && IsListeningOn ? "Stop listening" : "Listen";
         _trayListenItem.ShortcutKeyDisplayString = _activeHotkey;
         _traySpeechItem.Checked = TtsToggle.IsChecked == true;
     }

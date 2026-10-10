@@ -231,8 +231,9 @@ public partial class MainWindow : Window
             await InitializeDesktopServiceControlsAsync();
 
             // Always-listen toggle
-            AlwaysListenToggle.Checked += (s, ev) => StartAutoListen();
-            AlwaysListenToggle.Unchecked += (s, ev) => StopAutoListen();
+            AlwaysListenToggle.Checked += (s, ev) => { UpdateListenToggleLook(); StartAutoListen(); UpdateTrayMenu(); };
+            AlwaysListenToggle.Unchecked += (s, ev) => { UpdateListenToggleLook(); StopAutoListen(); UpdateTrayMenu(); };
+            UpdateListenToggleLook();
             StartWaitingForWakeWordIfEnabled();
 
             // Load conversation memories

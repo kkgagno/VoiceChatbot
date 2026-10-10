@@ -420,8 +420,8 @@ public partial class MainWindow
         }
         else if (ctrl && e.Key == Key.L)
         {
-            if (ListenBtn.IsEnabled)
-                ListenToggle_Click(ListenBtn, new RoutedEventArgs());
+            if (AlwaysListenToggle.IsEnabled)
+                ToggleListening();
             e.Handled = true;
         }
         else if (ctrl && e.Key == Key.K)

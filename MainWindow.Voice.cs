@@ -107,7 +107,7 @@ public partial class MainWindow
     {
         Dispatcher.Invoke(() =>
         {
-            // After a bare wake phrase, listen for the request even when Auto is off (Listen was pressed).
+            // After a bare wake phrase, listen for the request even if the Listen switch was turned off meanwhile.
             if (_autoListening || _speech.HasWakePhraseFollowUp)
             {
                 // No speech heard (or speech without the wake word), restart listening
@@ -177,41 +177,36 @@ public partial class MainWindow
 
     // ==================== Button Handlers ====================
 
-    private void MicToggle_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// The Listen / Stop listening switch (also Ctrl+L, the global hotkey and the tray): Listen keeps the
+    /// microphone open for a hands-free conversation, Stop listening turns it off. UI thread.
+    /// </summary>
+    private void ToggleListening()
     {
-        if (_speech.CurrentState == VoiceState.Listening)
+        if (IsListeningOn)
         {
-            _speech.StopListening();
-            _autoListening = false;
             AlwaysListenToggle.IsChecked = false;
-            SetUIState("idle", "Ready");
-        }
-        else
-        {
-            if (!IsVoiceInputAllowedByFacePolicy())
+            // A wake-word follow-up can listen with the switch off; Stop listening ends that too.
+            if (_speech.CurrentState == VoiceState.Listening)
             {
-                AddSystemMessage("Voice input is blocked by local face policy.");
-                return;
+                _speech.StopListening();
+                SetUIState("idle", "Ready");
             }
-
-            _speech.StopSpeaking();
-            _speech.StartListeningWithoutWakePhrase();
-        }
-    }
-
-    private void ListenToggle_Click(object sender, RoutedEventArgs e)
-    {
-        if (!IsVoiceInputAllowedByFacePolicy())
-        {
-            AddSystemMessage("Voice input is blocked by local face policy.");
             return;
         }
 
-        _speech.StopSpeaking();
-        _speech.ReadyForNextSpeech();
-        // Pressing Listen (or the hotkey) is the wake-up: this turn does not need the wake word.
-        if (!_speech.StartListeningWithoutWakePhrase())
-            SetUIState("idle", "Voice input unavailable");
+        AlwaysListenToggle.IsChecked = true;
+    }
+
+    /// <summary>True while the microphone is meant to be on: the switch is on, or a listening turn is running.</summary>
+    private bool IsListeningOn => AlwaysListenToggle.IsChecked == true || _speech.CurrentState == VoiceState.Listening;
+
+    /// <summary>The switch reads "Listen" when the microphone is off and "Stop listening" while it is on.</summary>
+    private void UpdateListenToggleLook()
+    {
+        var on = AlwaysListenToggle.IsChecked == true;
+        AlwaysListenToggle.Content = on ? "Stop listening" : "Listen";
+        Ui.SetIcon(AlwaysListenToggle, on ? "\uE71A" : "\uE720");
     }
 
     private void StopAll_Click(object sender, RoutedEventArgs e)
@@ -232,13 +227,17 @@ public partial class MainWindow
         {
             _autoListening = false;
             AlwaysListenToggle.IsChecked = false;
-            AddSystemMessage("Auto-listen is blocked by local face policy.");
+            AddSystemMessage("Listening is blocked by local face policy.");
             return;
         }
 
         _autoListening = true;
         _pausedListeningForTextInput = false;
-        SetUIState("idle", "Auto-listen active");
+        // Like the old Listen button: pressing Listen while the assistant talks stops the talking first.
+        if (_speech.CurrentState == VoiceState.Speaking)
+            _speech.StopSpeaking();
+        _speech.ReadyForNextSpeech();
+        SetUIState("idle", "Listening - microphone on");
         _speech.StartListening();
     }
 
@@ -268,7 +267,7 @@ public partial class MainWindow
         _pausedListeningForTextInput = false;
         if (IsVoiceInputAllowedByFacePolicy())
         {
-            SetUIState("idle", "Auto-listen active");
+            SetUIState("idle", "Listening - microphone on");
             _speech.StartListening();
         }
     }

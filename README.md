@@ -76,6 +76,8 @@ Whisper can run on the graphics card: the installer includes the Vulkan build of
 
 Each utterance is transcribed on its own, without the previous one as context, and a sentence Whisper repeats back to back ("This is bullshit.This is bullshit.") is sent once.
 
+**Listen** turns the microphone on and keeps it on, so you can talk hands-free: say something, get the answer, say the next thing. The button then reads **Stop listening**; press it (or Ctrl+L, or Esc / **Stop**) to turn the microphone off.
+
 If **Listen** does not start on a new PC:
 
 1. Select `Whisper.net` as the transcription backend.
@@ -139,18 +141,18 @@ To have the assistant start talking while the model is still writing, turn on **
 
 ### Wake word ("Hey Onyx")
 
-Turn on **Only respond after the wake word** under **Voice Input** to have the app keep listening but answer only when you address it. Turning it on also turns on **Auto** (continuous listening), and it starts waiting again when the app opens. The status shows `Waiting for "hey onyx"`.
+Turn on **Only respond after the wake word** under **Voice Input** to have the app keep listening but answer only when you address it. Turning it on also turns on **Listen** (the microphone stays on), and it starts waiting again when the app opens. The status shows `Waiting for "hey onyx"`.
 
 - Say the wake word and your request together: "Hey Onyx, what's the weather?" sends "what's the weather?".
 - Or say just "Hey Onyx", wait for the Windows "Asterisk" sound, then ask within about 8 seconds. That one request needs no wake word.
 - Everything else is ignored: no chat message and no reply (it is written to the log), and the app keeps listening. After each reply it waits for the wake word again.
-- **Listen**, **Mic**, the global hotkey and the tray's Listen item start a turn that does not need the wake word.
+- While the wake word is on, **Listen** (and the global hotkey and the tray's Listen item) keeps the microphone on and waits for the wake word; **Stop listening** turns the microphone off.
 - Change the phrase in the **Wake word** box (default `hey onyx`). It is matched in the Whisper transcript, ignoring case and punctuation, with the usual spellings of "hey" (hay, hi, hei, a) and small spelling differences in the name ("Hey, Onix.", "Hey Annex", "Hey on X"), but not other names such as "Hey Annie".
 - Saved as `AutoDetectVoice` (false when the switch is on) and `WakeWord` in `settings.json`. The old default "hey assistant" becomes "hey onyx"; a phrase you typed is kept. The openWakeWord detector ("Hey Jarvis") from 1.0.16 has been removed.
 
 ### Live Transcriber
 
-**Transcribe** (next to **Listen** and **Mic**) opens the Live Transcriber, a separate window for meetings, calls and videos. It remembers its size, position, pane heights and text size (saved as `Transcriber` in `settings.json`).
+**Transcribe** (next to **Listen**) opens the Live Transcriber, a separate window for meetings, calls and videos. It remembers its size, position, pane heights and text size (saved as `Transcriber` in `settings.json`).
 
 - **Source**: **Microphone** (the microphone selected under **Voice Input**) or **PC audio** (everything the PC plays, recorded from the default speakers or headphones). Switching while recording carries on with the new source.
 - Audio is cut into chunks at natural pauses (half a second of silence once a chunk is 2 seconds long, at most 20 seconds) and stretches of silence are skipped. Chunks are transcribed one at a time by the same Whisper backend as voice input, and each becomes a line such as `[03:12] ...` (time since the session started). **Stop** finishes the chunks still being transcribed before it says "Stopped".
@@ -312,7 +314,7 @@ These tools can be installed with WinGet where packages are available.
 
 ### Tray and hotkey
 
-The listen hotkey (Ctrl+Alt+Space by default) works in any app, also while Voice Chatbot is minimized or hidden in the tray. It starts listening like **Listen** does and stops listening when pressed again. Pick Ctrl+Shift+Space, Ctrl+Alt+L or Off under **App > Listen hotkey**; if another app already uses the combination, the app says so there and in the chat. Right-click the tray icon for **Open Voice Chatbot**, **Listen now**, **Speak responses** and **Exit**, or double-click it to open the window. Turn on **App > Minimize to tray** to hide the window in the tray instead of the taskbar when you minimize it.
+The listen hotkey (Ctrl+Alt+Space by default) works in any app, also while Voice Chatbot is minimized or hidden in the tray. It works like the **Listen** / **Stop listening** button: press it to turn the microphone on, press it again to turn it off. Pick Ctrl+Shift+Space, Ctrl+Alt+L or Off under **App > Listen hotkey**; if another app already uses the combination, the app says so there and in the chat. Right-click the tray icon for **Open Voice Chatbot**, **Listen** / **Stop listening**, **Speak responses** and **Exit**, or double-click it to open the window. Turn on **App > Minimize to tray** to hide the window in the tray instead of the taskbar when you minimize it.
 
 ## Building from source
 

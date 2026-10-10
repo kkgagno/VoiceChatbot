@@ -394,7 +394,7 @@
 
                                 <ToggleButton x:Name="WakeWordOnlyToggle" Content="Only respond after the wake word" Margin="0,0,0,2"
                                               Style="{StaticResource SwitchToggle}" Click="WakeWordOnlyToggle_Click"
-                                              ToolTip="Keeps listening (Auto) but only answers speech that contains the wake word, for example &quot;Hey Onyx, what's the weather?&quot;. Or say just &quot;Hey Onyx&quot;, wait for the sound, then ask. Everything else is ignored. Listen, Mic and the hotkey don't need the wake word."/>
+                                              ToolTip="Keeps the microphone on (Listen) but only answers speech that contains the wake word, for example &quot;Hey Onyx, what's the weather?&quot;. Or say just &quot;Hey Onyx&quot;, wait for the sound, then ask. Everything else is ignored."/>
                                 <TextBlock x:Name="WakeWordStatusText" Text="Off: everything you say is answered" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
 
                                 <StackPanel Style="{StaticResource FieldBlock}">
@@ -964,13 +964,11 @@
                             <ComboBox x:Name="PersonaCombo" Width="140" Margin="0,0,8,0" VerticalAlignment="Center"
                                       MaxDropDownHeight="360" ToolTip="Persona"
                                       SelectionChanged="PersonaCombo_SelectionChanged"/>
-                            <Button x:Name="ListenBtn" Content="Listen" local:Ui.Icon="&#xE720;" Style="{StaticResource ActionButton}"
-                                    Click="ListenToggle_Click" Margin="0,0,6,0" ToolTip="Listen for one question (Ctrl+L)"/>
-                            <ToggleButton x:Name="AlwaysListenToggle" Content="Auto" local:Ui.Icon="&#xE8EE;"
+                            <!-- One switch for the microphone: Listen keeps it open for a hands-free conversation,
+                                 Stop listening turns it off. Label and icon follow the state (UpdateListenToggleLook). -->
+                            <ToggleButton x:Name="AlwaysListenToggle" Content="Listen" local:Ui.Icon="&#xE720;"
                                           Style="{StaticResource ToggleFlatButton}" Margin="0,0,6,0"
-                                          ToolTip="Continuous hands-free conversation"/>
-                            <Button x:Name="MicBtn" Content="Mic" local:Ui.Icon="&#xE7C8;" Style="{StaticResource SecondaryButton}"
-                                    Click="MicToggle_Click" Margin="0,0,6,0" ToolTip="Toggle the microphone on or off"/>
+                                          ToolTip="Listen: the microphone stays on and you can talk hands-free. Stop listening: the microphone turns off. (Ctrl+L)"/>
                             <Button x:Name="TranscribeBtn" Content="Transcribe" local:Ui.Icon="&#xE8FD;" Style="{StaticResource SecondaryButton}"
                                     Click="Transcribe_Click" Margin="0,0,6,0"
                                     ToolTip="Open live transcription and summarization window"/>
@@ -1006,7 +1004,7 @@
                                 <TextBlock Text="How can I help today?" FontSize="26" FontWeight="SemiBold" HorizontalAlignment="Center"/>
                                 <TextBlock HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,24"
                                            Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" MaxWidth="560"
-                                           Text="Talk or type. Press Listen for a single question, Auto for hands-free conversation, or just start typing below."/>
+                                           Text="Talk or type. Press Listen to talk hands-free (the microphone stays on until you press Stop listening), or just start typing below."/>
 
                                 <TextBlock Text="TRY ASKING" Style="{StaticResource SubHeading}" HorizontalAlignment="Center"/>
                                 <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,20">

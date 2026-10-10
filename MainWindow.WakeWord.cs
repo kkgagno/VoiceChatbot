@@ -9,7 +9,7 @@ public partial class MainWindow
 {
     // ==================== Wake word ====================
     // "Only respond after the wake word" (Voice Input) turns AutoDetect off: the app keeps listening
-    // (Auto) and answers only speech that contains the wake phrase, "hey onyx" by default
+    // (Listen) and answers only speech that contains the wake phrase, "hey onyx" by default
     // (SpeechEngine.WakeWord.cs). Speech without it is ignored without a chat message. A bare
     // "Hey Onyx" plays a sound and the next utterance is answered without the phrase.
 
@@ -58,7 +58,7 @@ public partial class MainWindow
         _speech.AutoDetect = !WakeWordOnly;
         SaveSettings();
 
-        // Waiting for the wake word needs the microphone on: turn on Auto (continuous listening).
+        // Waiting for the wake word needs the microphone on: turn on Listen.
         if (WakeWordOnly && AlwaysListenToggle.IsChecked != true)
             AlwaysListenToggle.IsChecked = true;
         else if (_speech.CurrentState == VoiceState.Listening)
@@ -111,7 +111,7 @@ public partial class MainWindow
         }
         else
         {
-            text = $"Turn on Auto to wait for \"{WakePhraseForDisplay}\"";
+            text = $"Press Listen to wait for \"{WakePhraseForDisplay}\"";
             brush = "TextSecondaryBrush";
         }
 
