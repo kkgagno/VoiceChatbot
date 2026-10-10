@@ -44,6 +44,20 @@
     <!-- GPU Whisper on any Vulkan GPU (AMD Radeon, NVIDIA, Intel); falls back to Whisper.net.Runtime (CPU). -->
     <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.7.1" />
     <PackageReference Include="System.Speech" Version="9.0.0" />
+    <!-- Kokoro text-to-speech inside the app (no Python): see BundledKokoro.cs. -->
+    <PackageReference Include="KokoroSharp.CPU" Version="$(KokoroSharpVersion)" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <KokoroSharpVersion>0.8.4</KokoroSharpVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The English (and other v1.0) Kokoro voices, published to kokoro\voices. The model itself
+         (kokoro\kokoro.onnx) is downloaded by scripts\Build-Installer.ps1. -->
+    <Content Include="$(NuGetPackageRoot)kokorosharp/$(KokoroSharpVersion)/content/voices/*.npy"
+             Link="kokoro\voices\%(Filename)%(Extension)"
+             CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>

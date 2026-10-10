@@ -310,14 +310,14 @@ public static class HelpContent
     {
         // ---------- Start here ----------
         new TopicBuilder(GettingStartedId, "Getting started", GroupStart, "\uE80F",
-                "Voice Chatbot Mini is a voice and text assistant for an AI model that runs on your own PC or network. Five steps get you talking to it.")
-            .Keywords("start", "setup", "first", "begin", "quick start", "introduction", "overview")
+                "Voice Chatbot Mini is a voice and text assistant. It comes with an AI model that runs on your own PC, so it works right after installing, without internet. Five steps get you talking to it.")
+            .Keywords("start", "setup", "first", "begin", "quick start", "introduction", "overview", "offline")
             .Steps(
-                "Start a chat model server, for example Ollama with one model downloaded. Mini connects to a server you run; it does not start or stop models for you. See **Set up a chat model**.",
-                "Open the settings sidebar (the three-line button at the top left, or Ctrl+B). Under **Chat Backend**, choose the **Provider**, check the address, click **Refresh Models** and pick a **Model**.",
-                "Type a message in the box at the bottom and press Enter. The CHAT line at the top of the sidebar shows whether the server is connected.",
+                "Start the app. The included model, Gemma 4 E4B, works right away: there is nothing to set up. The first time, the model chooser opens; keep the included model, pick a bigger one, or click **Skip for now**. To change it later, click **Choose AI model...** under **Chat Backend**. See **Choose a chat model**.",
+                "Open the settings sidebar (the three-line button at the top left, or Ctrl+B). The CHAT line at the top shows Loading... while the model starts and Ready when it can answer.",
+                "Type a message in the box at the bottom and press Enter.",
                 "To talk instead of typing: open **Voice Input**, pick a **Whisper model**, click **Download Model** once and choose your **Microphone**. Then press **Listen** in the top bar.",
-                "To hear the answers: set up Kokoro once (see **Voice Output**). **Speak responses** is on by default.")
+                "To hear the answers: nothing to set up. Kokoro speech is built in and **Speak responses** is on by default. Pick a **Voice** under **Voice Output**.")
             .Paragraph("Optional extras: answers from your own files (**Knowledge Folder**), live web search (**Web Search**), the **Live Transcriber** for meetings, prompts that run on a timer (**Scheduler**) and the **Phone Remote** for your phone.")
             .Heading("Finding your way around")
             .Bullets(
@@ -325,24 +325,31 @@ public static class HelpContent
                 "Top: buttons for your conversations, the persona box, and **Listen**, **Transcribe**, **Scheduler**, **Help** and **Stop**.",
                 "Middle: the chat. Bottom: the message box with the **Image** and **Document** buttons.",
                 "Press F1 any time to open Help. Inside a settings section, F1 opens the topic for that section. Type in the search box above the topic list to find any word, and use **Next** to go through the topics in order.")
-            .Tip("Mini keeps your settings, chats and memories on this PC, in `%APPDATA%\\VoiceChatbotMini`.")
+            .Tip("Mini keeps your settings, chats and memories on this PC, in `%APPDATA%\\VoiceChatbotMini`. Models you download are kept in `%LOCALAPPDATA%\\VoiceChatbotMini\\models`.")
             .SeeAlso("what-you-need", "chat-server", "top-bar")
             .Build(),
 
         new TopicBuilder("what-you-need", "What you need", GroupStart, "\uE9D5",
-                "Only a chat model server is required. Everything else is optional and can be added later.")
-            .Keywords("requirements", "install", "download", "prerequisites", "checklist", "python", "hardware")
+                "Nothing else is required: the app comes with an AI model and a voice. A graphics card makes answers faster, and everything else is optional.")
+            .Keywords("requirements", "install", "download", "prerequisites", "checklist", "python", "hardware", "gpu", "disk space", "offline")
             .Heading("Required")
             .Bullets(
-                "**A chat model server**: Ollama (the easiest), llama.cpp, LM Studio or any server with an OpenAI-compatible API, on this PC or on another computer on your network. A model with tool support can search the web and save memories by itself; a vision model can look at pictures you attach.",
-                "**Windows 10 (version 1809 or newer) or Windows 11**, 64-bit.")
+                "**Windows 10 (version 1809 or newer) or Windows 11**, 64-bit.",
+                "Disk space for the app, which includes a model of about 5 GB, plus room for any bigger model you download (about 7.5 to 18 GB each).")
+            .Heading("For the chat model")
+            .Bullets(
+                "Nothing extra: the included Gemma 4 E4B runs on this PC with the bundled llama.cpp, without internet and without an account.",
+                "A graphics card makes it fast. With 8 GB of video memory or more (such as an RTX 3060 Ti, RTX 4060, RX 7600 or Arc A750) the whole model fits on the card. NVIDIA, AMD and Intel cards all work; keep the graphics driver up to date.",
+                "Without a graphics card, or with one that is too small, the model runs on the processor. That works, but answers come slower.",
+                "Bigger models need bigger cards: 12 GB for Gemma 4 12B, 24 GB for Gemma 4 26B A4B and Gemma 4 31B. See **Choose a chat model**.",
+                "No graphics card needed at all: use Ollama or a llama.cpp server on another computer, or OpenAI's cloud models (needs an API key; you pay per use).")
             .Heading("To talk to it (voice input)")
             .Bullets(
                 "A microphone: a headset, webcam microphone or the one built into a laptop.",
                 "A Whisper speech recognition model. Pick a size under **Voice Input** and click **Download Model**. It is downloaded once and runs on this PC, on the processor or the graphics card. Your voice is not sent to the internet.")
             .Heading("To hear it (voice output)")
             .Bullets(
-                "Kokoro speech on this PC. The app includes the Kokoro scripts; they need Python 3.11, 3.12 or 3.13 (64-bit) and a one-time install. See **Voice Output**.",
+                "Nothing extra: Kokoro speech is built into the app and runs on the processor. Python is no longer needed.",
                 "Or a Kokoro-FastAPI server on another computer (port 8880), entered as **Remote Kokoro host**.")
             .Heading("Optional")
             .Bullets(
@@ -350,36 +357,65 @@ public static class HelpContent
                 "A folder with your own documents for **Knowledge Folder**.",
                 "A phone or tablet on the same Wi-Fi for the **Phone Remote**, and Tailscale (or another VPN) to use it away from home.",
                 "AMD Ryzen AI Software and its NPU driver, only if you want speech recognition to run on a Ryzen AI NPU.")
-            .Paragraph("Already included: the installer brings yt-dlp, Deno and ffmpeg for YouTube links and phone audio, and Windows has the text recognition (OCR) for scanned PDFs and pictures built in.")
+            .Paragraph("Already included: llama.cpp with the Gemma 4 E4B model, Kokoro speech, and yt-dlp, Deno and ffmpeg for YouTube links and phone audio. Windows has the text recognition (OCR) for scanned PDFs and pictures built in.")
             .SeeAlso("chat-server", "voice-output", "voice-input")
             .Build(),
 
-        new TopicBuilder("chat-server", "Set up a chat model", GroupStart, "\uE7F4",
-                "Mini talks to a model server that you start yourself. Pick one of these, then enter its address under Chat Backend.")
-            .Keywords("ollama", "llama.cpp", "llama-server", "lm studio", "vllm", "openai", "gguf", "server", "backend", "model", "url", "localhost", "pull")
-            .Heading("Option 1: Ollama (easiest)")
+        new TopicBuilder("chat-server", "Choose a chat model", GroupStart, "\uE7F4",
+                "The app comes with Gemma 4 E4B, which runs on this PC. With Choose AI model... you can pick a bigger Gemma 4 model, Ollama, a llama.cpp server or OpenAI instead.")
+            .Keywords("gemma", "gemma 4", "e4b", "12b", "26b", "a4b", "31b", "vram", "video memory", "graphics card", "gpu", "nvidia", "amd", "intel", "rtx", "radeon",
+                "download", "model chooser", "choose ai model", "built-in model", "models folder", "disk space", "ollama", "llama.cpp", "llama-server", "lm studio", "vllm", "openai", "chatgpt", "gpt",
+                "api key", "cost", "price", "free", "gguf", "server", "backend", "model", "url", "localhost", "pull", "offline")
+            .Heading("The model chooser")
+            .Bullets(
+                "Click **Choose AI model...** at the top of **Chat Backend**. It also opens by itself the first time the app starts; **Skip for now** keeps the included model.",
+                "At the top it shows what this PC has, for example \"This PC: NVIDIA GeForce RTX 4060 with 8 GB of video memory, and 32 GB of memory\". Video memory is the memory on the graphics card; a model that fits in it answers fastest.",
+                "Each model on this PC gets a badge: **Fits your graphics card** (fast), **Part runs on the processor: slower**, **Runs on the processor: slow** or **Too big for this PC**.",
+                "Pick one and click **Use this model**, or **Download and use** for a model that is not on this PC yet. You can change your mind any time.")
+            .Heading("Gemma 4 models that run on this PC")
+            .Bullets(
+                "**Gemma 4 E4B**: included, no download. Small and quick; good for everyday chat, voice and short documents. Needs about 6.5 GB of video memory: a graphics card with 8 GB or more, such as an RTX 3060 Ti, RTX 4060, RX 7600 or Arc A750. 6 GB cards work with a little on the processor.",
+                "**Gemma 4 12B**: download about 7.5 GB. Clearly smarter, with better answers about your documents. Needs about 9.5 GB of video memory: a 12 GB card, such as an RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT or Arc B580.",
+                "**Gemma 4 26B A4B**: download about 17 GB. A \"mixture of experts\" model: close to the top model's quality, but quick. Needs about 19 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX. 16 GB cards run it with part on the processor.",
+                "**Gemma 4 31B**: download about 18 GB. The smartest, but slower. Needs about 21 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX.")
+            .Paragraph("They are free and private: they run on this PC with the bundled llama.cpp (on NVIDIA, AMD and Intel graphics cards, or on the processor) and work without internet once downloaded.")
+            .Heading("Downloading a bigger model")
+            .Bullets(
+                "The download runs in the background, from Hugging Face. Its progress shows in the chooser and under **Chat Backend**. **Keep downloading in the background** closes the chooser while it continues.",
+                "**Pause** (**Pause download** in the chooser) stops it for now. Pick the model again and click **Continue download** to go on where it stopped.",
+                "When the file is complete, its checksum is checked and the app switches to the new model by itself. Until then it keeps using Gemma 4 E4B.",
+                "Downloaded models are kept in `%LOCALAPPDATA%\\VoiceChatbotMini\\models`. The chooser's **Models folder** button opens it. Delete a file there to free disk space; uninstalling the app does not delete them. The included model is in the app folder's `models` folder.")
+            .Heading("Models on a server or in the cloud")
+            .Paragraph("These need no video memory on this PC when the model runs on another computer. Pick one in the chooser, enter what it asks for, and click its button.")
+            .Bullets(
+                "**Ollama**: free. Needs Ollama (https://ollama.com) with a model downloaded, on this PC or another computer. Enter its address, such as `http://localhost:11434`. See the steps below.",
+                "**llama.cpp server (or another OpenAI-compatible server)**: free. For llama.cpp's llama-server, LM Studio, vLLM and similar servers. Enter the address ending in `/v1`, such as `http://192.168.1.50:8080/v1`, and an API key only if the server has one.",
+                "**OpenAI (cloud)**: works on any PC. Needs an OpenAI API key from https://platform.openai.com/api-keys, with billing set up. You pay OpenAI per use: `gpt-5-mini` (the default) costs a fraction of a cent per answer, and bigger models cost more. Prices are at https://openai.com/api/pricing. Your messages, and documents you share, are sent to OpenAI.")
+            .Heading("Use your own Ollama server")
             .Steps(
                 "Download and install Ollama for Windows from https://ollama.com/download. It runs in the background.",
-                "Open PowerShell or Terminal and download a model, for example `ollama pull gemma3:4b`. More models are listed at https://ollama.com/library; small ones (1B to 8B) are the fastest on an ordinary PC.",
-                "In Mini, open **Chat Backend**, set **Provider** to `Ollama` and **Ollama URL** to `http://localhost:11434`.",
-                "Click **Refresh Models** and choose the model in **Model**.")
-            .Tip("Ollama on another PC: on that PC set the environment variable `OLLAMA_HOST` to `0.0.0.0` and restart Ollama, then enter `http://<that PC's IP address>:11434` here.")
-            .Heading("Option 2: llama.cpp")
+                "Open PowerShell or Terminal and download a model, for example `ollama pull gemma4`. More models are listed at https://ollama.com/library.",
+                "In Mini, click **Choose AI model...**, pick **Ollama**, check the address (`http://localhost:11434` when Ollama runs on this PC) and click **Use Ollama**.",
+                "Under **Chat Backend**, click **Refresh Models** and choose the model in **Model**.")
+            .Tip("Ollama on another PC: on that PC set the environment variable `OLLAMA_HOST` to `0.0.0.0` and restart Ollama, then enter `http://<that PC's IP address>:11434` as the address.")
+            .Heading("Use your own llama.cpp server")
             .Steps(
                 "Download llama.cpp from https://github.com/ggml-org/llama.cpp/releases and a model file in GGUF format.",
                 "Start the server, for example `llama-server -m C:\\Models\\model.gguf --port 8080 -c 16384 --jinja`. `--jinja` lets the model use tools; add `--host 0.0.0.0` to reach it from other computers.",
-                "In Mini set **Provider** to `OpenAI-compatible` and **OpenAI / llama.cpp URL** to `http://localhost:8080/v1` (or `http://<server IP address>:8080/v1`).",
-                "Click **Refresh Models**.")
-            .Heading("Option 3: LM Studio or another OpenAI-compatible server")
+                "In Mini, click **Choose AI model...**, pick **llama.cpp server (or another OpenAI-compatible server)**, enter `http://localhost:8080/v1` (or `http://<server IP address>:8080/v1`) and click **Use this server**.",
+                "Under **Chat Backend**, click **Refresh Models**.")
+            .Heading("LM Studio and other OpenAI-compatible servers")
             .Bullets(
-                "LM Studio: load a model and start the local server in its Developer tab, then set **Provider** to `OpenAI-compatible` and the URL to `http://localhost:1234/v1`.",
-                "vLLM, LocalAI, a hosted service and others: enter the server's address ending in `/v1`. If the server needs a key, enter it in **OpenAI API key (optional)**.")
+                "LM Studio: load a model and start the local server in its Developer tab, then use the address `http://localhost:1234/v1`.",
+                "vLLM, LocalAI, a hosted service and others: enter the server's address ending in `/v1`. If the server needs a key, enter it too.",
+                "Instead of the chooser you can also set **Provider** under **Chat Backend** to `Ollama` or `OpenAI-compatible` and fill in the address there.")
             .Heading("Good to know")
             .Bullets(
-                "Mini never starts, stops or switches model servers. Start the server first, then click **Refresh Models**.",
-                "The line under **Context window** shows how much text the server accepts per request and where that number came from.",
-                "Pictures you attach need a vision model. Tools (web search, date and time, stock quotes, reading web pages, saving memories) need a model that supports tools, such as an Ollama model tagged tools.")
-            .SeeAlso("chat-backend", "troubleshooting")
+                "The app starts and stops its built-in model by itself. It never starts, stops or switches models on servers you run yourself (Ollama, llama.cpp, LM Studio): start those first, then click **Refresh Models**.",
+                "Switching to Ollama, a server or OpenAI stops the built-in model, so its video memory is free for other programs.",
+                "The line under **Context window** shows how much text the model accepts per request and where that number came from.",
+                "Pictures you attach need a vision model on Ollama or a server; the built-in model reads text only. Tools (web search, date and time, stock quotes, reading web pages, saving memories) need a model that supports tools, such as the built-in Gemma 4 models or an Ollama model tagged tools.")
+            .SeeAlso("chat-backend", "what-you-need", "troubleshooting")
             .Build(),
 
         // ---------- Using the app ----------
@@ -405,7 +441,7 @@ public static class HelpContent
             .Keywords("message", "send", "type", "attach", "paste", "image", "picture", "photo", "pdf", "document", "youtube", "keep doc", "tools", "vision")
             .Bullets(
                 "Type and press Enter (or Shift+Enter) to send. Ctrl+Enter starts a new line. Ctrl+K jumps to the message box.",
-                "**Image** attaches pictures to the next message (JPG, PNG, BMP, GIF, WebP). Ctrl+V pastes a picture or screenshot. Only a vision model can see them.",
+                "**Image** attaches pictures to the next message (JPG, PNG, BMP, GIF, WebP). Ctrl+V pastes a picture or screenshot. Only a vision model on Ollama or a server can see them; the built-in model reads text only.",
                 "**Document** attaches a PDF, Word, Excel, PowerPoint, text or similar file to the next message. Scanned pages are read with Windows OCR (up to 8 pages).",
                 "**Keep doc**: keeps the attached document in every following question until you untick it. Without it, the document is only used for the next message.",
                 "Paste a YouTube link and ask for a summary: the captions are fetched, or the audio is transcribed when there are none.",
@@ -455,7 +491,7 @@ public static class HelpContent
                 "**Send to chat** gives the transcript and notes to the main chat, so you can ask questions about the meeting there.",
                 "**Clear** saves the session and starts a new one. Closing and reopening the window brings your last session back.",
                 "When stopped you can edit the transcript, for example to fix names before summarizing. The small and large A buttons, or Ctrl+mouse wheel, change the text size.")
-            .Tip("Notes are written by your chat model, so the model server must be running. While the assistant is speaking, the transcriber pauses so its voice is not written down. The same transcriber works in a browser on the **Phone Remote**, at `/transcribe`.")
+            .Tip("Notes are written by your chat model, so it must be available: the CHAT line in the sidebar reads Ready (built-in model) or Connected (a server). While the assistant is speaking, the transcriber pauses so its voice is not written down. The same transcriber works in a browser on the **Phone Remote**, at `/transcribe`.")
             .SeeAlso("phone-remote", "voice-input")
             .Build(),
 
@@ -495,45 +531,43 @@ public static class HelpContent
 
         // ---------- Settings sidebar ----------
         new TopicBuilder("chat-backend", "Chat Backend", GroupSidebar, "\uE8F2",
-                "Which model server to use, and how the model should answer.")
+                "Which AI model answers, where it runs, and how it should answer.")
             .Sidebar("Chat Backend")
-            .Keywords("provider", "ollama", "openai", "llama.cpp", "url", "api key", "model", "refresh models", "system prompt", "temperature", "tokens", "context", "num_ctx", "markdown", "thinking", "tools")
+            .Keywords("provider", "built-in model", "choose ai model", "gemma", "restart", "download", "pause", "llama-server", "ollama", "openai", "llama.cpp", "url", "api key", "model", "refresh models", "system prompt", "temperature", "tokens", "context", "num_ctx", "video memory", "markdown", "thinking", "tools")
             .Bullets(
-                "**Provider**: `Ollama`, or `OpenAI-compatible` for llama.cpp, LM Studio, vLLM and similar servers.",
-                "**Ollama URL**: where Ollama runs, normally `http://localhost:11434`.",
-                "**OpenAI / llama.cpp URL**: the server's address ending in `/v1`, for example `http://localhost:8080/v1`.",
-                "**OpenAI API key (optional)**: only for servers that need a key. It is saved encrypted.",
-                "**Model** and **Refresh Models**: Refresh Models loads the list from the server; pick a model or type its name.",
+                "**Choose AI model...**: opens the model chooser, with the Gemma 4 models that can run on this PC (and how well each suits it), Ollama, a llama.cpp server and OpenAI. See **Choose a chat model**.",
+                "**Provider**: `Built-in model` (the default) runs a model on this PC; `Ollama` uses an Ollama server; `OpenAI-compatible` is for llama.cpp, LM Studio, vLLM, OpenAI and similar servers.",
+                "**Built-in model** and **Restart**: the state of the model on this PC, such as \"Gemma 4 E4B: loading...\", \"Gemma 4 E4B: ready on NVIDIA GeForce RTX 4060 (16K context)\", or \"could not start\" with the reason. **Restart** starts it again.",
+                "While a model downloads, a progress bar shows here with **Pause**. To go on, pick the model again in **Choose AI model...**; it continues where it stopped.",
+                "**Ollama URL**: shown with `Ollama` only. Where Ollama runs, normally `http://localhost:11434`.",
+                "**OpenAI / llama.cpp URL** and **OpenAI API key (optional)**: shown with `OpenAI-compatible` only. The server's address ending in `/v1`, such as `http://localhost:8080/v1`, or `https://api.openai.com/v1` for OpenAI. The key is only for servers that need one; it is saved encrypted.",
+                "**Model** and **Refresh Models**: shown with `Ollama` and `OpenAI-compatible`. Refresh Models loads the list from the server; pick a model or type its name. With the built-in model these fields are hidden: pick its model with **Choose AI model...**.",
                 "**System prompt**: standing instructions for the assistant, such as its personality, how long answers should be or which language to use.",
                 "**Temperature**: lower (0.2) gives steadier, more predictable answers; higher (1.0 and up) more varied ones. 0.7 is a good start.",
                 "**Max reply tokens**: the longest normal answer (2048 unless you change it). Requests for code or SVG get more room.",
-                "**Context window**: how much text one request may hold. The line under it shows what the server reports and where that came from. The box is used when the server reports nothing, and is sent to Ollama as num_ctx (0 means the model's full window). A larger window uses more graphics memory.",
+                "**Context window**: how much text one request may hold. The built-in model is started with this size (16384 unless you change it; `0` means as much as the graphics card has room for), and changing it restarts the model. With a server, the line under it shows what the server reports and where that came from; the box is used when the server reports nothing, and is sent to Ollama as num_ctx (0 means the model's full window). A larger window uses more video memory.",
                 "**Let the model use tools**: the model can search the web, check the date and time, get stock quotes, read web pages and save memories by itself. Models without tool support simply chat.",
                 "**Format replies (Markdown)**: shows headings, lists, tables, links and code blocks in finished answers. Formatting is never read aloud.",
                 "**Hide model thinking**: asks the server to skip the model's thinking phase, so answers start sooner. Thinking text is never shown, saved or spoken.")
+            .Tip("The built-in model runs a llama.cpp server on this PC (on `127.0.0.1`, so other computers cannot reach it); the app starts and stops it by itself. If the graphics card cannot hold the model, it runs on the processor (slower) and the chat says so; a smaller model or a smaller **Context window** helps. Its log is `%APPDATA%\\VoiceChatbotMini\\logs\\llama-server.log`.")
             .Paragraph("The PERSONAS part of this section is explained under **Personas**.")
-            .SeeAlso("chat-server", "personas")
+            .SeeAlso("chat-server", "personas", "troubleshooting")
             .Build(),
 
         new TopicBuilder("voice-output", "Voice Output", GroupSidebar, "\uE767",
-                "Spoken answers with Kokoro, on this PC or on another computer.")
+                "Spoken answers with Kokoro, built into the app or on another computer.")
             .Sidebar("Voice Output")
-            .Keywords("kokoro", "tts", "text to speech", "speech", "speak", "voice", "sound", "speaker", "audio", "python", "8880", "8766", "kokoro-fastapi")
+            .Keywords("kokoro", "built-in kokoro", "tts", "text to speech", "speech", "speak", "voice", "sound", "speaker", "audio", "offline", "8880", "kokoro-fastapi")
             .Bullets(
                 "**Speak responses**: reads answers aloud. Turn it off for text only. Code blocks are never read.",
                 "**Start speaking before the reply finishes**: speaks in parts while the model is still writing (needs **Stream responses** under Conversation). Off sounds the most natural.",
-                "**Remote Kokoro host** and **Test**: the address of a Kokoro-FastAPI server, such as `192.168.1.50` (port 8880 is assumed), `192.168.1.50:8880` or `http://tts-box:8880/v1`. **Test** checks it and loads its voices. Leave it blank to use only Kokoro on this PC.",
-                "**Engine**: **Auto** tries the remote host first and falls back to Kokoro on this PC; **Remote only** and **Local only** use just one of them.",
+                "**Remote Kokoro host** and **Test**: the address of a Kokoro-FastAPI server, such as `192.168.1.50` (port 8880 is assumed), `192.168.1.50:8880` or `http://tts-box:8880/v1`. **Test** checks it and loads its voices. Leave it blank to use only the built-in Kokoro.",
+                "**Engine**: **Auto** tries the remote host first and falls back to the built-in Kokoro; **Remote only** uses just the remote host, and **Local only** just the built-in Kokoro.",
                 "**Voice** and the play button next to it: choose a voice and hear a sample.",
                 "**Speech rate** (-5 to +5) and **Volume**.")
-            .Paragraph("The SPEECH line at the top of the sidebar shows which Kokoro is in use and whether it answers.")
-            .Heading("Set up Kokoro on this PC (once)")
-            .Steps(
-                "Install Python 3.11, 3.12 or 3.13 (64-bit) from https://www.python.org/downloads/windows/ and tick Add Python to PATH in its installer.",
-                "Open PowerShell in the app's `Tools\\Kokoro` folder. For the installed app that is `%LOCALAPPDATA%\\Programs\\VoiceChatbotMini\\Tools\\Kokoro`.",
-                "Run `powershell -ExecutionPolicy Bypass -File .\\install-kokoro.ps1` and wait until it says the dependencies are installed.",
-                "Restart Mini. It starts its own Kokoro server on `http://127.0.0.1:8766` when it needs it. The first answer takes longer while Kokoro loads (and, the very first time, downloads its voice model).")
-            .Tip("To make Mini use a particular Python, set the environment variable `VOICECHATBOT_PYTHON` to the full path of its python.exe.")
+            .Paragraph("The SPEECH line at the top of the sidebar shows which Kokoro is in use (Built-in Kokoro, or Remote Kokoro with the host's address) and whether it answers.")
+            .Heading("Built-in Kokoro")
+            .Paragraph("The app includes Kokoro (the Kokoro 82M voice model, in the `kokoro` folder of the app). It runs on the processor, works without internet and needs no setup: no Python and no separate server. It loads in the background when the app starts, so the very first answer may take a moment longer.")
             .Heading("Use Kokoro on another computer")
             .Paragraph("Run Kokoro-FastAPI (https://github.com/remsky/Kokoro-FastAPI) on a computer on your network, for example one with a graphics card. It listens on port 8880. Enter that computer's address in **Remote Kokoro host** and click **Test**. Its firewall must allow port 8880.")
             .SeeAlso("troubleshooting", "personas")
@@ -668,7 +702,7 @@ public static class HelpContent
             .Bullets(
                 "**Theme**: Dark, Light, or Use Windows setting (follows the Windows light or dark mode).",
                 "The box with the lock shows that API keys and the phone PIN are saved encrypted for your Windows account.",
-                "**Open logs folder**: shows today's log file (`%APPDATA%\\VoiceChatbotMini\\logs\\app-YYYYMMDD.log`). There is one file per day, kept for 7 days, with keys and passwords masked. Attach it when you report a problem.",
+                "**Open logs folder**: shows today's log file (`%APPDATA%\\VoiceChatbotMini\\logs\\app-YYYYMMDD.log`). There is one file per day, kept for 7 days, with keys and passwords masked. The built-in model writes its own log there too, `llama-server.log`. Attach them when you report a problem.",
                 "**Show diagnostics in chat**: shows token counts and the speech recognition backend after each message. They are always written to the log.",
                 "**Minimize to tray**: minimizing hides the window in the tray (the icons next to the clock) instead of the taskbar. Double-click the tray icon to bring it back; right-click it for Open, **Listen** / **Stop listening**, **Speak responses** and Exit.",
                 "**Listen hotkey**: Ctrl+Alt+Space (the default), Ctrl+Shift+Space, Ctrl+Alt+L or Off. It works in any app, also while Mini is minimized, and turns listening on and off like the **Listen** button. If another app already uses the keys, the box under it says so.")
@@ -693,38 +727,50 @@ public static class HelpContent
 
         new TopicBuilder("privacy", "Your data and privacy", GroupProblems, "\uE72E",
                 "What Mini stores, where, and what leaves your PC.")
-            .Keywords("data", "privacy", "files", "folder", "appdata", "backup", "uninstall", "encryption", "full app", "settings.json")
+            .Keywords("data", "privacy", "files", "folder", "appdata", "localappdata", "models folder", "backup", "uninstall", "encryption", "full app", "settings.json", "offline", "openai")
             .Bullets(
-                "Everything Mini saves stays on this PC in `%APPDATA%\\VoiceChatbotMini`: settings.json, conversations, memories, transcripts, the knowledge index, scheduled tasks, logs, the phone certificate, Whisper models and spoken answers. Temporary files go to `%TEMP%\\VoiceChatbotMini`.",
-                "What you say and type only goes to the servers you set up: your model server, your Kokoro server, Tavily for web searches, and YouTube when you paste a YouTube link.",
+                "Everything Mini saves stays on this PC in `%APPDATA%\\VoiceChatbotMini`: settings.json, conversations, memories, transcripts, the knowledge index, scheduled tasks, logs, the phone certificate, Whisper models and spoken answers. Downloaded AI models are in `%LOCALAPPDATA%\\VoiceChatbotMini\\models`. Temporary files go to `%TEMP%\\VoiceChatbotMini`.",
+                "The built-in model and the built-in Kokoro handle what you say and type on this PC. It only goes elsewhere to the services you set up: Ollama or your own model server, OpenAI if you chose it, a remote Kokoro server, Tavily for web searches, and YouTube when you paste a YouTube link. Downloading a model from Hugging Face sends none of your messages.",
                 "API keys and the phone PIN are encrypted for your Windows account. On another PC or Windows user they cannot be read; enter them again there.",
-                "Uninstalling keeps `%APPDATA%\\VoiceChatbotMini`, so a reinstall keeps your settings. Delete that folder to remove all of Mini's data.",
+                "Uninstalling keeps `%APPDATA%\\VoiceChatbotMini`, so a reinstall keeps your settings, and it keeps the downloaded models in `%LOCALAPPDATA%\\VoiceChatbotMini\\models`. Delete those folders to remove all of Mini's data.",
                 "Mini can be installed next to the full Voice Chatbot app; each keeps its own folders. On its first start, Mini copies only the full app's settings.json.")
             .Build(),
 
         new TopicBuilder("troubleshooting", "Troubleshooting", GroupProblems, "\uE90F",
                 "Common problems and what to check first. The log file has the details: every message shown in the chat and every error is written there.")
-            .Keywords("problem", "error", "not working", "broken", "fix", "help", "log", "logs", "silent", "no sound", "no voice", "disconnected", "firewall", "reachable")
+            .Keywords("problem", "error", "not working", "broken", "fix", "help", "log", "logs", "silent", "no sound", "no voice", "disconnected", "firewall", "reachable",
+                "could not start", "restart", "out of memory", "slow", "llama-server.log", "antivirus")
             .Heading("Where the logs are")
             .Paragraph("Click **Open logs folder** under **App**, or paste `%APPDATA%\\VoiceChatbotMini\\logs` into the File Explorer address bar. There is one file per day (`app-YYYYMMDD.log`), kept for 7 days.")
-            .Heading("No model answers")
+            .Heading("The built-in model does not answer")
             .Bullets(
-                "Look at the CHAT line at the top of the sidebar. Disconnected means the server cannot be reached: check that Ollama or your server is running and that the URL under **Chat Backend** is right (`http://localhost:11434` for Ollama, an address ending in `/v1` for the others).",
+                "Look at the CHAT line at the top of the sidebar, and at **Built-in model** under **Chat Backend**. Loading... is normal for a while after the app starts; a big model can take a minute or more.",
+                "\"could not start\" shows the reason. Click **Restart** to try again. The details are in `%APPDATA%\\VoiceChatbotMini\\logs\\llama-server.log`.",
+                "\"not enough memory for this model\": pick a smaller model with **Choose AI model...**, lower the **Context window** (for example to `8192`), or close games and other programs that use the graphics card.",
+                "\"the model file could not be loaded\" or \"the model file is missing\": the file is damaged or was deleted. Delete it in the models folder (the chooser's **Models folder** button) and download it again, or pick another model. For the included Gemma 4 E4B, reinstall the app.",
+                "\"llama-server.exe is missing from the app folder\": reinstall the app. If it goes missing again, security software may be removing it; allow the app's `llama` folder there.",
+                "Answers are slow and the chat says the model runs on the processor: the graphics card could not hold it. Choose a smaller model, lower the **Context window**, and keep the graphics driver up to date.")
+            .Heading("Ollama, a server or OpenAI does not answer")
+            .Bullets(
+                "Look at the CHAT line at the top of the sidebar. Disconnected means the server cannot be reached: check that Ollama or your server is running and that the URL under **Chat Backend** is right (`http://localhost:11434` for Ollama, an address ending in `/v1` for the others). The app never starts these servers for you.",
                 "Click **Refresh Models**. \"Failed to load models\" in the chat gives the reason; \"Please select a model first!\" means the **Model** box is empty.",
                 "A server on another PC must accept connections from the network (Ollama: `OLLAMA_HOST=0.0.0.0`; llama.cpp: `--host 0.0.0.0`), and that PC's firewall must allow the port.",
-                "Very slow answers: try a smaller model. \"The model returned an empty answer\": try another model, or turn on **Hide model thinking**.")
+                "OpenAI: an error about the key or the quota means the **OpenAI API key (optional)** is wrong, or billing is not set up at https://platform.openai.com.")
+            .Heading("Slow or empty answers")
+            .Bullets(
+                "Very slow answers: try a smaller model, or one that fits your graphics card (see **Choose a chat model**).",
+                "\"The model returned an empty answer\": try another model, or turn on **Hide model thinking**.")
             .Heading("No voice: answers are not spoken")
             .Bullets(
                 "Check **Speak responses** and **Volume** under **Voice Output**, and the Windows volume and speakers.",
-                "Look at the SPEECH line in the sidebar. With **Remote Kokoro host** empty, Kokoro on this PC needs Python and the one-time install (see **Voice Output**). If it never worked, run `install-kokoro.ps1` again and read its messages.",
+                "Look at the SPEECH line in the sidebar. It reads Built-in Kokoro when the voice built into the app is used. If it shows an error, the log has the details (search it for Kokoro); reinstalling the app restores the built-in voice files.",
                 "Click the play button next to **Voice** to test a voice.",
                 "**Engine** set to **Remote only** without a host means no speech.")
-            .Heading("Kokoro is not reachable")
+            .Heading("Remote Kokoro is not reachable")
             .Bullets(
                 "Click **Test** next to **Remote Kokoro host**. Check that the Kokoro-FastAPI server is running and that the address and port (8880) are right; on that computer, `http://localhost:8880/docs` should open.",
                 "The firewall on the Kokoro computer must allow port 8880.",
-                "With **Engine** on **Auto**, Mini uses Kokoro on this PC while the remote one is down, and keeps checking in the background.",
-                "Kokoro on this PC uses port 8766. \"The local Kokoro server did not start (is port 8766 in use?)\" in the log means another program uses that port.")
+                "With **Engine** on **Auto**, Mini uses the built-in Kokoro while the remote one is down, and keeps checking in the background.")
             .Heading("The microphone hears nothing")
             .Bullets(
                 "Choose the right **Microphone** under **Voice Input**, and click its refresh button after plugging in a device. The thin line under the top bar should move while you speak.",
@@ -744,7 +790,7 @@ public static class HelpContent
             .Bullets(
                 "The listen hotkey does nothing: another app may own those keys. Choose other keys under **App**, **Listen hotkey**.",
                 "Keys or the PIN are empty after moving to another PC or Windows user: they are encrypted for the old account. Enter them again.")
-            .SeeAlso("what-you-need", "chat-server", "voice-output", "voice-input", "phone-remote")
+            .SeeAlso("what-you-need", "chat-server", "chat-backend", "voice-output", "voice-input", "phone-remote")
             .Build()
     };
 

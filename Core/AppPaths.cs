@@ -29,6 +29,12 @@ public static class AppPaths
     /// <summary>%APPDATA%\VoiceChatbot, the full app's data folder.</summary>
     public static string FullAppDataDirectory { get; } = Path.Combine(GetRoamingAppData(), FullAppDataFolderName);
 
+    /// <summary>
+    /// %LOCALAPPDATA%\VoiceChatbotMini\models: AI models downloaded with the model chooser. Several GB each,
+    /// so in the local (not roaming) profile.
+    /// </summary>
+    public static string ModelsDirectory { get; } = Path.Combine(GetLocalAppData(), DataFolderName, "models");
+
     /// <summary>%TEMP%\VoiceChatbotMini.</summary>
     public static string TempDirectory { get; } = Path.Combine(Path.GetTempPath(), DataFolderName);
 
@@ -87,6 +93,12 @@ public static class AppPaths
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         return string.IsNullOrEmpty(appData) ? Path.GetTempPath() : appData;
+    }
+
+    private static string GetLocalAppData()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return string.IsNullOrEmpty(localAppData) ? GetRoamingAppData() : localAppData;
     }
 }
 

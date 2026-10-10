@@ -1,13 +1,13 @@
 # Voice Chatbot Mini
 
-Voice Chatbot Mini is the standalone, smaller edition of Voice Chatbot: a Windows desktop and phone-browser client for the AI models you already run, without the extras that need the original home lab. It supports voice conversation, local Whisper transcription, Ollama, llama.cpp and other OpenAI-compatible servers, image prompts for vision models, web search, Kokoro speech, a knowledge folder, a live transcriber and a phone remote.
+Voice Chatbot Mini is the standalone, smaller edition of Voice Chatbot: a Windows desktop and phone-browser voice assistant that works right after installing, without the extras that need the original home lab. It comes with its own AI model (Gemma 4 E4B on a bundled llama.cpp) and its own voice (Kokoro), so it runs offline with no setup. It can also use a bigger Gemma 4 model, Ollama, llama.cpp and other OpenAI-compatible servers, or OpenAI. It supports voice conversation, local Whisper transcription, image prompts for vision models, web search, a knowledge folder, a live transcriber and a phone remote.
 
 ## What Mini has, and what it leaves out
 
 Mini keeps:
 
-- Typed and spoken chat with Ollama, llama.cpp or any OpenAI-compatible server, model picking and **Refresh Models**.
-- Voice input with Whisper (**Listen** / **Stop listening**, wake word, global hotkey) and spoken replies with Kokoro.
+- Typed and spoken chat with the built-in model, Ollama, llama.cpp or any OpenAI-compatible server (OpenAI included), the **Choose AI model...** chooser, model picking and **Refresh Models**.
+- Voice input with Whisper (**Listen** / **Stop listening**, wake word, global hotkey) and spoken replies with the built-in Kokoro or a remote Kokoro server.
 - Images attached to a message for vision models (Image button, Ctrl+V, phone remote files), documents and OCR.
 - The Live Transcriber (desktop window and web page), knowledge folder, Tavily web search, tools, personas, memories, saved conversations, the scheduler, the phone remote, tray icon, hotkey and themes.
 
@@ -15,11 +15,11 @@ Mini does not have:
 
 - **Images & Video**: no ComfyUI image creation, image editing or video generation.
 - **Face Presence**: no camera, face profiles or identity gating; voice input is always allowed.
-- **Model Server Control**: no Hermes SSH commands and no buttons or commands that start, stop or switch models. Start your model server yourself; Mini connects to it.
+- **Model Server Control**: no Hermes SSH commands and no buttons or commands that start, stop or switch models on other servers. Mini starts and stops only its own built-in llama.cpp server; start your own Ollama or llama.cpp server yourself, and Mini connects to it.
 
 ## Help inside the app
 
-Click **Help** in the top bar (or press **F1**) to open the Help window. It walks through every sidebar section and top-bar control in plain language, with **Getting started**, **What you need** (how to install Ollama and pull a model, or point Mini at llama.cpp, LM Studio or another OpenAI-compatible server; Kokoro; Whisper), the Live Transcriber, the scheduler, the phone remote, and **Troubleshooting** (where the logs are and the common problems). Type in its search box to find a topic, and use **Next** to go through them in order.
+Click **Help** in the top bar (or press **F1**) to open the Help window. It walks through every sidebar section and top-bar control in plain language, with **Getting started**, **What you need** (graphics card guidance, Whisper), **Choose a chat model** (the Gemma 4 models and the video memory each needs, Ollama, llama.cpp, LM Studio and OpenAI), the Live Transcriber, the scheduler, the phone remote, and **Troubleshooting** (where the logs are and the common problems). Type in its search box to find a topic, and use **Next** to go through them in order.
 
 - **F1** inside a settings section opens the topic for that section, and the topic's **Show this section** link opens that section in the sidebar. F1 also works in the Live Transcriber and the Scheduler.
 - New chats show a **New here? Open Help** link under the suggestions.
@@ -27,61 +27,81 @@ Click **Help** in the top bar (or press **F1**) to open the Help window. It walk
 
 ## Download and install
 
-Download the latest `VoiceChatbotMini-Setup-*-win-x64.exe` from the GitHub release named **Voice Chatbot Mini** and run it.
+The installer is several GB because the AI model is inside it, so it comes in parts. From the GitHub release named **Voice Chatbot Mini**, download `VoiceChatbotMini-Setup-<version>-win-x64.exe` **and** all its `VoiceChatbotMini-Setup-<version>-win-x64-1.bin`, `-2.bin`, ... files into the same folder, then run the `.exe`. The parts must stay together in that folder while it installs. There is no portable ZIP.
 
-The installer is not code-signed yet, so Windows SmartScreen may show an **Unknown publisher** warning. Verify the SHA-256 checksum published with the release before running it.
+The installer is not code-signed yet, so Windows SmartScreen may show an **Unknown publisher** warning. Verify the SHA-256 checksums published with the release (`SHA256SUMS.txt`) before running it.
 
 The installer:
 
 - Installs a self-contained Windows x64 build to `%LOCALAPPDATA%\Programs\VoiceChatbotMini`. The .NET runtime is included.
+- Includes everything needed to chat and talk offline: llama.cpp's `llama-server` (Vulkan build, in `llama\`), the **Gemma 4 E4B** model (Q4_K_M, in `models\`) and **Kokoro** speech (KokoroSharp with the Kokoro 82M model and voices, in `kokoro\`). No Python, Ollama or other server is needed.
 - Creates **Voice Chatbot Mini** Start Menu shortcuts and, optionally, a desktop shortcut.
-- Includes the Kokoro helper scripts.
-- Leaves settings and conversation data in `%APPDATA%\VoiceChatbotMini`.
+- Leaves settings and conversation data in `%APPDATA%\VoiceChatbotMini`, and models you download later in `%LOCALAPPDATA%\VoiceChatbotMini\models`.
 
-Windows 10 version 1809 or newer, or Windows 11, is required.
+Windows 10 version 1809 or newer, or Windows 11, is required. A graphics card with 8 GB of video memory or more (NVIDIA, AMD or Intel) makes the included model fast; without one it runs on the processor, more slowly.
 
 ### Next to the full Voice Chatbot app
 
 Mini is a separate product: its own installer ID, install folder, `VoiceChatbotMini.exe`, Start Menu entries, data folder (`%APPDATA%\VoiceChatbotMini`) and temp folder (`%TEMP%\VoiceChatbotMini`). Installing, updating or uninstalling one never touches the other.
 
 - **Settings on first run.** When Mini starts for the first time and finds the full app's `%APPDATA%\VoiceChatbot\settings.json`, it copies just that file, so your backend, voice, personas and keys carry over (the keys still decrypt for the same Windows user). The full app's settings for features Mini does not have are ignored. Chats, memories, Whisper models, transcripts and logs are not copied; Mini keeps its own. The copy is noted once in the chat and in the log.
-- **Both running at once.** Mini's local Kokoro server uses port `8766` (the full app uses `8765`). The phone remote defaults to port `5100` in both apps: if the full app's remote is running, Mini says the port is already in use; enter another port under **Phone Remote** (for example `5101`). Only one app can own a global listen hotkey at a time; the second says so under **App > Listen hotkey**.
+- **Both running at once.** Mini's built-in Kokoro runs inside the app and needs no port, and its built-in llama.cpp server listens on `127.0.0.1` on a free port it picks itself, so neither clashes with the full app. The phone remote defaults to port `5100` in both apps: if the full app's remote is running, Mini says the port is already in use; enter another port under **Phone Remote** (for example `5101`). Only one app can own a global listen hotkey at a time; the second says so under **App > Listen hotkey**.
 
-## Minimum setup
+## Choosing a chat model
 
-You need at least one chat backend.
+Nothing has to be set up: the default **Provider** (Chat Backend) is `Built-in model`, which runs the included Gemma 4 E4B on this PC. The app starts its bundled `llama-server` on `127.0.0.1` by itself, loads the model and stops it when you switch to another provider or close the app. Chat Backend shows its state ("Gemma 4 E4B: loading...", "ready on <GPU> (16K context)" or "could not start (reason)") with a **Restart** button. If the graphics card cannot hold the model, it runs on the processor (slower) and the chat says so. The server's log is `%APPDATA%\VoiceChatbotMini\logs\llama-server.log`. The built-in model reads text only (no vision projector is loaded); for pictures, use a vision model on Ollama or a server.
 
-### Option 1: Ollama
+### The model chooser
+
+**Choose AI model...** at the top of Chat Backend opens the model chooser; it also opens by itself on the first start (**Skip for now** keeps the included model). It shows this PC's graphics card, video memory and memory, and gives each Gemma 4 model a badge: *Fits your graphics card*, *Part runs on the processor: slower*, *Runs on the processor: slow* or *Too big for this PC*.
+
+| Model | Download | Video memory | Graphics card |
+| --- | --- | --- | --- |
+| Gemma 4 E4B | Included | about 6.5 GB | 8 GB or more: RTX 3060 Ti, RTX 4060, RX 7600, Arc A750 (6 GB cards work with a little on the processor) |
+| Gemma 4 12B | about 7.5 GB | about 9.5 GB | 12 GB: RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT, Arc B580 |
+| Gemma 4 26B A4B (mixture of experts: close to 31B quality, but quick) | about 17 GB | about 19 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX (16 GB cards run it with part on the processor) |
+| Gemma 4 31B (the smartest, slower) | about 18 GB | about 21 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX |
+
+The chooser also offers models that need no video memory on this PC:
+
+- **Ollama**: an address such as `http://localhost:11434`. Needs [Ollama](https://ollama.com) with a model pulled. Free.
+- **llama.cpp server (or another OpenAI-compatible server)**: LM Studio, vLLM and similar; an address such as `http://192.168.1.50:8080/v1`, plus an API key only if the server has one. Free.
+- **OpenAI (cloud)**: needs an [OpenAI API key](https://platform.openai.com/api-keys) with billing set up. Pay per use (`gpt-5-mini` by default, a fraction of a cent per answer; see [prices](https://openai.com/api/pricing)). Messages are sent to OpenAI.
+
+Downloads come from Hugging Face (Q4_K_M GGUF files) and run in the background, with progress in the chooser and in Chat Backend. **Pause** stops a download; starting it again continues where it stopped. The file's SHA-256 checksum is verified when it is complete. While a chosen model downloads the app keeps using Gemma 4 E4B, and switches to the new model by itself when it is done. Downloaded models are kept in `%LOCALAPPDATA%\VoiceChatbotMini\models` (the chooser's **Models folder** button opens it); delete files there to free disk space. Uninstalling does not delete them. The included E4B lives in the app folder's `models` folder.
+
+With `Built-in model` selected, the Ollama URL, OpenAI URL, API key, Model and Refresh Models fields are hidden. With `Ollama` only the Ollama URL shows; with `OpenAI-compatible` the URL and key show.
+
+### Your own Ollama server
 
 1. Install [Ollama for Windows](https://ollama.com/download/windows).
 2. Pull a model, for example:
 
    ```powershell
-   ollama pull gemma3:4b
+   ollama pull gemma4
    ```
 
-3. In Voice Chatbot Mini select `Ollama`.
-4. Set the Ollama URL to `http://localhost:11434`.
-5. Click **Refresh Models** and select the model.
+3. In Voice Chatbot Mini click **Choose AI model...**, pick **Ollama**, enter `http://localhost:11434` and click **Use Ollama** (or select `Ollama` under **Provider** and set the Ollama URL).
+4. Click **Refresh Models** and select the model.
 
-### Option 2: llama.cpp or another OpenAI-compatible server
+### Your own llama.cpp or another OpenAI-compatible server
 
 1. Install or build [llama.cpp](https://github.com/ggml-org/llama.cpp).
 2. Start `llama-server.exe` with your GGUF model.
 3. For image-capable models, use the matching multimodal projector or media embedder required by that model.
-4. In Voice Chatbot Mini select `OpenAI-compatible`.
+4. In Voice Chatbot Mini click **Choose AI model...** and pick **llama.cpp server (or another OpenAI-compatible server)**, or select `OpenAI-compatible` under **Provider**.
 5. Set the URL to the server's `/v1` endpoint, for example `http://192.168.1.50:8080/v1`.
 6. Click **Refresh Models**.
 
-**Context window.** The app asks the server how many tokens one request can use and plans the chat history to fit: llama.cpp's per-slot `n_ctx` (from `/props`, or `/slots`), vLLM's `max_model_len` or LM Studio's loaded context length. The model's training context (`n_ctx_train`) is never used, and nothing is guessed from the model name for a local or self-hosted server. The line under **Context window** (Chat Backend) shows the value in use and where it came from, for example `llama.cpp server: 16,384 tokens per request (detected)`. On llama.cpp the window is set with `-c` / `--ctx-size` on `llama-server`; with `-np` parallel slots each request gets one slot's share. The value is checked again every five minutes, after **Refresh Models** and when the URL or model changes, so a restarted server with a new `-c` is picked up without restarting the app. When the server reports nothing, the **Context window** box is used. If the server still rejects a request as too long, the app reads the window again, leaves out older messages and sends it once more; if that fails too, it tells you the server's size. With Ollama the box is sent as `num_ctx`, capped at the model's maximum.
+**Context window.** The app asks the server how many tokens one request can use and plans the chat history to fit: llama.cpp's per-slot `n_ctx` (from `/props`, or `/slots`), vLLM's `max_model_len` or LM Studio's loaded context length. The model's training context (`n_ctx_train`) is never used, and nothing is guessed from the model name for a local or self-hosted server. The line under **Context window** (Chat Backend) shows the value in use and where it came from, for example `llama.cpp server: 16,384 tokens per request (detected)`. On llama.cpp the window is set with `-c` / `--ctx-size` on `llama-server`; with `-np` parallel slots each request gets one slot's share. The value is checked again every five minutes, after **Refresh Models** and when the URL or model changes, so a restarted server with a new `-c` is picked up without restarting the app. When the server reports nothing, the **Context window** box is used. If the server still rejects a request as too long, the app reads the window again, leaves out older messages and sends it once more; if that fails too, it tells you the server's size. With Ollama the box is sent as `num_ctx`, capped at the model's maximum. The built-in model is started with the box's value as its `-c` (16384 by default; `0` means as much as the graphics card has room for next to the model), and changing it restarts the built-in model.
 
-Mini does not start or stop model servers: start `llama-server` (or Ollama) yourself, then click **Refresh Models**.
+Mini starts and stops only its built-in model. It never starts, stops or switches models on servers you run yourself: start `llama-server` (or Ollama) yourself, then click **Refresh Models**.
 
 ### Tools and formatting
 
 With **Let the model use tools** on (Chat Backend, on by default), the model decides by itself when to search the web (needs Web Search on and a Tavily key), check the current date and time, get a stock quote, read a web page, or save a memory. A short note appears in the chat for each tool it uses. So that a web page cannot plant memories, the model cannot save a memory in an answer where it has already read web results; ask it to remember things in a separate message. The Pi command ("ask pi ...") works as before, and "search the web for ..." or "look it up online" still forces a search.
 
-Tools need a model and server with function calling: in Ollama, a model tagged *tools* (for example `qwen3` or `llama3.1`); in llama.cpp, start `llama-server` with `--jinja`. If the model cannot use tools, the app shows one note, turns tools off for that model until restart and answers normally. The phone remote and scheduled prompts do not use tools yet.
+Tools need a model and server with function calling: in Ollama, a model tagged *tools* (for example `qwen3` or `llama3.1`); in llama.cpp, start `llama-server` with `--jinja` (the built-in server is started with it). If the model cannot use tools, the app shows one note, turns tools off for that model until restart and answers normally. The phone remote and scheduled prompts do not use tools yet.
 
 Finished replies are shown formatted: headings, bold, italic and strikethrough text, inline code, bullet, numbered and task lists, quotes, rules, tables and links (links open in your browser; only `http`, `https` and `mailto`). Code blocks keep their **Copy** button. While a reply streams it shows as plain text, and formatting is never read aloud. The phone remote and the scheduler window show plain text. Turn off **Format replies (Markdown)** in Chat Backend to get plain text in the chat too. The default system prompt now allows light Markdown; an unchanged old default is updated automatically, but if you wrote your own prompt, remove any "no Markdown" instruction from it to get formatted replies.
 
@@ -132,19 +152,7 @@ Optional transcription tools:
 
 ### Kokoro speech output
 
-Kokoro is optional. Without it (no local install and no remote Kokoro host), answers are shown as text but not spoken.
-
-To install local Kokoro:
-
-1. Install Python 3.11, 3.12, or 3.13 x64 from [python.org](https://www.python.org/downloads/windows/). Enable **Add Python to PATH**.
-2. Open PowerShell in the installed app's `Tools\Kokoro` folder.
-3. Run:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\install-kokoro.ps1
-   ```
-
-Voice Chatbot Mini starts the bundled local Kokoro server on `http://127.0.0.1:8766` when needed (the full Voice Chatbot app uses `8765`, so both can run at once). To use a specific Python executable, set the `VOICECHATBOT_PYTHON` environment variable to its full path.
+Kokoro is built in: the installer includes KokoroSharp with the Kokoro 82M model and its voices (in the app folder's `kokoro\` folder). It runs on the processor, works offline and needs no Python or server. It loads in the background when the app starts, and the SPEECH line in the sidebar shows `Built-in Kokoro` when it speaks. The old Python setup (`install-kokoro.ps1`) is no longer needed.
 
 #### Remote Kokoro server
 
@@ -156,11 +164,11 @@ To use Kokoro running on another machine (for example [Kokoro-FastAPI](https://g
 
 Click **Test** to check the connection. If the server lists its voices, the voice dropdown is refreshed with them. **Engine** controls the fallback:
 
-- `Auto` tries the remote host first and falls back to local Kokoro. After a failure it skips the remote host for 60 seconds so replies are not delayed.
-- `Remote only` never starts the local server.
+- `Auto` tries the remote host first and falls back to the built-in Kokoro. After a failure it skips the remote host for 60 seconds so replies are not delayed.
+- `Remote only` never uses the built-in Kokoro.
 - `Local only` ignores the remote host.
 
-Leave the host blank to use only the bundled local server. The host is saved as `KokoroRemoteUrl` in `settings.json`.
+Leave the host blank to use only the built-in Kokoro. The host is saved as `KokoroRemoteUrl` in `settings.json`.
 
 ### Speaking replies
 
@@ -347,20 +355,20 @@ dotnet build
 dotnet run
 ```
 
-Build the installer and portable ZIP:
+Build the installer:
 
 ```powershell
 winget install --id JRSoftware.InnoSetup -e
 .\scripts\Build-Installer.ps1 -Version 1.0.0
 ```
 
-Outputs are written to `artifacts\`: `VoiceChatbotMini-Setup-<version>-win-x64.exe`, `VoiceChatbotMini-<version>-win-x64-portable.zip` and `SHA256SUMS.txt`. The app builds as `VoiceChatbotMini.exe`; its product name and folders are set in `Core/AppPaths.cs`.
+The script downloads the newest llama.cpp Vulkan build, Gemma 4 E4B (Q4_K_M, from Hugging Face, checksum-verified) and the Kokoro model into the published app, so it needs a few GB of free disk space and a fast connection. Outputs are written to `artifacts\`: `VoiceChatbotMini-Setup-<version>-win-x64.exe`, its `VoiceChatbotMini-Setup-<version>-win-x64-1.bin`, `-2.bin`, ... parts and `SHA256SUMS.txt`. There is no portable ZIP. The app builds as `VoiceChatbotMini.exe`; its product name and folders are set in `Core/AppPaths.cs`.
 
 Logic without WPF lives in `Core/` and is unit tested in `tests/VoiceChatbot.Tests` (`dotnet test tests/VoiceChatbot.Tests`, runs on any OS). The Live Transcriber's prompts and summary styles (`TranscriptSummaryPrompts`, `TranscriptSummaryStyles`), the notes layout (`TranscriptNotes`), live updates, final notes and Re-summarize all (`TranscriptNotesWriter`), long-transcript splitting (`TranscriptSummarizer`), live-notes timing (`LiveNotesPolicy`), the desktop session state (`TranscriberSessionStore`) and the saved Markdown/text document (`LiveTranscriptText`) are there so the web transcriber shares them. Its page (`PhoneRemoteTranscriberPage`), the values its script takes from those classes, its request limits and file names (`WebTranscriber`) and its background notes jobs (`TranscriberJobs`) are in `Core/` too; the endpoints are in `PhoneRemoteServer.Transcriber.cs`.
 
 ## GitHub releases
 
-Mini is built from the `mini` branch. Its GitHub Actions workflow builds the installer and portable ZIP:
+Mini is built from the `mini` branch. Its GitHub Actions workflow builds the installer (the `.exe` and its `.bin` parts):
 
 - Run **Build Windows release (Mini)** manually from the Actions tab (on the `mini` branch) for test artifacts, uploaded as `VoiceChatbotMini-<version>-win-x64`.
 - Push a tag such as `mini-v1.0.0` to create a GitHub Release named **Voice Chatbot Mini 1.0.0**. Mini tags start with `mini-v`, so they never mix with the full app's `v1.0.0` tags and releases.
@@ -372,10 +380,10 @@ git push origin mini-v1.0.0
 
 ## Data and security
 
-- Settings, API keys, downloaded Whisper models, reply audio, memories, saved conversations, transcripts and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbotMini`; temporary files go to `%TEMP%\VoiceChatbotMini`. The full Voice Chatbot app's `%APPDATA%\VoiceChatbot` is only read once, to copy its `settings.json` on Mini's first run.
+- Settings, API keys, downloaded Whisper models, reply audio, memories, saved conversations, transcripts and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbotMini`; AI models downloaded with the model chooser go to `%LOCALAPPDATA%\VoiceChatbotMini\models`; temporary files go to `%TEMP%\VoiceChatbotMini`. The full Voice Chatbot app's `%APPDATA%\VoiceChatbot` is only read once, to copy its `settings.json` on Mini's first run.
 - Do not commit `settings.json`, certificates, passwords, API keys or model files.
 - The OpenAI API key, Tavily API key and phone remote PIN are encrypted in `settings.json` with Windows DPAPI for your Windows account (they appear as `"dpapi:..."`). Plain-text values from older versions are encrypted the next time the app starts. A settings file copied to another PC or Windows user cannot be decrypted there: those fields are left empty, the app warns once, and you enter them again.
 - The phone remote checks its PIN (in constant time) on every API request; spoken replies are fetched by random, unguessable links. After 5 wrong PINs within 10 minutes, that IP address is locked out for 10 minutes: the phone shows "Too many wrong PIN attempts" (HTTP 429), even the right PIN is refused until the lockout ends, and the desktop app posts a note in the chat. A correct PIN resets the count, and **New PIN** lifts all lockouts. Requests without the right PIN are refused before their body is read, and request sizes are capped (64 MB for a voice clip, 256 MB for a message with files or a meeting recording, 8 MB for a web transcriber chunk and 16 MB for its text requests, which accept up to 4,000,000 characters of transcript). The web transcriber page itself contains no data, runs only its own script (Content-Security-Policy) and shows all text as plain text; its files are saved under names the PC generates, never a name or path from the browser. Uploaded files are saved under random names in `%TEMP%\VoiceChatbotMini\phone-*`, so a file name cannot place a file anywhere else.
-- The app keeps a daily log in `%APPDATA%\VoiceChatbotMini\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
+- The app keeps a daily log in `%APPDATA%\VoiceChatbotMini\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. The built-in model's server writes its own `llama-server.log` next to it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
 - The listen hotkey turns the microphone on from any app, also while the window is hidden in the tray. The tray icon's tooltip shows "Listening...", and **App > Listen hotkey > Off** turns it off. It is registered with Windows only while Voice Chatbot Mini runs.
-- Uninstalling the application does not delete `%APPDATA%\VoiceChatbotMini`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.
+- Uninstalling the application does not delete `%APPDATA%\VoiceChatbotMini` or the downloaded models in `%LOCALAPPDATA%\VoiceChatbotMini\models`, so reinstalling preserves settings and models. Delete those folders manually to remove all local app data.

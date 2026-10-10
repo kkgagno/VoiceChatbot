@@ -19,6 +19,7 @@ public partial class MainWindow
         AppLog.SecretsProvider = () => new[]
         {
             _settings.OpenAiCompatibleApiKey,
+            _settings.OpenAiCloudApiKey,
             _settings.TavilyApiKey,
             _settings.PhoneRemote?.Pin
         };

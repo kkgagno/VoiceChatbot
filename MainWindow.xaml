@@ -109,30 +109,66 @@
                         <Expander Header="Chat Backend" IsExpanded="True" local:Ui.Icon="&#xE8F2;"
                                   local:Ui.Subtitle="Provider, model and prompt">
                             <StackPanel>
+                                <Button x:Name="ChooseModelBtn" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Stretch"
+                                        local:Ui.Icon="&#xE8F1;" Content="Choose AI model..." Margin="0,0,0,10"
+                                        Click="ChooseModel_Click"
+                                        ToolTip="Pick the model: one that runs on this PC (with its video memory needs), Ollama, a llama.cpp server or OpenAI"/>
+
                                 <StackPanel Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Provider" Style="{StaticResource SectionLabel}"/>
                                     <ComboBox x:Name="ProviderCombo" SelectionChanged="ProviderCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Built-in model"/>
                                         <ComboBoxItem Content="Ollama"/>
                                         <ComboBoxItem Content="OpenAI-compatible"/>
                                     </ComboBox>
                                 </StackPanel>
 
-                                <StackPanel Style="{StaticResource FieldBlock}">
+                                <StackPanel x:Name="BuiltInModelPanel" Style="{StaticResource FieldBlock}">
+                                    <TextBlock Text="Built-in model" Style="{StaticResource SectionLabel}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="LocalModelStatusText" TextWrapping="Wrap" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Text="Not started"/>
+                                        <Button x:Name="RestartLocalModelBtn" Grid.Column="1" Style="{StaticResource SecondaryButton}"
+                                                local:Ui.Icon="&#xE72C;" Content="Restart" Margin="6,0,0,0"
+                                                Click="RestartLocalModel_Click" ToolTip="Start the built-in model server again"/>
+                                    </Grid>
+                                </StackPanel>
+
+                                <StackPanel x:Name="ModelDownloadPanel" Style="{StaticResource FieldBlock}" Visibility="Collapsed">
+                                    <ProgressBar x:Name="ModelDownloadBar" Height="6" Minimum="0" Maximum="1"/>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="ModelDownloadText" TextWrapping="Wrap" FontSize="12"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                                        <Button x:Name="CancelModelDownloadBtn" Grid.Column="1" Style="{StaticResource SecondaryButton}"
+                                                Content="Pause" Margin="6,0,0,0" Click="CancelModelDownload_Click"
+                                                ToolTip="Stop the download; starting it again continues where it stopped"/>
+                                    </Grid>
+                                </StackPanel>
+
+                                <StackPanel x:Name="OllamaUrlPanel" Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Ollama URL" Style="{StaticResource SectionLabel}"/>
                                     <TextBox x:Name="OllamaUrlBox" Text="http://localhost:11434" local:Ui.Placeholder="http://localhost:11434"/>
                                 </StackPanel>
 
-                                <StackPanel Style="{StaticResource FieldBlock}">
+                                <StackPanel x:Name="OpenAiUrlPanel" Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="OpenAI / llama.cpp URL" Style="{StaticResource SectionLabel}"/>
                                     <TextBox x:Name="OpenAiUrlBox" Text="http://localhost:8080/v1" local:Ui.Placeholder="http://host:8080/v1"/>
                                 </StackPanel>
 
-                                <StackPanel Style="{StaticResource FieldBlock}">
+                                <StackPanel x:Name="OpenAiKeyPanel" Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="OpenAI API key (optional)" Style="{StaticResource SectionLabel}"/>
                                     <PasswordBox x:Name="OpenAiApiKeyBox"/>
                                 </StackPanel>
 
-                                <StackPanel Style="{StaticResource FieldBlock}">
+                                <StackPanel x:Name="ModelPanel" Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Model" Style="{StaticResource SectionLabel}"/>
                                     <Grid>
                                         <Grid.ColumnDefinitions>

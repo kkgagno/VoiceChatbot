@@ -38,6 +38,12 @@ public class OllamaClient : IDisposable
     /// </summary>
     public bool DisableThinking { get; set; } = true;
 
+    /// <summary>
+    /// Awaited before every chat request: the built-in model uses it to wait until its llama.cpp server has
+    /// loaded the model (and to start it again if it stopped). Throws to fail the request with a reason.
+    /// </summary>
+    public Func<CancellationToken, Task>? BeforeChatRequestAsync { get; set; }
+
     public string LastFinishReason { get; private set; } = "";
     public string LastStopReason { get; private set; } = "";
     public int? LastPromptTokens { get; private set; }
@@ -875,6 +881,15 @@ public class OllamaClient : IDisposable
         HttpCompletionOption completion, CancellationToken ct)
     {
         const int MaxAttempts = 4;
+        if (BeforeChatRequestAsync is { } beforeRequest)
+        {
+            // It may move the OpenAI-compatible address (the built-in server's port): follow it.
+            var usesOpenAiUrl = string.Equals(baseUrl, _openAiBaseUrl, StringComparison.OrdinalIgnoreCase);
+            await beforeRequest(ct).ConfigureAwait(false);
+            if (usesOpenAiUrl)
+                baseUrl = _openAiBaseUrl;
+        }
+
         var skipThinking = ShouldSendSkipThinkingFields(baseUrl);
         var droppedThinking = false;
         var openAi = IsOpenAiCompatible && string.Equals(baseUrl, _openAiBaseUrl, StringComparison.OrdinalIgnoreCase);

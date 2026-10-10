@@ -50,6 +50,8 @@ jobs:
         with:
           name: VoiceChatbotMini-${{ steps.version.outputs.version }}-win-x64
           path: artifacts/*
+          # The installer is mostly the AI model, which does not compress.
+          compression-level: 0
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'

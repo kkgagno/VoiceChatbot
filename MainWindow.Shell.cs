@@ -151,7 +151,7 @@ public partial class MainWindow
         {
             KokoroStatusText.Text = mode == KokoroEndpoint.ModeRemoteOnly
                 ? "Remote only is selected but no host is set - speech will be silent."
-                : "Blank = bundled local Kokoro. Default remote port is 8880.";
+                : "Blank = the built-in Kokoro on this PC. Default remote port is 8880.";
             KokoroStatusText.Foreground = mode == KokoroEndpoint.ModeRemoteOnly ? FindResource("WarningBrush") as Brush : muted;
         }
         else if (baseUrl.Length == 0)
@@ -252,7 +252,7 @@ public partial class MainWindow
                 $"Hi, I'm {spoken}. This is how I'll sound when I answer you.", previewDir);
             if (string.IsNullOrWhiteSpace(path))
             {
-                AddSystemMessage("Voice preview failed. Check the Kokoro host or local Kokoro install.");
+                AddSystemMessage("Voice preview failed. Check the Kokoro host, or the app log for the built-in Kokoro's error.");
                 return;
             }
 

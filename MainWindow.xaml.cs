@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         _history = new ConversationHistory();
         _history.MessageAdded += OnHistoryMessageAdded;
         _ollama = new OllamaClient(_settings.OllamaUrl);
+        InitializeLocalModel();
         _piAgent = new PiAgentService(GetDefaultPiWorkingDirectory());
         _youtubeTranscripts = new YouTubeTranscriptService();
         _documentText = new DocumentTextService();
@@ -158,6 +159,20 @@ public partial class MainWindow : Window
             {
                 AddSystemMessage($"Speech init failed: {ex.Message}. Text-only mode active.");
             }
+
+            // Load the built-in Kokoro voice now when it will speak, so the first answer is not delayed by it.
+            var kokoroMode = KokoroEndpoint.NormalizeMode(_settings.KokoroMode);
+            if (_settings.TtsEnabled && (kokoroMode == KokoroEndpoint.ModeLocalOnly ||
+                                         (kokoroMode == KokoroEndpoint.ModeAuto && KokoroEndpoint.NormalizeBaseUrl(_settings.KokoroRemoteUrl).Length == 0)))
+                BundledKokoro.WarmUp();
+
+            // First start: pick the model before anything connects.
+            if (!_settings.ModelSetupDone)
+                await ShowModelChooserAsync(firstRun: true);
+            UpdateProviderPanels();
+            // The Vulkan check (graphics card and its memory) loads the driver: off the UI thread.
+            await Task.Run(() => VulkanProbe.Gpu);
+            EnsureLocalModelRunning();
 
             // Test connection
             await TestConnection();
@@ -342,7 +357,8 @@ public partial class MainWindow : Window
         _settings.OpenAiCompatibleApiKey = OpenAiApiKeyBox.Password.Trim();
         _settings.ChatProvider = GetSelectedProvider();
         // With the backend offline at launch the list is empty: keep the saved model instead of saving "".
-        if (!string.IsNullOrWhiteSpace(ModelCombo.Text) || ModelCombo.Items.Count > 0)
+        // The built-in model's name is not saved over the Ollama/server model.
+        if (!IsBuiltInProvider && (!string.IsNullOrWhiteSpace(ModelCombo.Text) || ModelCombo.Items.Count > 0))
             _settings.Model = ModelCombo.Text;
         _settings.SystemPrompt = SystemPromptBox.Text;
         _settings.Temperature = TempSlider.Value;
@@ -409,11 +425,16 @@ public partial class MainWindow : Window
 
     private void ConfigureChatClient()
     {
-        _ollama.Provider = _settings.ChatProvider;
         _ollama.BaseUrl = _settings.OllamaUrl;
+        _ollama.DisableThinking = _settings.DisableModelThinking;
+        if (IsBuiltInProvider)
+        {
+            ConfigureBuiltInChatClient();
+            return;
+        }
+        _ollama.Provider = _settings.ChatProvider;
         _ollama.OpenAiBaseUrl = _settings.OpenAiCompatibleUrl;
         _ollama.OpenAiApiKey = _settings.OpenAiCompatibleApiKey;
-        _ollama.DisableThinking = _settings.DisableModelThinking;
     }
 
     /// <summary>Reads the Max reply tokens and Context window fields into the settings.</summary>
@@ -433,6 +454,8 @@ public partial class MainWindow : Window
 
         ReadTokenBudgetFields();
         SaveSettings();
+        // A new Context window restarts the built-in model with it.
+        EnsureLocalModelRunning();
     }
 
     private static int ParseBoundedInt(string text, int fallback, int min, int max)
@@ -450,12 +473,15 @@ public partial class MainWindow : Window
     private string GetSelectedProvider()
     {
         if (ProviderCombo?.SelectedItem is ComboBoxItem item)
-            return item.Content?.ToString() ?? "Ollama";
+            return item.Content?.ToString() ?? ChatProviders.BuiltIn;
         return ProviderCombo?.Text ?? _settings.ChatProvider;
     }
 
     private void SelectProviderCombo(string provider)
     {
+        // Older settings may say "llama.cpp".
+        if (ChatProviders.IsOpenAiCompatible(provider))
+            provider = ChatProviders.OpenAiCompatible;
         foreach (var item in ProviderCombo.Items.OfType<ComboBoxItem>())
         {
             if (string.Equals(item.Content?.ToString(), provider, StringComparison.OrdinalIgnoreCase))
@@ -819,6 +845,8 @@ public partial class MainWindow : Window
         }
 
         try { _speech.Dispose(); } catch { }
+        try { _modelDownloads.Dispose(); } catch { }
+        try { _localModel.Dispose(); } catch { }
         try { _ollama.Dispose(); } catch { }
         try { _tavily.Dispose(); } catch { }
         try { DisposeToolServices(); } catch { }

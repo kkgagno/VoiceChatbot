@@ -25,11 +25,16 @@ public class AppSettings
         return TranscriberCommand.IsUsable(command);
     }
 
-    // Chat backend
-    public string ChatProvider { get; set; } = "Ollama";
+    // Chat backend. "Built-in model" runs LocalModelId with the bundled llama.cpp server (LocalModelServer).
+    public string ChatProvider { get; set; } = ChatProviders.BuiltIn;
+    public string LocalModelId { get; set; } = LocalModelCatalog.DefaultId;
+    // False until the model chooser has been answered (or skipped) once; it opens at startup until then.
+    public bool ModelSetupDone { get; set; }
     public string OllamaUrl { get; set; } = "http://localhost:11434";
     public string OpenAiCompatibleUrl { get; set; } = "http://localhost:8080/v1";
     public string OpenAiCompatibleApiKey { get; set; } = "";
+    // The OpenAI (cloud) key, kept while another OpenAI-compatible server is in use (model chooser).
+    public string OpenAiCloudApiKey { get; set; } = "";
     public string Model { get; set; } = "llama3";
     public string SystemPrompt { get; set; } = "You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Light Markdown such as short lists, bold text or a small table is fine because it is rendered on screen and removed before speaking. Avoid emojis and hashtags. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block.";
     public double Temperature { get; set; } = 0.7;
@@ -169,6 +174,7 @@ public static class SettingsManager
     private static readonly (string Path, string Label)[] SecretFields =
     {
         (nameof(AppSettings.OpenAiCompatibleApiKey), "OpenAI API key"),
+        (nameof(AppSettings.OpenAiCloudApiKey), "OpenAI (cloud) API key"),
         (nameof(AppSettings.TavilyApiKey), "Tavily API key"),
         ($"{nameof(AppSettings.PhoneRemote)}.{nameof(PhoneRemoteSettings.Pin)}", "phone remote PIN"),
     };

@@ -22,6 +22,9 @@ SetupIconFile=..\Resources\AppIcon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
+; The bundled Gemma 4 model makes the setup several GB: Setup.exe plus Setup-N.bin parts (under 2 GB each).
+DiskSpanning=yes
+DiskSliceSize=max
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -37,7 +40,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\bin\Release\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\bin\Release\publish\win-x64\*"; Excludes: "\models\*,\kokoro\kokoro.onnx"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The AI models do not compress: store them as they are (much faster to build and install).
+Source: "..\bin\Release\publish\win-x64\models\*"; DestDir: "{app}\models"; Flags: ignoreversion nocompression skipifsourcedoesntexist
+Source: "..\bin\Release\publish\win-x64\kokoro\kokoro.onnx"; DestDir: "{app}\kokoro"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

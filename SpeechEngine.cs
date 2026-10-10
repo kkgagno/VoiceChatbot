@@ -1205,6 +1205,26 @@ public partial class SpeechEngine : IDisposable
         var localLang = lang is "a" or "b" ? lang : "a";
         var tempWav = Path.Combine(KokoroServerOutputDirectory, $"tts_{Guid.NewGuid():N}.wav");
 
+        // Kokoro built into the app (no Python needed).
+        if (BundledKokoro.IsInstalled)
+        {
+            try
+            {
+                var speed = Math.Max(0.5, Math.Min(2.0, 1.0 + (SpeechRate * 0.2)));
+                if (BundledKokoro.TrySynthesizeToWav(text, voice, speed, tempWav, out var error))
+                {
+                    ReportTtsBackend("Built-in Kokoro");
+                    return tempWav;
+                }
+                Log?.Invoke($"[TTS] Built-in Kokoro failed ({error}).");
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(tempWav); } catch { }
+                Log?.Invoke($"[TTS] Built-in Kokoro failed ({ex.GetBaseException().Message}).");
+            }
+        }
+
         try
         {
             if (TryGenerateKokoroViaServer(text, voice, localLang, tempWav))

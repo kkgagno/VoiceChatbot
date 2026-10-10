@@ -26,6 +26,12 @@ public partial class MainWindow
 
     private async Task TestConnection()
     {
+        if (IsBuiltInProvider)
+        {
+            ShowBuiltInConnectionStatus();
+            return;
+        }
+
         var connected = await _ollama.PingAsync();
         Dispatcher.Invoke(() =>
         {
@@ -46,14 +52,33 @@ public partial class MainWindow
         if (_ollama == null)
             return;
 
+        UpdateProviderPanels();
+        // Startup and the model chooser set the provider themselves.
+        if (_applyingSettings)
+            return;
+
         _settings.ChatProvider = GetSelectedProvider();
+        // Picked by hand: a download chosen earlier no longer switches the provider back.
+        _switchToModelWhenDownloaded = null;
+        if (IsBuiltInProvider)
+            ShowBuiltInModelInCombo();
+        else
+            ShowSavedModelInCombo();
         ConfigureChatClient();
         SaveSettings();
+        EnsureLocalModelRunning();
         await TestConnection();
     }
 
     private async Task RefreshModelsInternal()
     {
+        if (IsBuiltInProvider)
+        {
+            ShowBuiltInModelInCombo();
+            await TestConnection();
+            return;
+        }
+
         RefreshModelsBtn.IsEnabled = false;
         RefreshModelsBtn.Content = "... Loading...";
         try
@@ -75,10 +100,7 @@ public partial class MainWindow
                 _settings.Model = ModelCombo.Text;
             }
 
-            var endpoint = _settings.ChatProvider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase)
-                ? _settings.OpenAiCompatibleUrl
-                : _settings.OllamaUrl;
-            AddSystemMessage($"Loaded {models.Count} model(s) from {_settings.ChatProvider}: {endpoint}");
+            AddSystemMessage($"Loaded {models.Count} model(s) from {_settings.ChatProvider}: {CurrentChatEndpoint}");
             // The server may have been restarted with another context size (-c): ask it again.
             ScheduleContextWindowStatusRefresh(forceDetect: true);
 
@@ -111,10 +133,7 @@ public partial class MainWindow
         {
             var provider = _settings.ChatProvider;
             var model = !string.IsNullOrWhiteSpace(ModelCombo?.Text) ? ModelCombo.Text : _settings.Model;
-            var endpoint = _settings.ChatProvider.Equals("OpenAI-compatible", StringComparison.OrdinalIgnoreCase)
-                ? _settings.OpenAiCompatibleUrl
-                : _settings.OllamaUrl;
-            return new PhoneRemoteModelState(provider, model, endpoint);
+            return new PhoneRemoteModelState(provider, model, CurrentChatEndpoint);
         }
 
         return Dispatcher.CheckAccess()
