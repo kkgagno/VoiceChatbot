@@ -49,7 +49,7 @@ public sealed record TranscriberSendRequest(string? Transcript, string? Notes);
 /// runs one transcription at a time, so web chunks, the desktop transcriber and voice chat simply take turns) and
 /// cleaned like the desktop transcriber's. Notes are written by the same Core code as the desktop transcriber's
 /// (<see cref="TranscriptNotesWriter"/>), each as a background job the page polls, so a phone that sleeps for a
-/// moment does not lose them. Each chat-model request of a job has a time limit (<see cref="TranscriberChatTimeLimit"/>).
+/// moment does not lose them.
 /// </summary>
 public sealed partial class PhoneRemoteServer
 {
@@ -124,9 +124,8 @@ public sealed partial class PhoneRemoteServer
             var style = TranscriptSummaryStyles.Normalize(body.Style);
             var window = TimeSpan.FromMinutes(LiveNotesPolicy.NormalizeIntervalMinutes(body.IntervalMinutes ?? 0));
             var length = WebTranscriber.ResolveSessionLength(body.ElapsedMs);
-            var summarize = TranscriberChatTimeLimit.Apply(hooks.SummarizeAsync);
             return StartJob("summarize", style, $"transcript {transcript.Length:N0} characters", async (progress, ct) => new TranscriberJobOutput(
-                await TranscriptNotesWriter.RebuildAsync(transcript, style, window, length, summarize, progress, ct)));
+                await TranscriptNotesWriter.RebuildAsync(transcript, style, window, length, hooks.SummarizeAsync, progress, ct)));
         });
 
         // Live notes: a background job that adds a section on only the text said since the last update and refreshes
@@ -150,15 +149,14 @@ public sealed partial class PhoneRemoteServer
 
             var style = TranscriptSummaryStyles.Normalize(body.Style);
             var elapsed = WebTranscriber.ResolveSessionLength(body.ElapsedMs) ?? TimeSpan.Zero;
-            var summarize = TranscriberChatTimeLimit.Apply(hooks.SummarizeAsync);
             var size = final
                 ? $"new text {newText.Length:N0} characters, transcript {transcript.Length:N0} characters"
                 : $"new text {newText.Length:N0} characters";
             return StartJob(final ? "final notes" : "notes", style, size, async (progress, ct) =>
             {
                 var result = final
-                    ? await TranscriptNotesWriter.FinishAsync(notes, newText, transcript, elapsed, style, summarize, progress, ct)
-                    : await TranscriptNotesWriter.UpdateAsync(notes, newText, elapsed, style, summarize, progress, ct);
+                    ? await TranscriptNotesWriter.FinishAsync(notes, newText, transcript, elapsed, style, hooks.SummarizeAsync, progress, ct)
+                    : await TranscriptNotesWriter.UpdateAsync(notes, newText, elapsed, style, hooks.SummarizeAsync, progress, ct);
                 if (result.SummaryError is not { } error)
                     return new TranscriberJobOutput(result.Notes);
 

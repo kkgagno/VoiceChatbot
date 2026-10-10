@@ -129,7 +129,7 @@ public class TranscriberJobsTests
         var failed = jobs.TryStart("Summary", async (_, _) =>
         {
             await Task.Yield();
-            throw new TimeoutException("The chat model on the PC did not answer within 5 minutes.");
+            throw new TimeoutException("The chat server stopped answering.");
         }, Describe, out _)!;
         await failed.Completion;
 

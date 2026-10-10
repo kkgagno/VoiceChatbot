@@ -1580,10 +1580,11 @@ async function rebuildNotes() {
       if (gen === state.sessionGen) setStatus(replacing ? 'Re-summarize cancelled; the previous notes are kept.' : 'Summary cancelled.');
     } else if (e instanceof CancelledError) {
       // Not this page's Cancel: the job was stopped on the PC (the phone remote was stopped, say).
-      if (gen === state.sessionGen) setStatus('The summary was stopped on the PC.' + (replacing ? ' The previous notes are kept.' : '') + ' Press ' + (replacing ? 'Re-summarize all' : 'Summarize') + ' to try again.', true);
+      if (gen === state.sessionGen) setStatus('The summary was stopped on the PC.' + (replacing ? ' The previous notes are kept.' : '') + ' Press ' + (replacing ? 'Re-summarize all' : 'Summarize') + ' to try again.', !state.recording);
     } else {
-      // Failed, refused (409, too many running), unknown to the PC (404) or the PC stopped answering: stays shown.
-      setStatus((e.status === 409 ? 'Summary not started: ' : 'Summary failed: ') + e.message + (replacing ? ' The previous notes are kept.' : ''), true);
+      // Failed, refused (409, too many running), unknown to the PC (404) or the PC stopped answering: stays shown
+      // when stopped; while recording it gives way to the recording status after a while.
+      setStatus((e.status === 409 ? 'Summary not started: ' : 'Summary failed: ') + e.message + (replacing ? ' The previous notes are kept.' : ''), !state.recording);
     }
   } finally {
     clearInterval(clock);
