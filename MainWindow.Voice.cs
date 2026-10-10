@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
@@ -62,7 +60,7 @@ public partial class MainWindow
         ResumeAutoListenIfActive();
     }
 
-    /// <summary>Restarts listening shortly when auto-listen is on (and not paused for typing or by face policy).</summary>
+    /// <summary>Restarts listening shortly when auto-listen is on (and not paused for typing).</summary>
     private void ResumeAutoListenIfActive()
     {
         if (!_autoListening)
@@ -72,7 +70,7 @@ public partial class MainWindow
         {
             Dispatcher.BeginInvoke(() =>
             {
-                if (!_autoListening || _pausedListeningForTextInput || !IsVoiceInputAllowedByFacePolicy())
+                if (!_autoListening || _pausedListeningForTextInput)
                     return;
 
                 // A newer reply is being spoken; its SpeechFinished resumes listening.
@@ -115,8 +113,7 @@ public partial class MainWindow
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        if ((_autoListening || _speech.HasWakePhraseFollowUp) &&
-                            !_pausedListeningForTextInput && IsVoiceInputAllowedByFacePolicy())
+                        if ((_autoListening || _speech.HasWakePhraseFollowUp) && !_pausedListeningForTextInput)
                         {
                             if (_speech.CurrentState == VoiceState.Speaking)
                                 return;
@@ -221,14 +218,6 @@ public partial class MainWindow
 
     private void StartAutoListen()
     {
-        if (!IsVoiceInputAllowedByFacePolicy())
-        {
-            _autoListening = false;
-            AlwaysListenToggle.IsChecked = false;
-            AddSystemMessage("Listening is blocked by local face policy.");
-            return;
-        }
-
         _autoListening = true;
         _pausedListeningForTextInput = false;
         // Like the old Listen button: pressing Listen while the assistant talks stops the talking first.
@@ -263,11 +252,8 @@ public partial class MainWindow
             return;
 
         _pausedListeningForTextInput = false;
-        if (IsVoiceInputAllowedByFacePolicy())
-        {
-            SetUIState("idle", "Listening - microphone on");
-            _speech.StartListening();
-        }
+        SetUIState("idle", "Listening - microphone on");
+        _speech.StartListening();
     }
 
     private void TtsToggle_Click(object sender, RoutedEventArgs e)

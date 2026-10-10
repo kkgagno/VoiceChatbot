@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
@@ -373,7 +371,8 @@ public partial class MainWindow
                 ? "Continue the previous assistant response from where it left off. Do not restart, do not summarize, and do not ask what to continue. If the previous response was code, SVG, markup, a list, or a long answer, continue that same content directly."
                 : userText;
             var phoneImagesBase64 = input.ImagesBase64.ToList();
-            var phoneImagePaths = new List<string>();
+            // Shown as thumbnails on the desktop, like images attached there.
+            var phoneImagePaths = input.ImagePaths.Where(File.Exists).ToList();
             string model = "";
             string systemPrompt = "";
             double temperature = 0.7;
@@ -407,19 +406,6 @@ public partial class MainWindow
                 : attachedPhoneDocuments;
             var phoneDocumentContext = DocumentTextService.BuildContext(phoneDocumentsForResponse.Select(d => d.Document), modelUserText);
             var phoneDocumentCount = phoneDocumentsForResponse.Count;
-
-            if (ShouldCaptureCameraForPrompt(modelUserText))
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    SetPhoneUIState("processing", "Phone camera...");
-                    AddSystemMessage("Phone remote requested one camera photo.");
-                });
-
-                var photo = await _camera.CapturePhotoAsync(ct);
-                phoneImagePaths.Add(photo.Path);
-                phoneImagesBase64.Add(photo.Base64);
-            }
 
             await Dispatcher.InvokeAsync(() =>
             {

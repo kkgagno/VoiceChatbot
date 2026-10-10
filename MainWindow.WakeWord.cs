@@ -46,7 +46,7 @@ public partial class MainWindow
         _settings.WakeWord = WakeWordBox.Text.Trim();
     }
 
-    // Startup, once everything (face policy included) is ready: wait for the wake word straight away.
+    // Startup, once everything is ready: wait for the wake word straight away.
     private void StartWaitingForWakeWordIfEnabled()
     {
         if (WakeWordOnly && AlwaysListenToggle.IsChecked != true)

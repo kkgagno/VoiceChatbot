@@ -17,36 +17,11 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
 public partial class MainWindow
 {
-    private async void CameraAsk_Click(object sender, RoutedEventArgs e)
-    {
-        SetUIState("processing", "Capturing camera...");
-
-        try
-        {
-            var photo = await _camera.CapturePhotoAsync();
-            _pendingImages.Add(new PendingImageAttachment(photo.Path, photo.Base64));
-            AddSystemMessage("Camera photo ready for your next message.");
-            UpdateImageButtonLabel();
-            MessageInput.Focus();
-            MessageInput.CaretIndex = MessageInput.Text.Length;
-        }
-        catch (Exception ex)
-        {
-            AddSystemMessage($"Camera capture failed: {ex.Message}");
-        }
-        finally
-        {
-            SetUIState("idle", "Ready");
-        }
-    }
-
     private void AttachImage_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog

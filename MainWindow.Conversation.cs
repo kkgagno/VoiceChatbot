@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 

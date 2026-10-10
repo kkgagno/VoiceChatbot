@@ -622,52 +622,6 @@
                             </StackPanel>
                         </Expander>
 
-                        <!-- ================= Face presence ================= -->
-                        <Expander Header="Face Presence" local:Ui.Icon="&#xE77B;" local:Ui.Subtitle="Camera identity and gating">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Ellipse x:Name="FacePresenceDot" Width="8" Height="8" Fill="{DynamicResource TextMutedBrush}" VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="FacePresenceText" Grid.Column="1" Text="Camera features off" FontSize="12"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </Grid>
-                                <ToggleButton x:Name="FaceFeaturesToggle" Content="Camera features" IsChecked="False"
-                                              Style="{StaticResource SwitchToggle}" Click="FaceFeaturesToggle_Click"/>
-                                <ToggleButton x:Name="FaceGatingToggle" Content="Use identity gating" IsChecked="False"
-                                              Style="{StaticResource SwitchToggle}" Click="FaceGatingToggle_Click"/>
-                                <Border Background="#05060A" Height="150" CornerRadius="10" Margin="0,0,0,8" ClipToBounds="True"
-                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
-                                    <Grid>
-                                        <TextBlock Text="&#xE722;" Style="{StaticResource IconText}" FontSize="26"
-                                                   Foreground="{DynamicResource BorderStrongBrush}" HorizontalAlignment="Center"/>
-                                        <Image x:Name="FacePreviewImage" Stretch="Uniform"/>
-                                    </Grid>
-                                </Border>
-                                <TextBlock x:Name="FaceIdentityText" Text="Identity: Unknown" FontSize="12" Margin="0,0,0,4" TextWrapping="Wrap"/>
-                                <TextBlock x:Name="FaceDebugText" Text="Samples: 0" Style="{StaticResource FieldHint}" Margin="0,0,0,10"/>
-                                <Button x:Name="FaceSnapshotBtn" Content="Scan Face Once" local:Ui.Icon="&#xE722;"
-                                        Style="{StaticResource SecondaryButton}" Click="FaceSnapshot_Click" Margin="0,0,0,8"/>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="FaceProfileCombo" SelectedIndex="0" IsEditable="True" Text="Keith"
-                                              SelectionChanged="FaceProfileCombo_SelectionChanged">
-                                        <ComboBoxItem Content="Keith"/>
-                                    </ComboBox>
-                                    <Button x:Name="EnrollFaceBtn" Grid.Column="1" Content="Save Face" local:Ui.Icon="&#xE74E;"
-                                            Style="{StaticResource ActionButton}" Click="EnrollFace_Click" Margin="6,0,0,0"/>
-                                </Grid>
-                                <Button x:Name="ClearFacesBtn" Content="Clear Face Samples" local:Ui.Icon="&#xE74D;"
-                                        Style="{StaticResource DangerButton}" Click="ClearFaces_Click" Margin="0,0,0,8"/>
-                                <TextBlock x:Name="FacePolicyText" Text="Face gating disabled" Style="{StaticResource FieldHint}"/>
-                            </StackPanel>
-                        </Expander>
-
                         <!-- ================= App ================= -->
                         <Expander Header="App" local:Ui.Icon="&#xE713;" local:Ui.Subtitle="Theme, tray, hotkey, secrets and logs">
                             <StackPanel>
@@ -914,8 +868,6 @@
                                     Click="SendText_Click" ToolTip="Send (Enter)"/>
 
                             <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,-6">
-                                <Button x:Name="CameraBtn" Content="Camera" local:Ui.Icon="&#xE722;" Style="{StaticResource ChipButton}"
-                                        Click="CameraAsk_Click" ToolTip="Take one photo and ask what the assistant sees."/>
                                 <Button x:Name="ImageBtn" Content="Image" local:Ui.Icon="&#xE8B9;" Style="{StaticResource ChipButton}"
                                         Click="AttachImage_Click" ToolTip="Attach image files from this computer to the next message."/>
                                 <Button x:Name="DocumentBtn" Content="Document" local:Ui.Icon="&#xE8A5;" Style="{StaticResource ChipButton}"

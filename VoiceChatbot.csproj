@@ -36,8 +36,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Markdig" Version="0.41.3" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240616" />
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240616" />
     <PackageReference Include="PdfPig" Version="0.1.14" />
     <PackageReference Include="Whisper.net" Version="1.7.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.7.1" />
@@ -49,9 +47,6 @@
   <ItemGroup>
     <!-- Embedded so the tray icon can load its 16x16 frame (MainWindow.Tray.cs). -->
     <Resource Include="Resources\AppIcon.ico" />
-    <Content Include="Resources\Models\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="Tools\Kokoro\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

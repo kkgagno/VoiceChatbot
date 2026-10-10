@@ -113,9 +113,6 @@ public class AppSettings
     // One of GlobalHotkeys.Choices ("Off", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Ctrl+Alt+L").
     public string GlobalListenHotkey { get; set; } = GlobalHotkeys.Default;
 
-    // Face presence / local identity. Disabled by default to preserve current behavior.
-    public FaceFeatureSettings FaceFeatures { get; set; } = new();
-
     // Local iPhone/browser remote. Disabled by default and only exposed on the LAN when started.
     public PhoneRemoteSettings PhoneRemote { get; set; } = new();
 

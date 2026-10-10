@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
@@ -39,13 +37,6 @@ public partial class MainWindow
         {
             basePrompt += "\n\n" + GetCodeArtifactSystemInstruction(currentUserText);
         }
-
-        var identityContext = GetLastIdentifiedUserSystemContext();
-        if (!string.IsNullOrWhiteSpace(identityContext))
-            basePrompt += "\n\n" + identityContext;
-
-        if (_settings.FaceFeatures.FaceGatingEnabled)
-            basePrompt += "\n\n" + GetFaceIdentitySystemContext();
 
         var memoryBlock = BuildMemoryPromptBlock(memoryQueryText ?? currentUserText);
         if (!string.IsNullOrWhiteSpace(memoryBlock))
@@ -586,39 +577,6 @@ public partial class MainWindow
         return sb.ToString().Trim();
     }
 
-    private string GetFaceIdentitySystemContext()
-    {
-        return _recognizedFaceIdentity switch
-        {
-            FaceIdentity.Keith => string.IsNullOrWhiteSpace(_recognizedFaceName)
-                ? "Local face identity says the owner is present. Use full assistant mode."
-                : $"Local face identity says the owner ({_recognizedFaceName}) is present. Use full assistant mode.",
-            FaceIdentity.Child1 or FaceIdentity.Child2 => "Local face identity says a child profile is present. Use kid-safe mode: keep content age-appropriate, avoid adult topics, avoid dangerous instructions, and ask for an adult for sensitive actions.",
-            _ when _facePresenceState == FacePresenceState.MultipleFacesDetected => "Local face presence sees multiple people. Use guest/private mode: avoid exposing personal memory or private details unless the owner is recognized.",
-            _ => "Local face identity is unknown or no face is present. Use guest/private mode: avoid exposing personal memory or private details unless the owner is recognized."
-        };
-    }
-
-    private string GetLastIdentifiedUserSystemContext()
-    {
-        if (string.IsNullOrWhiteSpace(_lastIdentifiedFaceName))
-            return "";
-
-        var identifiedWhen = _lastIdentifiedFaceUtc == DateTime.MinValue
-            ? "earlier in this app session"
-            : $"at {_lastIdentifiedFaceUtc.ToLocalTime():g}";
-
-        return _lastIdentifiedFaceIdentity switch
-        {
-            FaceIdentity.Keith =>
-                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. When replying directly to the user, you may address them as {_lastIdentifiedFaceName} and should treat the conversation as being with them unless the user says otherwise.",
-            FaceIdentity.Child1 or FaceIdentity.Child2 =>
-                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. Keep replies age-appropriate and avoid adult or dangerous content unless the owner is identified again.",
-            _ =>
-                $"Local face identity context: the last identified user in this app session is {_lastIdentifiedFaceName}, identified {identifiedWhen}. When replying directly to the user, you may address them by that name unless the user says otherwise."
-        };
-    }
-
     private async void SendMessage(string userText)
     {
         if (string.IsNullOrWhiteSpace(userText)) return;
@@ -662,15 +620,6 @@ public partial class MainWindow
             var imagePaths = new List<string>();
             var imagesBase64 = new List<string>();
 
-            if (ShouldCaptureCameraForPrompt(userText))
-            {
-                SetUIState("processing", "Capturing camera...");
-                AddSystemMessage("Taking one camera photo for this message.");
-                var photo = await _camera.CapturePhotoAsync(ct);
-                imagePaths.Add(photo.Path);
-                imagesBase64.Add(photo.Base64);
-            }
-
             if (_pendingImages.Count > 0)
             {
                 imagePaths.AddRange(_pendingImages.Select(i => i.Path));
@@ -698,7 +647,7 @@ public partial class MainWindow
                 UpdateDocumentButtonLabel();
             }
 
-            // Add user message to UI and history after optional capture so the thumbnail can be shown.
+            // Add the user message, with thumbnails of the attached images, to the UI and history.
             AddUserMessage(userText, imagePaths);
             _history.Add("user", userText, imagesBase64);
             if (IsLargePaste(modelUserText))

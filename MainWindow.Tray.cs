@@ -186,8 +186,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// The global hotkey and the tray's Listen item: work like the Listen / Stop listening switch (face policy
-    /// included). Works while hidden.
+    /// The global hotkey and the tray's Listen item: work like the Listen / Stop listening switch. Works while
+    /// hidden.
     /// </summary>
     private void ToggleListeningFromShortcut()
     {
@@ -199,14 +199,6 @@ public partial class MainWindow
             if (IsListeningOn)
             {
                 ToggleListening();
-                return;
-            }
-
-            // The face policy is created after the first await in MainWindow_Loaded.
-            if (_settings.FaceFeatures.FaceGatingEnabled && _facePolicy == null)
-            {
-                AddSystemMessage("Voice Chatbot is still starting. Try listening again in a moment.");
-                NotifyWhenInBackground("Still starting. Try again in a moment.");
                 return;
             }
 

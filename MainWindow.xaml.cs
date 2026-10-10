@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
@@ -35,24 +33,7 @@ public partial class MainWindow : Window
     private DocumentTextService _documentText;
     private TavilySearchClient _tavily;
     private SpeechEngine _speech;
-    private CameraService _camera;
     private PhoneRemoteServer _phoneRemoteServer;
-    private FacePresenceMonitor? _facePresenceMonitor;
-    private FaceAccessPolicyEvaluator _facePolicy = null!;
-    private FaceIdentityManager _faceIdentityManager = null!;
-    private FaceDetectionSnapshot? _latestFaceSnapshot;
-    private bool _recognitionInProgress;
-    private FacePresenceState _facePresenceState = FacePresenceState.CameraUnavailable;
-    private FaceIdentity _recognizedFaceIdentity = FaceIdentity.Unknown;
-    private FaceIdentity _lastIdentifiedFaceIdentity = FaceIdentity.Unknown;
-    private string _recognizedFaceName = "";
-    private string _lastIdentifiedFaceName = "";
-    private DateTime _lastIdentifiedFaceUtc = DateTime.MinValue;
-    private DateTime _lastRecognizedFaceUtc = DateTime.MinValue;
-    private DateTime _lastPreviewUpdatedUtc = DateTime.MinValue;
-    private DateTime _lastRecognitionStartedUtc = DateTime.MinValue;
-    private float _lastRecognizedSimilarity;
-    private FaceAccessDecision _faceAccessDecision = new();
     private ConversationHistory _history;
     private AppSettings _settings;
     private CancellationTokenSource? _chatCts;
@@ -101,7 +82,6 @@ public partial class MainWindow : Window
         _tavily = new TavilySearchClient(_settings.TavilyApiKey);
         _tavily.SearchFailed += ShowWebSearchFailure;
         _speech = new SpeechEngine();
-        _camera = new CameraService();
         _phoneRemoteServer = new PhoneRemoteServer(
             (stream, ct) => _speech.TranscribeWavAsync(stream, ct),
             HandlePhoneRemoteChatAsync,
@@ -111,9 +91,6 @@ public partial class MainWindow : Window
                 SummarizeWebTranscriptAsync,
                 SendWebTranscriptToChatAsync,
                 TranscriptionWindow.TranscriptsFolder));
-        _faceIdentityManager = new FaceIdentityManager(
-            FaceServiceFactory.CreateProfileStore(_settings.FaceFeatures.ModelOptions),
-            _settings.FaceFeatures.ModelOptions);
 
         WireMessageInput();
         Loaded += MainWindow_Loaded;
@@ -184,9 +161,6 @@ public partial class MainWindow : Window
             // Test connection
             await TestConnection();
 
-            _facePolicy = new FaceAccessPolicyEvaluator(_settings.FaceFeatures.Policy);
-            await InitializeFacePresenceAsync();
-            await RefreshFaceProfileChoicesAsync();
             await StartPhoneRemoteIfEnabledAsync();
 
             // Load models
@@ -271,9 +245,6 @@ public partial class MainWindow : Window
         ApplyConversationHistorySettings();
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
-        FaceFeaturesToggle.IsChecked = _settings.FaceFeatures.CameraFeaturesEnabled;
-        FaceGatingToggle.IsChecked = _settings.FaceFeatures.FaceGatingEnabled;
-        FacePolicyText.Text = _settings.FaceFeatures.FaceGatingEnabled ? "Face gating enabled" : "Face gating disabled";
         PhoneRemoteToggle.IsChecked = _settings.PhoneRemote.Enabled;
         PhoneRemotePortBox.Text = _settings.PhoneRemote.Port.ToString();
         PhoneRemotePinBox.Text = _settings.PhoneRemote.Pin;
@@ -283,9 +254,6 @@ public partial class MainWindow : Window
         ApplyPhoneRemoteSecuritySettings();
         ApplySecretsAndLogsUi();
         UpdatePhoneRemoteUi();
-        UpdateFacePresenceUi(_settings.FaceFeatures.CameraFeaturesEnabled
-            ? FacePresenceState.CameraUnavailable
-            : FacePresenceState.CameraUnavailable);
 
         _history.MaxMessages = _settings.MaxContextMessages;
 
@@ -361,37 +329,6 @@ public partial class MainWindow : Window
                top + 30 <= screenBottom;
     }
 
-    private async Task RefreshFaceProfileChoicesAsync()
-    {
-        if (_faceIdentityManager == null)
-            return;
-
-        var current = GetSelectedFaceProfileName();
-        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { "Keith" };
-        foreach (var profile in await _faceIdentityManager.LoadProfilesAsync())
-        {
-            if (!string.IsNullOrWhiteSpace(profile.DisplayName))
-                names.Add(profile.DisplayName);
-        }
-
-        FaceProfileCombo.Items.Clear();
-        foreach (var name in names)
-        {
-            FaceProfileCombo.Items.Add(new ComboBoxItem { Content = name });
-        }
-
-        FaceProfileCombo.Text = string.IsNullOrWhiteSpace(current) ? "Keith" : current;
-    }
-
-    private string GetSelectedFaceProfileName()
-    {
-        var text = FaceProfileCombo.Text;
-        if (string.IsNullOrWhiteSpace(text) && FaceProfileCombo.SelectedItem is ComboBoxItem item)
-            text = item.Content?.ToString() ?? "";
-
-        return string.IsNullOrWhiteSpace(text) ? "Keith" : text.Trim();
-    }
-
     /// <param name="userChange">False when saving on exit, so an unreadable settings.json the user has not
     /// replaced yet is kept (see SettingsManager.Save).</param>
     private void SaveSettings(bool userChange = true)
@@ -441,8 +378,6 @@ public partial class MainWindow : Window
         _settings.TavilyApiKey = string.IsNullOrWhiteSpace(tavilyKey)
             ? AppSettings.DefaultTavilyApiKey
             : tavilyKey;
-        _settings.FaceFeatures.CameraFeaturesEnabled = FaceFeaturesToggle.IsChecked == true;
-        _settings.FaceFeatures.FaceGatingEnabled = FaceGatingToggle.IsChecked == true;
         _settings.PhoneRemote.Enabled = PhoneRemoteToggle.IsChecked == true;
         _settings.PhoneRemote.Port = int.TryParse(PhoneRemotePortBox.Text.Trim(), out var phonePort)
             ? Math.Clamp(phonePort, 1024, 65535)
@@ -837,9 +772,9 @@ public partial class MainWindow : Window
         if (_shutdownComplete)
             return;
 
-        // Stopping the phone server and camera is async. Blocking the UI thread on it deadlocks
-        // (their continuations need this thread), which is what hung the app when the phone
-        // remote was still running. Cancel this close, shut down asynchronously, then close again.
+        // Stopping the phone server is async. Blocking the UI thread on it deadlocks (its
+        // continuations need this thread), which is what hung the app when the phone remote
+        // was still running. Cancel this close, shut down asynchronously, then close again.
         e.Cancel = true;
         if (_shutdownStarted)
             return;
@@ -874,12 +809,10 @@ public partial class MainWindow : Window
             CancelKnowledgeIndexing();
             await FlushConversationHistoryAsync(TimeSpan.FromSeconds(3));
 
-            var shutdown = Task.WhenAll(
-                StopFacePresenceAsync(),
-                _phoneRemoteServer.DisposeAsync().AsTask());
-            // Never let a stuck service keep the window open.
+            var shutdown = _phoneRemoteServer.DisposeAsync().AsTask();
+            // Never let a stuck server keep the window open.
             if (await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(6))) != shutdown)
-                AppLog.Warn("Services did not stop within 6 seconds. Closing anyway.");
+                AppLog.Warn("The phone remote did not stop within 6 seconds. Closing anyway.");
         }
         catch (Exception ex)
         {
@@ -888,23 +821,12 @@ public partial class MainWindow : Window
         }
 
         try { _speech.Dispose(); } catch { }
-        try { _camera.Dispose(); } catch { }
         try { _ollama.Dispose(); } catch { }
         try { _tavily.Dispose(); } catch { }
         try { DisposeToolServices(); } catch { }
 
         _shutdownComplete = true;
         await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
-    }
-
-    private static bool ShouldCaptureCameraForPrompt(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
-
-        var normalized = Regex.Replace(text.ToLowerInvariant(), "[^a-z0-9\\s]", " ");
-        normalized = Regex.Replace(normalized, "\\s+", " ").Trim();
-        return normalized == "what do you see";
     }
 
     private void Window_StateChanged(object? sender, EventArgs e)

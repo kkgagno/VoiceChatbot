@@ -17,8 +17,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Cv2 = OpenCvSharp.Cv2;
-using Mat = OpenCvSharp.Mat;
 
 namespace VoiceChatbot;
 
@@ -357,7 +355,6 @@ public partial class MainWindow
 
         // Enable/disable send
         SendBtn.IsEnabled = state == "idle";
-        CameraBtn.IsEnabled = state == "idle";
         ImageBtn.IsEnabled = state == "idle";
         DocumentBtn.IsEnabled = state == "idle";
         KeepDocumentActiveToggle.IsEnabled = state == "idle";
