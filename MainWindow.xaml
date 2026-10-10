@@ -744,7 +744,7 @@
                                                    Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Top" Margin="0,1,0,0"/>
                                         <TextBlock x:Name="SecretsStatusText" Grid.Column="1" Margin="8,0,0,0" FontSize="11" TextWrapping="Wrap"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                                   Text="API keys, the SSH password and the phone PIN are saved encrypted for your Windows account."/>
+                                                   Text="API keys and the phone PIN are saved encrypted for your Windows account."/>
                                     </Grid>
                                 </Border>
 
@@ -785,94 +785,6 @@
                                 </Border>
                                 <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0"
                                            Text="Right-click the tray icon to open the app, listen, turn speech on or off, or exit."/>
-                            </StackPanel>
-                        </Expander>
-
-                        <!-- ================= Models & services (SSH) ================= -->
-                        <Expander Header="Model Server Control" local:Ui.Icon="&#xE945;"
-                                  local:Ui.Subtitle="Hermes SSH, llama.cpp and ComfyUI">
-                            <StackPanel>
-                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12">
-                                    <TextBlock x:Name="ModelControlStatusText" Text="Checking services..." FontSize="11"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-                                </Border>
-
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="LaunchModelCombo" MinWidth="120" IsEnabled="False"/>
-                                    <Button x:Name="StartSelectedModelBtn" Grid.Column="1" Content="Start" local:Ui.Icon="&#xE768;"
-                                            Style="{StaticResource ActionButton}" Click="StartSelectedModel_Click"
-                                            IsEnabled="False" Margin="6,0,0,0"/>
-                                </Grid>
-                                <UniformGrid Columns="2" Margin="0,0,0,12">
-                                    <Button x:Name="StopCurrentModelBtn" Content="Stop Model" local:Ui.Icon="&#xE71A;"
-                                            Style="{StaticResource DangerButton}" Click="StopCurrentModel_Click" Margin="0,0,3,0"/>
-                                    <Button x:Name="ComfyUiStartStopBtn" Content="Start ComfyUI" local:Ui.Icon="&#xE790;"
-                                            Style="{StaticResource SecondaryButton}" Click="ComfyUiStartStop_Click"
-                                            IsEnabled="False" Margin="3,0,0,0"/>
-                                </UniformGrid>
-
-                                <Border Style="{StaticResource Divider}"/>
-                                <TextBlock Text="HERMES SSH" Style="{StaticResource SubHeading}"/>
-
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="76"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Host" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="HermesSshHostBox" Text="127.0.0.1"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Port" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="HermesSshPortBox" Text="2222"/>
-                                    </StackPanel>
-                                </Grid>
-                                <StackPanel Style="{StaticResource FieldBlock}">
-                                    <TextBlock Text="User" Style="{StaticResource SectionLabel}"/>
-                                    <TextBox x:Name="HermesSshUserBox"/>
-                                </StackPanel>
-                                <StackPanel Style="{StaticResource FieldBlock}">
-                                    <TextBlock Text="Password" Style="{StaticResource SectionLabel}"/>
-                                    <PasswordBox x:Name="HermesSshPasswordBox"/>
-                                    <TextBlock Text="Saved encrypted for your Windows account." Style="{StaticResource FieldHint}" Margin="0,6,0,0"/>
-                                </StackPanel>
-
-                                <!-- Pinned host key (trust on first use), see MainWindow.SshHostKey.cs -->
-                                <TextBlock Text="Host key" Style="{StaticResource SectionLabel}"/>
-                                <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="SshHostKeyIcon" Text="&#xE72E;" Style="{StaticResource IconText}" FontSize="12"
-                                                   Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Top" Margin="0,1,0,0"/>
-                                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                            <TextBlock x:Name="SshHostKeyTargetText" Text="127.0.0.1:2222" FontSize="11"
-                                                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-                                            <TextBlock x:Name="SshHostKeyText" Text="Not pinned yet" FontSize="11" Margin="0,2,0,0"
-                                                       FontFamily="{StaticResource CodeFont}" TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource TextMutedBrush}"/>
-                                            <TextBlock x:Name="SshHostKeyRejectedText" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource ErrorBrush}" Visibility="Collapsed"/>
-                                        </StackPanel>
-                                        <Button x:Name="CopySshHostKeyBtn" Grid.Column="2" Style="{StaticResource IconButton}"
-                                                local:Ui.Icon="&#xE8C8;" Width="26" Height="26" Margin="6,-2,-4,0" VerticalAlignment="Top"
-                                                Click="CopySshHostKey_Click" ToolTip="Copy the fingerprint" IsEnabled="False"/>
-                                    </Grid>
-                                </Border>
-                                <Button x:Name="ForgetSshHostKeyBtn" Content="Forget host key" local:Ui.Icon="&#xE74D;"
-                                        Style="{StaticResource SecondaryButton}" Click="ForgetSshHostKey_Click" Margin="0,8,0,0"
-                                        IsEnabled="False" ToolTip="Trust the key the server sends on the next connection"/>
-                                <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0"
-                                           Text="Trusted on the first connection and checked on every connection after that. Forget it only after you reinstall or reconfigure the SSH server."/>
                             </StackPanel>
                         </Expander>
 
@@ -1016,19 +928,6 @@
                                             Content="Summarize a YouTube video" Tag="Summarize this YouTube video: "/>
                                     <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE943;" Click="Suggestion_Click"
                                             Content="Write a PowerShell script" Tag="Write a PowerShell script that "/>
-                                </WrapPanel>
-
-                                <TextBlock Text="MODEL CONTROL" Style="{StaticResource SubHeading}" HorizontalAlignment="Center"/>
-                                <WrapPanel HorizontalAlignment="Center">
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma" Tag="Hermes start gemma"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma 12b" Tag="Hermes start gemma 12b"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma 26b a4b" Tag="Hermes start gemma 26b a4b"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gemma speculative" Tag="Hermes start gemma speculative"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start gpt-oss:120b" Tag="Hermes start gpt-oss:120b"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start mistral" Tag="Hermes start mistral"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes start comfyui" Tag="Hermes start comfyui"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes stop comfyui" Tag="Hermes stop comfyui"/>
-                                    <Button Style="{StaticResource ChipButton}" Click="Suggestion_Click" Content="Hermes stop current model" Tag="Hermes stop current running llama.cpp model"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>

@@ -34,9 +34,6 @@ public partial class MainWindow : Window
         "VoiceChatbot",
         "videos");
     private OllamaClient _ollama;
-    private HermesSshClient _hermesSsh;
-    // The one staged "Hermes run ..." command (expires after two minutes), for the desktop and phone paths.
-    private readonly HermesApprovalGate _hermesApprovals = new();
     private PiAgentService _piAgent;
     private YouTubeTranscriptService _youtubeTranscripts;
     private DocumentTextService _documentText;
@@ -87,10 +84,6 @@ public partial class MainWindow : Window
     private string _latestGeneratedVideoPath = "";
     private string _pendingVideoAudioPath = "";
     private readonly List<RecentWebSearchContext> _recentWebSearchContexts = new();
-    private bool _desktopModelRunning;
-    private bool _comfyUiRunning;
-    private bool _serviceControlBusy;
-    private string _desktopRunningModel = "";
     // True while startup pushes saved settings into the UI. Selection-changed handlers call
     // SaveSettings, which would otherwise copy half-initialized controls back over the saved values.
     private bool _applyingSettings;
@@ -109,7 +102,6 @@ public partial class MainWindow : Window
         _history = new ConversationHistory();
         _history.MessageAdded += OnHistoryMessageAdded;
         _ollama = new OllamaClient(_settings.OllamaUrl);
-        _hermesSsh = new HermesSshClient();
         _piAgent = new PiAgentService(GetDefaultPiWorkingDirectory());
         _youtubeTranscripts = new YouTubeTranscriptService();
         _documentText = new DocumentTextService();
@@ -228,7 +220,6 @@ public partial class MainWindow : Window
             _schedulerTimer.Start();
             UpdateActiveModelText();
             ScheduleContextWindowStatusRefresh();
-            await InitializeDesktopServiceControlsAsync();
 
             // Always-listen toggle
             AlwaysListenToggle.Checked += (s, ev) => { UpdateListenToggleLook(); StartAutoListen(); UpdateTrayMenu(); };
@@ -259,10 +250,6 @@ public partial class MainWindow : Window
         OllamaUrlBox.Text = _settings.OllamaUrl;
         OpenAiUrlBox.Text = _settings.OpenAiCompatibleUrl;
         OpenAiApiKeyBox.Password = _settings.OpenAiCompatibleApiKey;
-        HermesSshHostBox.Text = _settings.HermesSshHost;
-        HermesSshPortBox.Text = _settings.HermesSshPort.ToString();
-        HermesSshUserBox.Text = _settings.HermesSshUser;
-        HermesSshPasswordBox.Password = _settings.HermesSshPassword;
         SelectProviderCombo(_settings.ChatProvider);
         SystemPromptBox.Text = _settings.SystemPrompt;
         RunOneTimeSettingsMigrations();
@@ -311,7 +298,6 @@ public partial class MainWindow : Window
         ApplyThemeSetting();
         ApplyPhoneRemoteSecuritySettings();
         ApplySecretsAndLogsUi();
-        ApplySshHostKeySettings();
         UpdatePhoneRemoteUi();
         UpdateFacePresenceUi(_settings.FaceFeatures.CameraFeaturesEnabled
             ? FacePresenceState.CameraUnavailable
@@ -439,12 +425,6 @@ public partial class MainWindow : Window
         _settings.OllamaUrl = OllamaUrlBox.Text.Trim();
         _settings.OpenAiCompatibleUrl = OpenAiUrlBox.Text.Trim();
         _settings.OpenAiCompatibleApiKey = OpenAiApiKeyBox.Password.Trim();
-        _settings.HermesSshHost = HermesSshHostBox.Text.Trim();
-        _settings.HermesSshPort = int.TryParse(HermesSshPortBox.Text.Trim(), out var hermesSshPort)
-            ? Math.Clamp(hermesSshPort, 1, 65535)
-            : 2222;
-        _settings.HermesSshUser = HermesSshUserBox.Text.Trim();
-        _settings.HermesSshPassword = HermesSshPasswordBox.Password;
         _settings.ChatProvider = GetSelectedProvider();
         // With the backend offline at launch the list is empty: keep the saved model instead of saving "".
         if (!string.IsNullOrWhiteSpace(ModelCombo.Text) || ModelCombo.Items.Count > 0)
@@ -503,7 +483,6 @@ public partial class MainWindow : Window
         _settings.PhoneRemote.PlayAudioOnPhone = PhoneRemoteAudioToggle.IsChecked == true;
         SaveTrayAndHotkeySettings();
         SavePhoneRemoteSecuritySettings();
-        SaveSshHostKeySettings();
         // Remember the restored size/position even when closing maximized.
         var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
         if (!bounds.IsEmpty)
@@ -532,10 +511,6 @@ public partial class MainWindow : Window
         _ollama.OpenAiBaseUrl = _settings.OpenAiCompatibleUrl;
         _ollama.OpenAiApiKey = _settings.OpenAiCompatibleApiKey;
         _ollama.DisableThinking = _settings.DisableModelThinking;
-        _hermesSsh.Host = _settings.HermesSshHost;
-        _hermesSsh.Port = _settings.HermesSshPort;
-        _hermesSsh.User = _settings.HermesSshUser;
-        _hermesSsh.Password = _settings.HermesSshPassword;
     }
 
     private void ConfigureImageClient()
@@ -778,28 +753,6 @@ public partial class MainWindow : Window
             _settings.OpenAiCompatibleApiKey = OpenAiApiKeyBox.Password.Trim();
             ConfigureChatClient();
             ScheduleContextWindowStatusRefresh();
-        };
-        HermesSshHostBox.TextChanged += (s, e) =>
-        {
-            _settings.HermesSshHost = HermesSshHostBox.Text.Trim();
-            ConfigureChatClient();
-        };
-        HermesSshPortBox.TextChanged += (s, e) =>
-        {
-            _settings.HermesSshPort = int.TryParse(HermesSshPortBox.Text.Trim(), out var port)
-                ? Math.Clamp(port, 1, 65535)
-                : 2222;
-            ConfigureChatClient();
-        };
-        HermesSshUserBox.TextChanged += (s, e) =>
-        {
-            _settings.HermesSshUser = HermesSshUserBox.Text.Trim();
-            ConfigureChatClient();
-        };
-        HermesSshPasswordBox.PasswordChanged += (s, e) =>
-        {
-            _settings.HermesSshPassword = HermesSshPasswordBox.Password;
-            ConfigureChatClient();
         };
         ComfyUrlBox.TextChanged += (s, e) =>
         {

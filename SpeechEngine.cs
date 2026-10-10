@@ -537,7 +537,7 @@ public partial class SpeechEngine : IDisposable
     }
 
     // Always the configured pause: a shorter one after a short opener cut sentences such as
-    // "Hey Hermes ... start gemma" in two.
+    // "Hey Onyx ... what's the weather" in two.
     private int RequiredSilenceBuckets =>
         Math.Clamp((int)Math.Round(SilenceTimeout * 1000 / AudioBucketMilliseconds), 5, 100);
 

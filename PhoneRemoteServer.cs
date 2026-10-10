@@ -781,13 +781,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     textarea { resize: vertical; min-height: 38px; max-height: 130px; }
     button { border: 0; border-radius: 7px; color: white; background: #00a884; padding: 8px 10px; font-weight: 700; font-size: 13px; line-height: 1.1; }
     button:disabled { opacity: .5; }
-    #modelHelp { background: #2d3436; padding: 7px 9px; white-space: nowrap; }
     #openTranscriber { color: white; background: #6c5ce7; border-radius: 7px; padding: 7px 9px; font-weight: 700; font-size: 13px; line-height: 1.1; text-decoration: none; white-space: nowrap; }
-    .commandHelp { align-self: stretch; background: #181a20; border: 1px solid #373b45; }
-    .commandTitle { color: #d7dae0; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
-    .commandList { display: grid; gap: 6px; }
-    .commandChoice { width: 100%; background: #2d3436; color: white; text-align: left; padding: 9px 10px; }
-    .commandChoice:active { background: #00a884; }
     .controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 5px; }
     #micMeter { display: none; align-items: center; gap: 8px; margin: 0 0 6px; color: #aeb3bd; font-size: 11px; }
     #micMeter.on { display: flex; }
@@ -812,7 +806,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 </head>
 <body>
 <main>
-  <header><h1>Voice Chatbot</h1><a id="openTranscriber" href="/transcribe" title="Live transcript with notes, from this device's microphone or a browser tab">Transcribe</a><button id="modelHelp" type="button">Model Help</button><span id="modelState"></span><span id="status">Ready</span></header>
+  <header><h1>Voice Chatbot</h1><a id="openTranscriber" href="/transcribe" title="Live transcript with notes, from this device's microphone or a browser tab">Transcribe</a><span id="modelState"></span><span id="status">Ready</span></header>
   <div id="chat"></div>
   <div class="controls">
     <button id="talk">Hold to Talk</button>
@@ -860,7 +854,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 const chat = document.getElementById('chat');
 const statusEl = document.getElementById('status');
 const modelStateEl = document.getElementById('modelState');
-const modelHelp = document.getElementById('modelHelp');
 const talk = document.getElementById('talk');
 const live = document.getElementById('live');
 const longTalk = document.getElementById('longTalk');
@@ -1064,46 +1057,6 @@ function updateModelState(data) {
   if (endpoint) parts.push(endpoint.replace(/^https?:\/\//, ''));
   modelStateEl.textContent = parts.join(' @ ');
   modelStateEl.title = [provider, model, endpoint].filter(Boolean).join(' | ');
-}
-
-function showModelHelp() {
-  const commands = [
-    'Hermes stop current running llama.cpp model',
-    'Hermes start gpt-oss:120b',
-    'Hermes start gemma',
-    'Hermes start gemma 4b',
-    'Hermes start gemma 12b',
-    'Hermes start gemma speculative',
-    'Hermes start gemma 26b a4b',
-    'Hermes start mistral',
-    'Hermes start qwen',
-    'Hermes start lfm',
-    'Hermes start comfyui',
-    'Hermes stop comfyui'
-  ];
-  const help = document.createElement('div');
-  help.className = 'msg commandHelp';
-  const title = document.createElement('div');
-  title.className = 'commandTitle';
-  title.textContent = 'Tap a command to put it in the message box:';
-  help.appendChild(title);
-  const list = document.createElement('div');
-  list.className = 'commandList';
-  for (const command of commands) {
-    const choice = document.createElement('button');
-    choice.className = 'commandChoice';
-    choice.type = 'button';
-    choice.textContent = command;
-    choice.addEventListener('click', () => {
-      textMessage.value = command;
-      textMessage.focus();
-      textMessage.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    list.appendChild(choice);
-  }
-  help.appendChild(list);
-  chat.appendChild(help);
-  chat.scrollTop = chat.scrollHeight;
 }
 
 function appendAttachedFiles(form) {
@@ -1686,7 +1639,6 @@ live.addEventListener('click', () => {
 });
 longTalk.addEventListener('click', () => setLongTalkMode(!longTalkMode));
 stopAudio.addEventListener('click', stopAllAudio);
-modelHelp.addEventListener('click', showModelHelp);
 sendText.addEventListener('click', sendTypedMessage);
 meetingRecord.addEventListener('click', toggleMeetingRecording);
 clearMeeting.addEventListener('click', clearMeetingRecording);

@@ -19,7 +19,6 @@ public partial class MainWindow
         AppLog.SecretsProvider = () => new[]
         {
             _settings.OpenAiCompatibleApiKey,
-            _settings.HermesSshPassword,
             _settings.TavilyApiKey,
             _settings.PhoneRemote?.Pin
         };
@@ -42,7 +41,7 @@ public partial class MainWindow
         }
         else
         {
-            SetSecretsStatus("API keys, the SSH password and the phone PIN are saved encrypted for your Windows account.",
+            SetSecretsStatus("API keys and the phone PIN are saved encrypted for your Windows account.",
                 "\uE72E", "SuccessBrush");
         }
     }

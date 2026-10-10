@@ -32,10 +32,6 @@ public class AppSettings
     public string OllamaUrl { get; set; } = "http://localhost:11434";
     public string OpenAiCompatibleUrl { get; set; } = "http://localhost:8080/v1";
     public string OpenAiCompatibleApiKey { get; set; } = "";
-    public string HermesSshHost { get; set; } = "127.0.0.1";
-    public int HermesSshPort { get; set; } = 2222;
-    public string HermesSshUser { get; set; } = "";
-    public string HermesSshPassword { get; set; } = "";
     public string Model { get; set; } = "llama3";
     public string SystemPrompt { get; set; } = "You are a helpful, friendly AI assistant. Keep responses concise and conversational since they will be spoken aloud. Light Markdown such as short lists, bold text or a small table is fine because it is rendered on screen and removed before speaking. Avoid emojis and hashtags. If the user explicitly asks for code, markup, an SVG, or a script, provide it in a fenced code block.";
     public double Temperature { get; set; } = 0.7;
@@ -127,9 +123,6 @@ public class AppSettings
     public bool MinimizeToTray { get; set; } = false;
     // One of GlobalHotkeys.Choices ("Off", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Ctrl+Alt+L").
     public string GlobalListenHotkey { get; set; } = GlobalHotkeys.Default;
-    // Pinned SSH host keys for Model Server Control: "host:port" -> "SHA256:<base64>" as OpenSSH prints it.
-    // Filled on the first connection to each server (trust on first use); a different key is then refused.
-    public Dictionary<string, string> HermesSshHostKeyFingerprints { get; set; } = new();
 
     // Face presence / local identity. Disabled by default to preserve current behavior.
     public FaceFeatureSettings FaceFeatures { get; set; } = new();
@@ -192,7 +185,6 @@ public static class SettingsManager
     private static readonly (string Path, string Label)[] SecretFields =
     {
         (nameof(AppSettings.OpenAiCompatibleApiKey), "OpenAI API key"),
-        (nameof(AppSettings.HermesSshPassword), "SSH password"),
         (nameof(AppSettings.TavilyApiKey), "Tavily API key"),
         ($"{nameof(AppSettings.PhoneRemote)}.{nameof(PhoneRemoteSettings.Pin)}", "phone remote PIN"),
     };

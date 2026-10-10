@@ -37,11 +37,10 @@ public partial class MainWindow
         }
 
         // A true fresh start: cancels the turn still running and drops hidden context (live
-        // transcript, web results, a staged Hermes command) that later system prompts would still carry.
+        // transcript, web results) that later system prompts would still carry.
         StartFreshConversation();
         _history.Clear();
         _recentWebSearchContexts.Clear();
-        _hermesApprovals.Clear();
         _latestLiveTranscript = "";
         _latestLiveTranscriptSummary = "";
         ChatPanel.Children.Clear();

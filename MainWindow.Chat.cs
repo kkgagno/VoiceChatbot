@@ -636,12 +636,6 @@ public partial class MainWindow
             ? "Continue the previous assistant response from where it left off. Do not restart, do not summarize, and do not ask what to continue. If the previous response was code, SVG, markup, a list, or a long answer, continue that same content directly."
             : userText;
 
-        if (TryCreateHermesPrompt(userText, out var hermesPrompt))
-        {
-            await SendHermesAgentMessageAsync(userText, hermesPrompt);
-            return;
-        }
-
         if (PiAgentService.TryCreateReadOnlyPrompt(userText, out var piPrompt, out var piBlockedReason))
         {
             await SendPiAgentMessageAsync(userText, piPrompt, piBlockedReason);
