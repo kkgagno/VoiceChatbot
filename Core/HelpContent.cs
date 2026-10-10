@@ -335,7 +335,7 @@ public static class HelpContent
             .Heading("Required")
             .Bullets(
                 "**Windows 10 (version 1809 or newer) or Windows 11**, 64-bit.",
-                "Disk space for the app, which includes a model of about 5 GB, plus room for any bigger model you download (about 7.5 to 18 GB each).")
+                "Disk space for the app, which includes a model of about 6 GB, plus room for any bigger model you download (about 8.5 to 19.5 GB each, with its picture support).")
             .Heading("For the chat model")
             .Bullets(
                 "Nothing extra: the included Gemma 4 E4B runs on this PC with the bundled llama.cpp, without internet and without an account.",
@@ -365,25 +365,29 @@ public static class HelpContent
                 "The app comes with Gemma 4 E4B, which runs on this PC. With Choose AI model... you can pick a bigger Gemma 4 model, Ollama, a llama.cpp server or OpenAI instead.")
             .Keywords("gemma", "gemma 4", "e4b", "12b", "26b", "a4b", "31b", "vram", "video memory", "graphics card", "gpu", "nvidia", "amd", "intel", "rtx", "radeon",
                 "download", "model chooser", "choose ai model", "built-in model", "models folder", "disk space", "ollama", "llama.cpp", "llama-server", "lm studio", "vllm", "openai", "chatgpt", "gpt",
-                "api key", "cost", "price", "free", "gguf", "server", "backend", "model", "url", "localhost", "pull", "offline")
+                "api key", "cost", "price", "free", "gguf", "server", "backend", "model", "url", "localhost", "pull", "offline",
+                "pictures", "vision", "mmproj", "picture support")
             .Heading("The model chooser")
             .Bullets(
                 "Click **Choose AI model...** at the top of **Chat Backend**. It also opens by itself the first time the app starts; **Skip for now** keeps the included model.",
                 "At the top it shows what this PC has, for example \"This PC: NVIDIA GeForce RTX 4060 with 8 GB of video memory, and 32 GB of memory\". Video memory is the memory on the graphics card; a model that fits in it answers fastest.",
                 "Each model on this PC gets a badge: **Fits your graphics card** (fast), **Part runs on the processor: slower**, **Runs on the processor: slow** or **Too big for this PC**.",
-                "Pick one and click **Use this model**, or **Download and use** for a model that is not on this PC yet. You can change your mind any time.")
+                "Pick one and click **Use this model**, or **Download and use** for a model that is not on this PC yet. You can change your mind any time.",
+                "The **Pictures** line says whether the model can look at pictures you attach. A model on this PC without its picture support shows **Add picture support** (a download of about 1 GB) and **Use without pictures**.")
             .Heading("Gemma 4 models that run on this PC")
             .Bullets(
                 "**Gemma 4 E4B**: included, no download. Small and quick; good for everyday chat, voice and short documents. Needs about 6.5 GB of video memory: a graphics card with 8 GB or more, such as an RTX 3060 Ti, RTX 4060, RX 7600 or Arc A750. 6 GB cards work with a little on the processor.",
-                "**Gemma 4 12B**: download about 7.5 GB. Clearly smarter, with better answers about your documents. Needs about 9.5 GB of video memory: a 12 GB card, such as an RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT or Arc B580.",
-                "**Gemma 4 26B A4B**: download about 17 GB. A \"mixture of experts\" model: close to the top model's quality, but quick. Needs about 19 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX. 16 GB cards run it with part on the processor.",
-                "**Gemma 4 31B**: download about 18 GB. The smartest, but slower. Needs about 21 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX.")
-            .Paragraph("They are free and private: they run on this PC with the bundled llama.cpp (on NVIDIA, AMD and Intel graphics cards, or on the processor) and work without internet once downloaded.")
+                "**Gemma 4 12B**: download about 8.5 GB. Clearly smarter, with better answers about your documents. Needs about 9.5 GB of video memory: a 12 GB card, such as an RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT or Arc B580.",
+                "**Gemma 4 26B A4B**: download about 18 GB. A \"mixture of experts\" model: close to the top model's quality, but quick. Needs about 19 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX. 16 GB cards run it with part on the processor.",
+                "**Gemma 4 31B**: download about 19.5 GB. The smartest, but slower. Needs about 21 GB of video memory: a 24 GB card, such as an RTX 3090, RTX 4090, RTX 5090 or RX 7900 XTX.")
+            .Paragraph("They are free and private: they run on this PC with the bundled llama.cpp (on NVIDIA, AMD and Intel graphics cards, or on the processor) and work without internet once downloaded. " +
+                       "All of them can look at pictures you attach: picture support comes with the included model and is part of each download.")
             .Heading("Downloading a bigger model")
             .Bullets(
                 "The download runs in the background, from Hugging Face. Its progress shows in the chooser and under **Chat Backend**. **Keep downloading in the background** closes the chooser while it continues.",
-                "**Pause** (**Pause download** in the chooser) stops it for now. Pick the model again and click **Continue download** to go on where it stopped.",
+                "**Pause** (**Pause download** in the chooser) stops it for now. Pick the model again and click **Continue download** (or **Add picture support**, when only its picture support is left) to go on where it stopped.",
                 "When the file is complete, its checksum is checked and the app switches to the new model by itself. Until then it keeps using Gemma 4 E4B.",
+                "The download includes the model's picture support (about 1 GB more), from the same place as the model. A model downloaded without it (with an older version of the app) reads text only: pick it in the chooser and click **Add picture support**, which downloads just that file.",
                 "Downloaded models are kept in `%LOCALAPPDATA%\\VoiceChatbotMini\\models`. The chooser's **Models folder** button opens it. Delete a file there to free disk space; uninstalling the app does not delete them. The included model is in the app folder's `models` folder.")
             .Heading("Models on a server or in the cloud")
             .Paragraph("These need no video memory on this PC when the model runs on another computer. Pick one in the chooser, enter what it asks for, and click its button.")
@@ -414,7 +418,8 @@ public static class HelpContent
                 "The app starts and stops its built-in model by itself. It never starts, stops or switches models on servers you run yourself (Ollama, llama.cpp, LM Studio): start those first, then click **Refresh Models**.",
                 "Switching to Ollama, a server or OpenAI stops the built-in model, so its video memory is free for other programs.",
                 "The line under **Context window** shows how much text the model accepts per request and where that number came from.",
-                "Pictures you attach need a vision model on Ollama or a server; the built-in model reads text only. Tools (web search, date and time, stock quotes, reading web pages, saving memories) need a model that supports tools, such as the built-in Gemma 4 models or an Ollama model tagged tools.")
+                "The built-in Gemma 4 models can look at pictures you attach: picture support comes with the included model and is part of each download. **Built-in model** under **Chat Backend** says \"sees pictures\" or \"text only\"; for a model without it, click **Add picture support** in **Choose AI model...**. On Ollama or a server, pictures need a vision model.",
+                "Tools (web search, date and time, stock quotes, reading web pages, saving memories) need a model that supports tools, such as the built-in Gemma 4 models or an Ollama model tagged tools.")
             .SeeAlso("chat-backend", "what-you-need", "troubleshooting")
             .Build(),
 
@@ -441,7 +446,7 @@ public static class HelpContent
             .Keywords("message", "send", "type", "attach", "paste", "image", "picture", "photo", "pdf", "document", "youtube", "keep doc", "tools", "vision")
             .Bullets(
                 "Type and press Enter (or Shift+Enter) to send. Ctrl+Enter starts a new line. Ctrl+K jumps to the message box.",
-                "**Image** attaches pictures to the next message (JPG, PNG, BMP, GIF, WebP). Ctrl+V pastes a picture or screenshot. Only a vision model on Ollama or a server can see them; the built-in model reads text only.",
+                "**Image** attaches pictures to the next message (JPG, PNG, BMP, GIF, WebP). Ctrl+V pastes a picture or screenshot. The built-in Gemma 4 models see them; on Ollama or a server you need a vision model. If the built-in model has no picture support yet, the chat says so and sends the message without the picture: add it with **Add picture support** in **Choose AI model...**.",
                 "**Document** attaches a PDF, Word, Excel, PowerPoint, text or similar file to the next message. Scanned pages are read with Windows OCR (up to 8 pages).",
                 "**Keep doc**: keeps the attached document in every following question until you untick it. Without it, the document is only used for the next message.",
                 "Paste a YouTube link and ask for a summary: the captions are fetched, or the audio is transcribed when there are none.",
@@ -537,7 +542,7 @@ public static class HelpContent
             .Bullets(
                 "**Choose AI model...**: opens the model chooser, with the Gemma 4 models that can run on this PC (and how well each suits it), Ollama, a llama.cpp server and OpenAI. See **Choose a chat model**.",
                 "**Provider**: `Built-in model` (the default) runs a model on this PC; `Ollama` uses an Ollama server; `OpenAI-compatible` is for llama.cpp, LM Studio, vLLM, OpenAI and similar servers.",
-                "**Built-in model** and **Restart**: the state of the model on this PC, such as \"Gemma 4 E4B: loading...\", \"Gemma 4 E4B: ready on NVIDIA GeForce RTX 4060 (16K context)\", or \"could not start\" with the reason. **Restart** starts it again.",
+                "**Built-in model** and **Restart**: the state of the model on this PC, such as \"Gemma 4 E4B: loading...\", \"Gemma 4 E4B: ready on NVIDIA GeForce RTX 4060 (16K context, sees pictures)\", or \"could not start\" with the reason. \"text only\" means it cannot see pictures; the line says how to add picture support. **Restart** starts it again.",
                 "While a model downloads, a progress bar shows here with **Pause**. To go on, pick the model again in **Choose AI model...**; it continues where it stopped.",
                 "**Ollama URL**: shown with `Ollama` only. Where Ollama runs, normally `http://localhost:11434`.",
                 "**OpenAI / llama.cpp URL** and **OpenAI API key (optional)**: shown with `OpenAI-compatible` only. The server's address ending in `/v1`, such as `http://localhost:8080/v1`, or `https://api.openai.com/v1` for OpenAI. The key is only for servers that need one; it is saved encrypted.",
@@ -749,7 +754,8 @@ public static class HelpContent
                 "\"not enough memory for this model\": pick a smaller model with **Choose AI model...**, lower the **Context window** (for example to `8192`), or close games and other programs that use the graphics card.",
                 "\"the model file could not be loaded\" or \"the model file is missing\": the file is damaged or was deleted. Delete it in the models folder (the chooser's **Models folder** button) and download it again, or pick another model. For the included Gemma 4 E4B, reinstall the app.",
                 "\"llama-server.exe is missing from the app folder\": reinstall the app. If it goes missing again, security software may be removing it; allow the app's `llama` folder there.",
-                "Answers are slow and the chat says the model runs on the processor: the graphics card could not hold it. Choose a smaller model, lower the **Context window**, and keep the graphics driver up to date.")
+                "Answers are slow and the chat says the model runs on the processor: the graphics card could not hold it. Choose a smaller model, lower the **Context window**, and keep the graphics driver up to date.",
+                "The model does not see pictures (\"text only\"): add its picture support with **Choose AI model...** and **Add picture support**. If the chat says the picture support could not be loaded, the model still answers text; delete the `-mmproj.gguf` file in the models folder and add it again, or see `llama-server.log`.")
             .Heading("Ollama, a server or OpenAI does not answer")
             .Bullets(
                 "Look at the CHAT line at the top of the sidebar. Disconnected means the server cannot be reached: check that Ollama or your server is running and that the URL under **Chat Backend** is right (`http://localhost:11434` for Ollama, an address ending in `/v1` for the others). The app never starts these servers for you.",

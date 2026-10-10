@@ -23,10 +23,11 @@ public enum LocalModelState
 
 /// <summary>
 /// Runs the bundled llama.cpp server (llama\llama-server.exe in the app folder) on 127.0.0.1 with the chosen
-/// model, for the "Built-in model" chat provider. It tries the graphics card first and falls back to the
-/// processor when that fails, restarts when the model or context size changes, and is tied to this app
-/// with a Windows job object, so it never outlives it (not even after a crash). Its output goes to
-/// logs\llama-server.log.
+/// model and, when it is on this PC, the model's picture support file (vision projector, --mmproj), for the
+/// "Built-in model" chat provider. It tries the graphics card first and falls back to the processor when that
+/// fails; a picture support file that does not load is left out, so the model still starts text only. It
+/// restarts when the model, picture support or context size changes, and is tied to this app with a Windows
+/// job object, so it never outlives it (not even after a crash). Its output goes to logs\llama-server.log.
 /// </summary>
 public sealed class LocalModelServer : IDisposable
 {
@@ -43,7 +44,7 @@ public sealed class LocalModelServer : IDisposable
     private Process? _process;
     private Task<bool>? _startTask;
     private CancellationTokenSource? _startCts;
-    private (string Path, string Alias, int Context)? _wanted;
+    private (string Path, string Alias, int Context, string Projector)? _wanted;
     private LlamaServerFeatures? _features;
     private StreamWriter? _log;
     private int _port;
@@ -60,6 +61,15 @@ public sealed class LocalModelServer : IDisposable
     public string ModelPath { get; private set; } = "";
 
     public int ContextTokens { get; private set; }
+
+    /// <summary>The picture support file (vision projector) the server was started with; "" for none.</summary>
+    public string ProjectorPath { get; private set; } = "";
+
+    /// <summary>
+    /// True when the running server loaded its picture support file, so it can look at attached pictures.
+    /// False while it starts, when it has none, or when the file did not load and it started text only.
+    /// </summary>
+    public bool VisionEnabled { get; private set; }
 
     /// <summary>True when the graphics card could not be used and the model runs on the processor.</summary>
     public bool RunningOnProcessor { get; private set; }
@@ -93,16 +103,19 @@ public sealed class LocalModelServer : IDisposable
     public static string LogFilePath => Path.Combine(AppLog.LogDirectory, "llama-server.log");
 
     /// <summary>
-    /// Starts the server with <paramref name="modelPath"/>, or restarts it when another model or context size
-    /// is asked for. Returns the start, which completes with true once the model is loaded. Calling it again
-    /// with the same model while it starts or runs returns the same task.
+    /// Starts the server with <paramref name="modelPath"/> and, when given, its picture support file
+    /// <paramref name="projectorPath"/>, or restarts it when another model, picture support or context size is
+    /// asked for. Returns the start, which completes with true once the model is loaded (with pictures or,
+    /// when the picture support file does not load, text only). Calling it again with the same settings while
+    /// it starts or runs returns the same task.
     /// </summary>
-    public Task<bool> StartAsync(string modelPath, string alias, int contextTokens)
+    public Task<bool> StartAsync(string modelPath, string alias, int contextTokens, string? projectorPath = null)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var wanted = (modelPath, alias, contextTokens);
+            var projector = projectorPath ?? "";
+            var wanted = (modelPath, alias, contextTokens, projector);
             if (_startTask != null && _wanted == wanted && State is LocalModelState.Starting or LocalModelState.Ready &&
                 (State == LocalModelState.Starting || _process is { HasExited: false }))
                 return _startTask;
@@ -112,11 +125,13 @@ public sealed class LocalModelServer : IDisposable
             Alias = alias;
             ModelPath = modelPath;
             ContextTokens = contextTokens;
+            ProjectorPath = projector;
             RunningOnProcessor = false;
+            VisionEnabled = false;
             CrashedAfterReady = false;
             var cts = new CancellationTokenSource();
             _startCts = cts;
-            _startTask = Task.Run(() => RunAsync(modelPath, alias, contextTokens, cts.Token));
+            _startTask = Task.Run(() => RunAsync(modelPath, alias, contextTokens, projector, cts.Token));
             return _startTask;
         }
     }
@@ -131,7 +146,7 @@ public sealed class LocalModelServer : IDisposable
         for (var replaced = 0; ; replaced++)
         {
             Task<bool>? start;
-            (string Path, string Alias, int Context)? restart = null;
+            (string Path, string Alias, int Context, string Projector)? restart = null;
             lock (_gate)
             {
                 start = _startTask;
@@ -140,7 +155,7 @@ public sealed class LocalModelServer : IDisposable
             }
 
             if (restart is { } again)
-                start = StartAsync(again.Path, again.Alias, again.Context);
+                start = StartAsync(again.Path, again.Alias, again.Context, again.Projector);
             if (start == null)
                 throw new InvalidOperationException("The built-in model is not started. Choose a model under Chat Backend.");
 
@@ -167,7 +182,7 @@ public sealed class LocalModelServer : IDisposable
         SetState(LocalModelState.Stopped, "Stopped");
     }
 
-    private async Task<bool> RunAsync(string modelPath, string alias, int contextTokens, CancellationToken ct)
+    private async Task<bool> RunAsync(string modelPath, string alias, int contextTokens, string projectorPath, CancellationToken ct)
     {
         try
         {
@@ -181,15 +196,43 @@ public sealed class LocalModelServer : IDisposable
             OpenLog();
             _features ??= await ReadFeaturesAsync(exe, ct).ConfigureAwait(false);
 
-            var portRetries = 0;
-            foreach (var useGpu in new[] { true, false })
+            var withPictures = false;
+            if (projectorPath.Length > 0)
             {
+                if (!File.Exists(projectorPath))
+                    Write($"The picture support file is missing ({projectorPath}); starting text only.");
+                else if (!_features.Mmproj)
+                    Write("This llama-server cannot load picture support (no --mmproj); starting text only.");
+                else
+                    withPictures = true;
+            }
+
+            // Graphics card first, then the processor; each with picture support first, then without it, so a
+            // picture support file that does not load (or does not fit) never keeps the model from starting.
+            var attempts = new List<(bool Gpu, bool Pictures)>();
+            foreach (var gpu in new[] { true, false })
+            {
+                if (withPictures)
+                    attempts.Add((gpu, true));
+                attempts.Add((gpu, false));
+            }
+
+            var portRetries = 0;
+            for (var i = 0; i < attempts.Count; i++)
+            {
+                var (useGpu, pictures) = attempts[i];
                 while (true)
                 {
                     ct.ThrowIfCancellationRequested();
                     var port = EnsurePort(newPort: false);
-                    var args = LlamaServerArgs.Build(modelPath, port, alias, contextTokens, useGpu, _features);
-                    SetState(LocalModelState.Starting, useGpu ? $"Loading {alias}..." : $"Loading {alias} on the processor...", ct);
+                    var args = LlamaServerArgs.Build(modelPath, port, alias, contextTokens, useGpu, _features, pictures ? projectorPath : null);
+                    SetState(LocalModelState.Starting, (useGpu, pictures || !withPictures) switch
+                    {
+                        (true, true) => $"Loading {alias}...",
+                        (true, false) => $"Loading {alias} without picture support...",
+                        (false, true) => $"Loading {alias} on the processor...",
+                        _ => $"Loading {alias} on the processor without picture support..."
+                    }, ct);
                     var process = Launch(exe, args, ct);
                     var ready = await WaitForHealthAsync(process, port, ct).ConfigureAwait(false);
                     if (ready)
@@ -197,11 +240,15 @@ public sealed class LocalModelServer : IDisposable
                         lock (_gate)
                         {
                             if (!ct.IsCancellationRequested)
+                            {
                                 RunningOnProcessor = !useGpu;
+                                VisionEnabled = pictures;
+                            }
                         }
+                        var seen = pictures ? "sees pictures" : "text only";
                         SetState(LocalModelState.Ready, useGpu
-                            ? $"{alias} ready ({contextTokens / 1024}K context)"
-                            : $"{alias} ready on the processor ({contextTokens / 1024}K context, slower)", ct);
+                            ? $"{alias} ready ({contextTokens / 1024}K context, {seen})"
+                            : $"{alias} ready on the processor ({contextTokens / 1024}K context, {seen}, slower)", ct);
                         return true;
                     }
 
@@ -217,8 +264,12 @@ public sealed class LocalModelServer : IDisposable
                     break;
                 }
 
-                if (useGpu)
-                    Write("Trying again with the model on the processor only.");
+                if (i + 1 < attempts.Count)
+                {
+                    Write(attempts[i + 1].Gpu == useGpu
+                        ? "Trying again without picture support."
+                        : "Trying again with the model on the processor only.");
+                }
             }
 
             return Fail(LlamaServerArgs.DescribeFailure(RecentOutput()), ct);
@@ -275,7 +326,8 @@ public sealed class LocalModelServer : IDisposable
 
             var help = (await stdout.ConfigureAwait(false)) + (await stderr.ConfigureAwait(false));
             var features = LlamaServerFeatures.FromHelp(help);
-            Write($"llama-server options: fit={features.Fit}, jinja={features.Jinja}, no-webui={features.NoWebUi}.");
+            Write($"llama-server options: fit={features.Fit}, jinja={features.Jinja}, no-webui={features.NoWebUi}, device={features.Device}, " +
+                  $"mmproj={features.Mmproj}, no-mmproj-offload={features.NoMmprojOffload}.");
             return features;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

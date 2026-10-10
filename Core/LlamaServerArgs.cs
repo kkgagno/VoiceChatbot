@@ -4,8 +4,12 @@ using System.Globalization;
 
 namespace VoiceChatbot;
 
-/// <summary>Options of the bundled llama-server that differ between llama.cpp versions, read from its --help.</summary>
-public sealed record LlamaServerFeatures(bool Fit, bool Jinja, bool NoWebUi, bool Device = false)
+/// <summary>
+/// Options of the bundled llama-server that differ between llama.cpp versions, read from its --help.
+/// <see cref="Mmproj"/>: it can load a vision projector (picture support); <see cref="NoMmprojOffload"/>:
+/// that projector can be kept off the graphics card.
+/// </summary>
+public sealed record LlamaServerFeatures(bool Fit, bool Jinja, bool NoWebUi, bool Device = false, bool Mmproj = false, bool NoMmprojOffload = false)
 {
     public static LlamaServerFeatures None { get; } = new(false, false, false);
 
@@ -16,7 +20,9 @@ public sealed record LlamaServerFeatures(bool Fit, bool Jinja, bool NoWebUi, boo
             help.Contains("--fit", StringComparison.Ordinal),
             help.Contains("--jinja", StringComparison.Ordinal),
             help.Contains("--no-webui", StringComparison.Ordinal),
-            help.Contains("--device", StringComparison.Ordinal));
+            help.Contains("--device", StringComparison.Ordinal),
+            help.Contains("--mmproj", StringComparison.Ordinal),
+            help.Contains("--no-mmproj-offload", StringComparison.Ordinal));
     }
 }
 
@@ -31,8 +37,11 @@ public static class LlamaServerArgs
     /// With <paramref name="useGpu"/> the model goes on the graphics card: newer llama.cpp sizes that to
     /// the free video memory itself (--fit, its default); older versions get every layer (-ngl 999).
     /// Without, everything stays on the processor (-ngl 0, and --device none where supported).
+    /// <paramref name="projectorPath"/> (the model's picture support file) is loaded with --mmproj when this
+    /// llama-server supports it; null or "" starts the model text only.
     /// </summary>
-    public static IReadOnlyList<string> Build(string modelPath, int port, string alias, int contextTokens, bool useGpu, LlamaServerFeatures features)
+    public static IReadOnlyList<string> Build(string modelPath, int port, string alias, int contextTokens, bool useGpu, LlamaServerFeatures features,
+        string? projectorPath = null)
     {
         var args = new List<string>
         {
@@ -43,6 +52,14 @@ public static class LlamaServerArgs
             "-c", contextTokens.ToString(CultureInfo.InvariantCulture),
             "-np", "1"
         };
+
+        if (!string.IsNullOrWhiteSpace(projectorPath) && features.Mmproj)
+        {
+            args.AddRange(new[] { "--mmproj", projectorPath });
+            // On the processor the picture encoder stays there too.
+            if (!useGpu && features.NoMmprojOffload)
+                args.Add("--no-mmproj-offload");
+        }
 
         // Chat templates with tool calling (Gemma's own template).
         if (features.Jinja)
@@ -78,6 +95,10 @@ public static class LlamaServerArgs
             text.Contains("ErrorOutOfDeviceMemory", StringComparison.OrdinalIgnoreCase) ||
             text.Contains("failed to allocate", StringComparison.OrdinalIgnoreCase))
             return "not enough memory for this model";
+        // Before "failed to load model": the projector's loader prints that too ("clip_init: failed to load model").
+        if (text.Contains("failed to load multimodal", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("failed to load CLIP", StringComparison.OrdinalIgnoreCase))
+            return "its picture support file could not be loaded";
         if (text.Contains("unknown model architecture", StringComparison.OrdinalIgnoreCase))
             return "this llama.cpp is too old for the model";
         if (text.Contains("failed to load model", StringComparison.OrdinalIgnoreCase) ||

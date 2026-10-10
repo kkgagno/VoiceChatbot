@@ -2,12 +2,14 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace VoiceChatbot;
 
 /// <summary>
 /// Turns the exceptions that clipboard, file-copy and "open with the default app" calls throw into a
-/// short reason for a chat system message, instead of letting them reach the crash dialog.
+/// short reason for a chat system message, instead of letting them reach the crash dialog; and a chat
+/// server's "this model cannot see pictures" error into a plain explanation.
 /// </summary>
 public static class FriendlyErrors
 {
@@ -20,6 +22,25 @@ public static class FriendlyErrors
     private const int ErrorHandleDiskFull = 39;
     private const int ErrorDiskFull = 112;
     private const int ErrorNoAssociation = 1155;
+
+    /// <summary>The chat text when the built-in model was sent a picture it cannot see.</summary>
+    public const string BuiltInModelCannotSeePictures =
+        "The built-in model can't see pictures yet: picture support isn't installed. Open Choose AI model... to add it.";
+
+    /// <summary>The chat text when a server's model was sent a picture it cannot see.</summary>
+    public const string ModelCannotSeePictures =
+        "This model can't see pictures. Pick a model that can (a vision model), or send the message without the picture.";
+
+    // What servers answer when a model gets a picture it cannot take: llama.cpp without --mmproj ("image input
+    // is not supported - hint: ... you may need to provide the mmproj"), Ollama ("this model is missing data
+    // required for image input"), OpenAI ("image_url is only supported by certain models"), LM Studio ("Model
+    // does not support images"), vLLM ("... is not a multimodal model").
+    private static readonly Regex PicturesNotSupported = new(
+        @"image input is not supported|missing data required for image input|image_url is only supported|" +
+        @"not a multimodal model|provide the mmproj|" +
+        @"(does not|doesn't|do not|don't|cannot|can't) (support|accept|handle|process) (image|picture|vision)|" +
+        @"(image|images|image inputs?|vision) (is |are )?(not supported|unsupported)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static string Describe(Exception ex)
     {
@@ -43,6 +64,25 @@ public static class FriendlyErrors
             default:
                 return string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message;
         }
+    }
+
+    /// <summary>True when a chat server's error says the model cannot take pictures (it has no vision support).</summary>
+    public static bool IsPicturesNotSupported(string? message) =>
+        !string.IsNullOrWhiteSpace(message) && PicturesNotSupported.IsMatch(message);
+
+    /// <summary>
+    /// The text for a chat request that failed: a plain explanation when the server said the model cannot see
+    /// pictures (<paramref name="builtInModel"/> picks the built-in model's wording), otherwise the error's own
+    /// message, as before.
+    /// </summary>
+    public static string DescribeChatError(Exception ex, bool builtInModel)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (IsPicturesNotSupported(e.Message))
+                return builtInModel ? BuiltInModelCannotSeePictures : ModelCannotSeePictures;
+        }
+        return ex.Message;
     }
 
     // IOExceptions from Windows carry HRESULT_FROM_WIN32(code) = 0x8007xxxx.

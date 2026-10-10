@@ -564,6 +564,9 @@ public partial class MainWindow
 
             await AddKnowledgeContextAsync(messagesForModel, userText, modelUserText, phoneDocumentContext, model, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, phoneDocumentContext);
+            var picturesNote = await await Dispatcher.InvokeAsync(() => LeaveOutPicturesTheModelCannotSeeAsync(messagesForModel, ct));
+            if (picturesNote != null)
+                await Dispatcher.InvokeAsync(() => AddSystemMessage($"Phone remote: {picturesNote}"));
 
             var phoneContextTokens = await GetContextTokensForRequestAsync(model, ct);
             maxTokens = GetMaxTokensForRequest(modelUserText, phoneContextTokens);
@@ -593,20 +596,25 @@ public partial class MainWindow
                 SetPhoneUIState("idle", "Ready");
             });
 
+            // The phone shows the reply only, so it gets the note about left-out pictures with it.
+            var phoneText = MarkdownText.ToPlainText(displayText);
+            if (picturesNote != null)
+                phoneText = $"{picturesNote}\n\n{phoneText}";
             return new PhoneRemoteAssistantResult(
-                MarkdownText.ToPlainText(displayText),
+                phoneText,
                 audioPath,
                 ActiveDocumentCount: keepPhoneDocumentsActive ? _activePhoneDocuments.Count : 0);
         }
         catch (Exception ex)
         {
             AppLog.Error("Phone remote chat failed", ex);
+            var reason = FriendlyErrors.DescribeChatError(ex, IsBuiltInProvider);
             await Dispatcher.InvokeAsync(() =>
             {
-                AddSystemMessage($"Phone remote chat error: {ex.Message}");
+                AddSystemMessage($"Phone remote chat error: {reason}");
                 SetPhoneUIState("idle", "Ready");
             });
-            return new PhoneRemoteAssistantResult($"Phone remote error: {ex.Message}", null);
+            return new PhoneRemoteAssistantResult($"Phone remote error: {reason}", null);
         }
         finally
         {

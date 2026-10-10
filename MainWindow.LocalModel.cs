@@ -1,15 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace VoiceChatbot;
 
 // The "Built-in model" chat provider: the bundled llama.cpp server with an included or downloaded Gemma 4
-// model (LocalModelServer), the model chooser (ModelSetupWindow) and model downloads (ModelDownloads).
+// model and its picture support (LocalModelServer), the model chooser (ModelSetupWindow) and model
+// downloads (ModelDownloads).
 public partial class MainWindow
 {
     private readonly LocalModelServer _localModel = new();
@@ -19,6 +23,7 @@ public partial class MainWindow
     // The last start failure shown in the chat, so a failure is reported once.
     private string _lastLocalModelFailureShown = "";
     private bool _processorNoticeShown;
+    private bool _pictureFailureNoticeShown;
     private bool _modelChooserOpen;
 
     private bool IsBuiltInProvider => ChatProviders.IsBuiltIn(_settings.ChatProvider);
@@ -56,9 +61,9 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Starts the built-in model server with the chosen model when that provider is selected (or restarts
-    /// it when the model or context size changed, or with <paramref name="restart"/>), and stops it otherwise
-    /// so its video memory is free.
+    /// Starts the built-in model server with the chosen model, and its picture support when that is on this PC,
+    /// when that provider is selected (or restarts it when the model, picture support or context size changed,
+    /// or with <paramref name="restart"/>), and stops it otherwise so its video memory is free.
     /// </summary>
     private void EnsureLocalModelRunning(bool restart = false)
     {
@@ -94,12 +99,13 @@ public partial class MainWindow
             return;
         }
 
-        long bytes = 0;
-        try { bytes = new FileInfo(path).Length; } catch (IOException) { }
+        // The picture support file takes video memory next to the model, too.
+        var projector = FindLocalProjectorFile(model) ?? "";
+        var bytes = FileLength(path) + FileLength(projector);
         var context = LocalModelCatalog.ChooseContext(_settings.ContextWindow, model.MaxContext, VulkanProbe.Gpu, bytes);
 
         if (!restart && _localModel.ModelPath == path && _localModel.Alias == model.Id && _localModel.ContextTokens == context &&
-            _localModel.State != LocalModelState.Stopped)
+            _localModel.ProjectorPath == projector && _localModel.State != LocalModelState.Stopped)
         {
             UpdateLocalModelUi();
             return; // Already running, starting, or failed with these settings (Restart tries again).
@@ -108,13 +114,26 @@ public partial class MainWindow
         if (restart)
             _localModel.Stop();
         _lastLocalModelFailureShown = "";
-        AppLog.Info($"Built-in model: starting {model.Name} ({path}) with a {context}-token context.");
-        _ = _localModel.StartAsync(path, model.Id, context);
+        AppLog.Info($"Built-in model: starting {model.Name} ({path}) with a {context}-token context, " +
+                    (projector.Length > 0 ? $"with picture support ({projector})." : "text only (no picture support on this PC)."));
+        _ = _localModel.StartAsync(path, model.Id, context, projector);
         UpdateLocalModelUi();
     }
 
     private static string? FindLocalModelFile(LocalModelInfo model) =>
         LocalModelCatalog.FindInstalledFile(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory);
+
+    private static string? FindLocalProjectorFile(LocalModelInfo model) =>
+        LocalModelCatalog.FindInstalledProjector(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory);
+
+    private static long FileLength(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return 0;
+        try { return new FileInfo(path).Length; }
+        catch (IOException) { return 0; }
+        catch (UnauthorizedAccessException) { return 0; }
+    }
 
     private void OnLocalModelStateChanged()
     {
@@ -133,6 +152,12 @@ public partial class MainWindow
                     _processorNoticeShown = true;
                     AddSystemMessage($"The built-in model runs on the processor because the graphics card could not hold it, so answers are slower. " +
                                      "A smaller model (Choose AI model...) or a smaller Context window helps.");
+                }
+                if (_localModel.ProjectorPath.Length > 0 && !_localModel.VisionEnabled && !_pictureFailureNoticeShown)
+                {
+                    _pictureFailureNoticeShown = true;
+                    AddSystemMessage("The built-in model started without its picture support, because that file could not be loaded. " +
+                                     $"It answers text as usual but can't see pictures right now (details: {LocalModelServer.LogFilePath}).");
                 }
                 break;
             case LocalModelState.Failed when _localModel.CrashedAfterReady:
@@ -169,7 +194,8 @@ public partial class MainWindow
                 var where = _localModel.RunningOnProcessor
                     ? "on the processor"
                     : VulkanProbe.Gpu is { } gpu ? $"on {gpu.Name}" : "ready";
-                SetLocalModelStatus($"{name}: ready {where} ({_localModel.ContextTokens / 1024}K context)", "SuccessBrush");
+                var pictures = _localModel.VisionEnabled ? "sees pictures" : "text only";
+                SetLocalModelStatus($"{name}: ready {where} ({_localModel.ContextTokens / 1024}K context, {pictures}){PictureSupportHint()}", "SuccessBrush");
                 break;
             case LocalModelState.Failed:
                 SetLocalModelStatus(_localModel.CrashedAfterReady
@@ -186,6 +212,20 @@ public partial class MainWindow
                     SetLocalModelStatus($"{name}: not running", "TextSecondaryBrush");
                 break;
         }
+    }
+
+    /// <summary>Why the running built-in model cannot see pictures and what to do about it, as a sentence to append; "" when it can.</summary>
+    private string PictureSupportHint()
+    {
+        if (_localModel.VisionEnabled)
+            return "";
+        if (_localModel.ProjectorPath.Length > 0)
+            return ". Its picture support could not be loaded.";
+        if (LocalModelCatalog.Find(_localModel.Alias) is not { } model)
+            return "";
+        return FindLocalProjectorFile(model) != null
+            ? ". Picture support was just added: click Restart to load it."
+            : ". To let it see pictures, add picture support with Choose AI model...";
     }
 
     private void SetLocalModelStatus(string text, string brushKey)
@@ -265,24 +305,179 @@ public partial class MainWindow
     private void OnModelDownloadFinished(ModelDownloadResult result)
     {
         UpdateModelDownloadUi();
+        var name = result.Model.Name;
+        // The model file can be complete even when its picture support is not (failed or paused after it).
+        var modelOnPc = FindLocalModelFile(result.Model) != null;
+        var switched = false;
+        if (modelOnPc && _switchToModelWhenDownloaded == result.Model.Id)
+        {
+            _switchToModelWhenDownloaded = null;
+            ApplyModelChoice(new ModelSetupChoice(ChatProviders.BuiltIn, result.Model.Id));
+            switched = true;
+        }
+        else if (result.Success && _chatCts == null && !_phoneOwnsBusyState && !_schedulerRunning && SendBtn?.IsEnabled == true)
+        {
+            // New picture support for the model in use: restart it with pictures (no change otherwise). During
+            // an answer or a scheduled task it waits: the next picture sent, or Restart, loads it.
+            EnsureLocalModelRunning();
+        }
+        else
+        {
+            // The Built-in model line then says to click Restart when new picture support waits to be loaded.
+            UpdateLocalModelUi();
+        }
+
         if (result.Success)
         {
-            if (_switchToModelWhenDownloaded == result.Model.Id)
-            {
-                _switchToModelWhenDownloaded = null;
-                ApplyModelChoice(new ModelSetupChoice(ChatProviders.BuiltIn, result.Model.Id));
-                AddSystemMessage($"{result.Model.Name} is downloaded and is now the model in use.");
-            }
-            else if (!_modelChooserOpen)
-            {
-                AddSystemMessage($"{result.Model.Name} is downloaded. Pick it with Choose AI model... under Chat Backend.");
-            }
+            if (switched)
+                AddSystemMessage($"{name} is downloaded and is now the model in use.");
+            else if (_modelChooserOpen)
+                return;
+            else if (result.ProjectorOnly)
+                AddSystemMessage($"Picture support for {name} is installed, so it can look at pictures you attach.");
+            else
+                AddSystemMessage($"{name} is downloaded. Pick it with Choose AI model... under Chat Backend.");
+        }
+        else if (modelOnPc && !result.ProjectorOnly)
+        {
+            // The model arrived; only its picture support did not.
+            var model = switched ? $"{name} is downloaded and is now the model in use" : $"{name} is downloaded";
+            AddSystemMessage(result.Cancelled
+                ? $"{model}. Its picture support download is paused: add it with Choose AI model... (it continues where it stopped)."
+                : $"{model}, but its picture support could not be downloaded: {result.Error} Add it with Choose AI model...; it continues where it stopped.");
         }
         else if (!result.Cancelled)
         {
-            AddSystemMessage($"{result.Model.Name} could not be downloaded: {result.Error} Open Choose AI model... to try again; it continues where it stopped.");
+            AddSystemMessage(result.ProjectorOnly
+                ? $"Picture support for {name} could not be downloaded: {result.Error} Open Choose AI model... to try again; it continues where it stopped."
+                : $"{name} could not be downloaded: {result.Error} Open Choose AI model... to try again; it continues where it stopped.");
         }
     }
+
+    /// <summary>
+    /// Before a request with pictures to the built-in model: makes sure it runs with its picture support when
+    /// that is on this PC, and when it still cannot see pictures, leaves them out of <paramref name="messages"/>
+    /// (with a note for the model, so it does not answer as if it saw them). When it can, pictures it cannot
+    /// read as they are (WebP, HEIC, AVIF, TIFF) are converted to JPEG, and one Windows cannot open either is
+    /// left out. Returns the chat note that says why, or null when nothing was left out. Call on the UI thread.
+    /// </summary>
+    private async Task<string?> LeaveOutPicturesTheModelCannotSeeAsync(List<ChatMessage> messages, CancellationToken ct)
+    {
+        if (!IsBuiltInProvider || !messages.Any(m => m.ImagesBase64.Count > 0))
+            return null;
+
+        // Picks up picture support added since the model started (a restart when it is new).
+        EnsureLocalModelRunning();
+        try
+        {
+            await _localModel.WaitUntilReadyAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null; // The request itself reports why the model did not start.
+        }
+        if (_localModel.VisionEnabled)
+            return await ConvertPicturesForBuiltInModelAsync(messages, ct);
+
+        var note = _localModel.ProjectorPath.Length == 0
+            ? FriendlyErrors.BuiltInModelCannotSeePictures
+            : $"The built-in model can't see pictures right now: its picture support could not be loaded (details: {LocalModelServer.LogFilePath}).";
+
+        var total = messages.Sum(m => m.ImagesBase64.Count);
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var count = messages[i].ImagesBase64.Count;
+            if (count == 0)
+                continue;
+            messages[i] = WithPictures(messages[i], new List<string>(),
+                $"({(count == 1 ? "A picture was" : $"{count} pictures were")} attached, but you cannot see pictures right now, " +
+                $"so {(count == 1 ? "it was" : "they were")} left out.)");
+        }
+        AppLog.Info("Built-in model: pictures left out of a request (" + (_localModel.ProjectorPath.Length == 0 ? "no picture support on this PC" : "picture support did not load") + ").");
+        return note + (total == 1 ? " This message was sent without the picture." : $" This message was sent without its {total} pictures.");
+    }
+
+    /// <summary>
+    /// llama-server reads JPEG, PNG, GIF and BMP pictures only: converts the others in <paramref name="messages"/>
+    /// (WebP, HEIC, AVIF, TIFF) to JPEG, and leaves out one Windows cannot open either (with a note for the
+    /// model). Returns the chat note for left-out pictures, or null when none were.
+    /// </summary>
+    private static async Task<string?> ConvertPicturesForBuiltInModelAsync(List<ChatMessage> messages, CancellationToken ct)
+    {
+        if (messages.All(m => m.ImagesBase64.All(PictureFormats.BuiltInModelReadsAsIs)))
+            return null;
+
+        // Decoding a big photo takes a moment: keep it off the UI thread.
+        var converted = await Task.Run(() => messages
+            .Select(m => m.ImagesBase64.Select(ToPictureTheBuiltInModelReads).ToList())
+            .ToList(), ct);
+
+        var total = 0;
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (messages[i].ImagesBase64.Count == 0)
+                continue;
+            var readable = converted[i].OfType<string>().ToList();
+            var leftOut = converted[i].Count - readable.Count;
+            total += leftOut;
+            messages[i] = WithPictures(messages[i], readable, leftOut == 0
+                ? null
+                : $"({(leftOut == 1 ? "A picture was" : $"{leftOut} pictures were")} attached, but {(leftOut == 1 ? "it" : "they")} could not be opened, " +
+                  $"so {(leftOut == 1 ? "it was" : "they were")} left out.)");
+        }
+        if (total == 0)
+            return null;
+        const string extensions = "(WebP and HEIC pictures need their image extension from the Microsoft Store)";
+        return total == 1
+            ? $"A picture could not be sent to the built-in model: Windows can't open it {extensions}. This message was sent without it; save it as PNG or JPEG to send it."
+            : $"{total} pictures could not be sent to the built-in model: Windows can't open them {extensions}. This message was sent without them; save them as PNG or JPEG to send them.";
+    }
+
+    /// <summary>
+    /// A picture (base64) as the built-in model reads it: a JPEG, PNG, GIF or BMP file as it is, anything else
+    /// Windows can open (WebP, HEIC, AVIF, TIFF) as a JPEG. Null when Windows cannot open it either.
+    /// </summary>
+    private static string? ToPictureTheBuiltInModelReads(string base64)
+    {
+        if (PictureFormats.BuiltInModelReadsAsIs(base64))
+            return base64;
+        try
+        {
+            using var input = new MemoryStream(Convert.FromBase64String(base64));
+            var frame = BitmapDecoder.Create(input, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
+
+            // JPEG has no transparency: transparent parts become white.
+            var pbgra = new FormatConvertedBitmap(frame, PixelFormats.Pbgra32, null, 0);
+            var stride = pbgra.PixelWidth * 4;
+            var pixels = new byte[checked(stride * pbgra.PixelHeight)];
+            pbgra.CopyPixels(pixels, stride, 0);
+            PictureFormats.FlattenOntoWhite(pixels);
+            var flat = BitmapSource.Create(pbgra.PixelWidth, pbgra.PixelHeight, 96, 96, PixelFormats.Bgr32, null, pixels, stride);
+
+            var encoder = new JpegBitmapEncoder { QualityLevel = 90 };
+            encoder.Frames.Add(BitmapFrame.Create(flat));
+            using var output = new MemoryStream();
+            encoder.Save(output);
+            return Convert.ToBase64String(output.ToArray());
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Built-in model: an attached picture could not be converted to JPEG, so it is left out", ex);
+            return null;
+        }
+    }
+
+    /// <summary>A copy of <paramref name="m"/> with these pictures, and <paramref name="note"/> for the model after its text.</summary>
+    private static ChatMessage WithPictures(ChatMessage m, List<string> pictures, string? note) => new()
+    {
+        Role = m.Role,
+        Content = note == null ? m.Content : $"{m.Content}\n\n{note}",
+        ImagesBase64 = pictures,
+        Timestamp = m.Timestamp,
+        ToolCalls = m.ToolCalls,
+        ToolCallId = m.ToolCallId,
+        ToolName = m.ToolName
+    };
 
     // ==================== Model chooser ====================
 
@@ -291,6 +486,7 @@ public partial class MainWindow
     private void RestartLocalModel_Click(object sender, RoutedEventArgs e)
     {
         _processorNoticeShown = false;
+        _pictureFailureNoticeShown = false;
         EnsureLocalModelRunning(restart: true);
     }
 

@@ -21,7 +21,9 @@ public sealed record ModelSetupChoice(string Provider, string LocalModelId = "",
 /// <summary>
 /// The model chooser, shown on first start and from Chat Backend's Choose AI model button: the Gemma 4
 /// models the app can run itself (included or downloadable, with the video memory and graphics card each
-/// needs and how it suits this PC), Ollama, an OpenAI-compatible server such as llama.cpp, or OpenAI.
+/// needs, how it suits this PC and its picture support), Ollama, an OpenAI-compatible server such as
+/// llama.cpp, or OpenAI. A model on this PC without its picture support offers Add picture support, which
+/// downloads only that file, and Use without pictures.
 /// </summary>
 public partial class ModelSetupWindow : Window
 {
@@ -51,12 +53,17 @@ public partial class ModelSetupWindow : Window
         public required RadioButton Radio { get; init; }
         public FrameworkElement? Inputs { get; init; }
         public TextBlock? DownloadLine { get; init; }
+        public TextBlock? PicturesLine { get; init; }
         public TextBox? UrlBox { get; init; }
         public PasswordBox? KeyBox { get; init; }
         public TextBox? ModelBox { get; init; }
         public string Title { get; init; } = "";
-        /// <summary>The exact download size from Hugging Face, once looked up.</summary>
+        /// <summary>The exact download size of the model file from Hugging Face, once looked up.</summary>
         public double? ExactDownloadGb { get; set; }
+        /// <summary>The exact download size of its picture support file, once looked up.</summary>
+        public double? ExactProjectorGb { get; set; }
+        /// <summary>False when the lookup found no picture support file for the model (text only); null until looked up.</summary>
+        public bool? ProjectorAvailable { get; set; }
     }
 
     /// <summary>The choice, or null when the window was closed without one. Set as soon as a download starts.</summary>
@@ -171,14 +178,16 @@ public partial class ModelSetupWindow : Window
             }));
 
         var downloadLine = new TextBlock();
+        var picturesLine = new TextBlock();
         var lines = new List<UIElement>
         {
             Line("", downloadLine),
+            Line("", picturesLine),
             Line("", $"Video memory: about {LocalModelCatalog.FormatGb(model.VramGb)}."),
             Line("", $"Graphics card: {LocalModelCatalog.FormatGb(model.MinCardGb)} or more, for example {model.ExampleCards}")
         };
 
-        var option = BuildCard(model.Id, model.Name, "", model.Summary, badges, lines, inputs: null, model, downloadLine);
+        var option = BuildCard(model.Id, model.Name, "", model.Summary, badges, lines, inputs: null, model, downloadLine, picturesLine: picturesLine);
         UpdateDownloadLine(option);
     }
 
@@ -193,7 +202,7 @@ public partial class ModelSetupWindow : Window
 
     private Option BuildCard(string key, string title, string icon, string summary, List<UIElement> badges, List<UIElement> lines,
         FrameworkElement? inputs, LocalModelInfo? model, TextBlock? downloadLine,
-        TextBox? url = null, PasswordBox? apiKey = null, TextBox? modelBox = null)
+        TextBox? url = null, PasswordBox? apiKey = null, TextBox? modelBox = null, TextBlock? picturesLine = null)
     {
         var radio = new RadioButton { GroupName = "model-choice", VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 3, 10, 0) };
 
@@ -242,6 +251,7 @@ public partial class ModelSetupWindow : Window
             Radio = radio,
             Inputs = inputs,
             DownloadLine = downloadLine,
+            PicturesLine = picturesLine,
             UrlBox = url,
             KeyBox = apiKey,
             ModelBox = modelBox
@@ -425,17 +435,21 @@ public partial class ModelSetupWindow : Window
             return;
 
         UseBtn.IsEnabled = true;
+        UseTextOnlyBtn.Visibility = Visibility.Collapsed;
         if (option.Model is { } model)
         {
-            if (IsInstalled(model))
-                UseBtn.Content = "Use this model";
-            else if (_downloads.Current?.Id == model.Id)
+            if (_downloads.Current?.Id == model.Id)
             {
                 UseBtn.Content = "Downloading...";
                 UseBtn.IsEnabled = false;
             }
             else
-                UseBtn.Content = File.Exists(ModelDownloader.PartPath(DownloadTarget(model))) ? "Continue download" : "Download and use";
+            {
+                UseBtn.Content = DownloadButtonLabel(option);
+                // On this PC without its picture support: it can be used right away, text only.
+                if (IsInstalled(model) && NeedsPictureSupport(option))
+                    UseTextOnlyBtn.Visibility = Visibility.Visible;
+            }
             return;
         }
 
@@ -451,48 +465,113 @@ public partial class ModelSetupWindow : Window
 
     private static string DownloadTarget(LocalModelInfo model) => LocalModelCatalog.DownloadPath(model, AppPaths.ModelsDirectory);
 
-    private static bool IsInstalled(LocalModelInfo model) =>
-        LocalModelCatalog.FindInstalledFile(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory) != null;
+    private static string ProjectorTarget(LocalModelInfo model) => LocalModelCatalog.ProjectorDownloadPath(model, AppPaths.ModelsDirectory);
+
+    private static string? InstalledFile(LocalModelInfo model) =>
+        LocalModelCatalog.FindInstalledFile(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory);
+
+    private static string? InstalledProjector(LocalModelInfo model) =>
+        LocalModelCatalog.FindInstalledProjector(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory);
+
+    private static bool IsInstalled(LocalModelInfo model) => InstalledFile(model) != null;
+
+    private static bool CameWithTheApp(string path) => path.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase);
+
+    // Its picture support is not on this PC, and Hugging Face has one (or was not asked yet).
+    private static bool NeedsPictureSupport(Option option) =>
+        option.Model is { } model && option.ProjectorAvailable != false && InstalledProjector(model) == null;
+
+    /// <summary>The Use button's label for a model card: what clicking it does.</summary>
+    private static string DownloadButtonLabel(Option option)
+    {
+        var model = option.Model!;
+        if (IsInstalled(model))
+            return NeedsPictureSupport(option) ? "Add picture support" : "Use this model";
+        return File.Exists(ModelDownloader.PartPath(DownloadTarget(model))) || File.Exists(ModelDownloader.PartPath(ProjectorTarget(model)))
+            ? "Continue download"
+            : "Download and use";
+    }
 
     // ==================== Download sizes and progress ====================
 
+    /// <summary>The card's "Download:" and "Pictures:" lines: what is on this PC and what a download fetches.</summary>
     private void UpdateDownloadLine(Option option)
     {
         if (option.Model is not { } model || option.DownloadLine is not { } line)
             return;
 
+        var installed = InstalledFile(model);
+        var projector = InstalledProjector(model);
+        var needsProjector = projector == null && option.ProjectorAvailable != false;
+        var projectorSize = (option.ExactProjectorGb.HasValue ? "" : "about ") +
+                            LocalModelCatalog.FormatGb(option.ExactProjectorGb ?? model.ApproxProjectorGb);
+
         string text;
-        var installed = LocalModelCatalog.FindInstalledFile(model, AppPaths.ModelsDirectory, AppContext.BaseDirectory);
-        if (installed != null)
-            text = installed.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase)
-                ? "Download: none, it came with the app."
-                : "Download: done, it is on this PC.";
+        if (installed != null && !needsProjector)
+        {
+            text = CameWithTheApp(installed) ? "Download: none, it came with the app." : "Download: done, it is on this PC.";
+        }
+        else if (installed != null)
+        {
+            text = $"Download: {projectorSize} to add picture support ({(CameWithTheApp(installed) ? "the model came with the app" : "the model is on this PC")}).";
+            text += DownloadedSoFar(ProjectorTarget(model));
+        }
         else
         {
-            var size = option.ExactDownloadGb ?? model.ApproxDownloadGb;
-            text = $"Download: {(option.ExactDownloadGb.HasValue ? "" : "about ")}{LocalModelCatalog.FormatGb(size)} (saved in your models folder).";
-            var part = ModelDownloader.PartPath(DownloadTarget(model));
-            try
-            {
-                if (File.Exists(part))
-                    text += $" {ModelDownloader.FormatBytes(new FileInfo(part).Length)} downloaded so far.";
-            }
-            catch (IOException) { }
+            var exact = option.ExactDownloadGb.HasValue && (!needsProjector || option.ExactProjectorGb.HasValue);
+            var size = (option.ExactDownloadGb ?? model.ApproxDownloadGb) + (needsProjector ? option.ExactProjectorGb ?? model.ApproxProjectorGb : 0);
+            text = $"Download: {(exact ? "" : "about ")}{LocalModelCatalog.FormatGb(size)} (saved in your models folder).";
+            text += DownloadedSoFar(DownloadTarget(model), ProjectorTarget(model));
         }
         line.Text = text;
+
+        if (option.PicturesLine is { } pictures)
+        {
+            pictures.Text = option.ProjectorAvailable == false && projector == null
+                ? "Pictures: no picture support was found for this model, so it reads text only."
+                : projector != null
+                    ? $"Pictures: it can look at pictures you attach (picture support {(CameWithTheApp(projector) ? "came with the app" : "is on this PC")})."
+                    : installed != null
+                        ? $"Pictures: it can look at pictures you attach once you add picture support ({projectorSize})."
+                        : $"Pictures: it can look at pictures you attach. Picture support ({projectorSize}) is part of the download.";
+        }
+    }
+
+    // " 1.2 GB downloaded so far." for unfinished downloads (.part files), or "".
+    private static string DownloadedSoFar(params string[] targets)
+    {
+        long bytes = 0;
+        foreach (var target in targets)
+        {
+            try
+            {
+                var part = ModelDownloader.PartPath(target);
+                if (File.Exists(part))
+                    bytes += new FileInfo(part).Length;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return bytes > 0 ? $" {ModelDownloader.FormatBytes(bytes)} downloaded so far." : "";
     }
 
     private async Task LookupDownloadSizesAsync()
     {
-        foreach (var option in _options.Where(o => o.Model != null && !IsInstalled(o.Model)).ToList())
+        foreach (var option in _options.Where(o => o.Model != null && (!IsInstalled(o.Model) || InstalledProjector(o.Model) == null)).ToList())
         {
             try
             {
-                var file = await _downloads.LookupAsync(option.Model!, _lookupCts.Token);
-                if (file is { Size: > 0 })
+                var files = await _downloads.LookupAsync(option.Model!, AppPaths.ModelsDirectory, _lookupCts.Token);
+                if (files != null)
                 {
-                    option.ExactDownloadGb = file.Size / (double)LocalModelCatalog.GiB;
+                    if (files.Model.Size > 0)
+                        option.ExactDownloadGb = files.Model.Size / (double)LocalModelCatalog.GiB;
+                    option.ProjectorAvailable = files.Projector != null;
+                    if (files.Projector is { Size: > 0 } projector)
+                        option.ExactProjectorGb = projector.Size / (double)LocalModelCatalog.GiB;
                     UpdateDownloadLine(option);
+                    if (ReferenceEquals(option, _selected))
+                        UpdateUseButton();
                 }
             }
             catch (OperationCanceledException) { return; }
@@ -546,7 +625,14 @@ public partial class ModelSetupWindow : Window
         PauseDownloadBtn.Visibility = Visibility.Collapsed;
         DownloadText.Text = _downloads.Status;
         if (!result.Cancelled)
-            ShowError($"{result.Model.Name} could not be downloaded: {result.Error} Click {UseBtn.Content} to try again; it continues where it stopped.");
+        {
+            var option = _options.FirstOrDefault(o => o.Model?.Id == result.Model.Id);
+            ShowError(IsInstalled(result.Model)
+                ? $"Picture support for {result.Model.Name} could not be downloaded: {result.Error} Click Add picture support to try again " +
+                  "(it continues where it stopped), or Use without pictures."
+                : $"{result.Model.Name} could not be downloaded: {result.Error} Click {(option != null ? DownloadButtonLabel(option) : "Continue download")} " +
+                  "to try again; it continues where it stopped.");
+        }
         // Paused or failed: nothing to switch to.
         if (Choice?.LocalModelId == result.Model.Id)
             Choice = null;
@@ -571,12 +657,13 @@ public partial class ModelSetupWindow : Window
 
         if (option.Model is { } model)
         {
-            if (IsInstalled(model))
+            if (IsInstalled(model) && !NeedsPictureSupport(option))
             {
                 Choice = new ModelSetupChoice(ChatProviders.BuiltIn, model.Id);
                 Close();
                 return;
             }
+            // Downloads what is missing: the model with its picture support, or only the picture support.
             StartDownload(model);
             return;
         }
@@ -622,10 +709,20 @@ public partial class ModelSetupWindow : Window
         Close();
     }
 
+    // A model on this PC without its picture support, used as it is (text only).
+    private void UseTextOnly_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected?.Model is not { } model || !IsInstalled(model))
+            return;
+        Choice = new ModelSetupChoice(ChatProviders.BuiltIn, model.Id);
+        Close();
+    }
+
     private async void StartDownload(LocalModelInfo model)
     {
+        var picturesOnly = IsInstalled(model);
         var fit = LocalModelCatalog.Evaluate(model, _gpu, _ramBytes);
-        if (fit == ModelFit.TooBig &&
+        if (!picturesOnly && fit == ModelFit.TooBig &&
             MessageBox.Show(this,
                 $"{model.Name} needs about {LocalModelCatalog.FormatGb(model.VramGb)} of memory, more than this PC has free for it. " +
                 "It may not start, or run very slowly.\n\nDownload it anyway?",
@@ -643,7 +740,8 @@ public partial class ModelSetupWindow : Window
         var task = _downloads.StartAsync(model, AppPaths.ModelsDirectory);
         UpdateDownloadUi();
         DownloadPanel.Visibility = Visibility.Visible;
-        DownloadText.Text = _downloads.Status.Length > 0 ? _downloads.Status : $"Starting the download of {model.Name}...";
+        DownloadText.Text = _downloads.Status.Length > 0 ? _downloads.Status
+            : picturesOnly ? $"Starting the download of picture support for {model.Name}..." : $"Starting the download of {model.Name}...";
         CloseBtn.Content = "Keep downloading in the background";
 
         var result = await task;

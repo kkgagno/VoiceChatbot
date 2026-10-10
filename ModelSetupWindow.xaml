@@ -73,13 +73,18 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Button x:Name="OpenModelsFolderBtn" Style="{StaticResource GhostButton}" local:Ui.Icon="&#xE838;"
                             Content="Models folder" Click="OpenModelsFolder_Click"
                             ToolTip="Open the folder where downloaded models are kept (delete files there to free disk space)"/>
                     <Button x:Name="CloseBtn" Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="Skip for now"
                             Margin="0,0,8,0" Click="Close_Click" IsCancel="True"/>
-                    <Button x:Name="UseBtn" Grid.Column="3" Style="{StaticResource ActionButton}" Content="Use this model"
+                    <!-- Shown for a model on this PC without its picture support: use it as it is, text only. -->
+                    <Button x:Name="UseTextOnlyBtn" Grid.Column="3" Style="{StaticResource SecondaryButton}" Content="Use without pictures"
+                            Margin="0,0,8,0" Click="UseTextOnly_Click" Visibility="Collapsed"
+                            ToolTip="Use this model now without downloading its picture support; it reads text only"/>
+                    <Button x:Name="UseBtn" Grid.Column="4" Style="{StaticResource ActionButton}" Content="Use this model"
                             Click="Use_Click" IsDefault="True" MinWidth="150"/>
                 </Grid>
             </StackPanel>

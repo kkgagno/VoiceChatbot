@@ -210,7 +210,8 @@ foreach ($repo in $gemmaRepos) {
         Sort-Object @{ Expression = { if ($_.path -match 'UD[-_]Q4') { 1 } else { 0 } } }, @{ Expression = { $_.path.Length } } |
         Select-Object -First 1
     if ($file) {
-        $gemma = [pscustomobject]@{ Repo = $repo; File = $file }
+        # The listing is kept: the picture support file below must come from this same repository.
+        $gemma = [pscustomobject]@{ Repo = $repo; File = $file; Tree = $tree }
         break
     }
     Write-Host "  $($repo): no Q4_K_M file."
@@ -231,6 +232,51 @@ if ($expectedSha -match '^[0-9a-fA-F]{64}$') {
     }
 }
 Write-Host "Bundled $($gemma.Repo)/$($gemma.File.path) ($([math]::Round((Get-Item $gemmaFile).Length / 1GB, 2)) GB)."
+
+# Gemma 4 E4B's picture support (vision projector, "mmproj"), from the same repository as the model: f16
+# preferred, then bf16, q8_0, f32. The app looks for it under this exact name (LocalModelInfo.ProjectorFileName).
+# Without one the app still works, text only.
+function Get-ProjectorRank {
+    param([string]$Path)
+    $name = ($Path -split '/')[-1]
+    # Whole words only: "bf16" must not count as "f16".
+    if ($name -match '(?<![a-z0-9])fp?16(?![a-z0-9])') { return 0 }
+    if ($name -match '(?<![a-z0-9])bf16(?![a-z0-9])') { return 1 }
+    if ($name -match '(?<![a-z0-9])q8_0(?![a-z0-9])') { return 2 }
+    if ($name -match '(?<![a-z0-9])fp?32(?![a-z0-9])') { return 3 }
+    return 4
+}
+$projectorFile = Join-Path $modelsDir "gemma-4-E4B-it-mmproj.gguf"
+if (Test-Path $projectorFile) {
+    Remove-Item -LiteralPath $projectorFile -Force
+}
+$projector = $gemma.Tree |
+    Where-Object { $_.type -eq "file" -and $_.path -match '(^|/)[^/]*mmproj[^/]*\.gguf$' -and $_.path -notmatch '-\d{5}-of-\d{5}\.gguf$' } |
+    Sort-Object @{ Expression = { Get-ProjectorRank $_.path } }, @{ Expression = { ($_.path -split '/').Count } }, @{ Expression = { $_.path.Length } } |
+    Select-Object -First 1
+$projectorNotice = ""
+if ($projector) {
+    $projectorUrl = "https://huggingface.co/$($gemma.Repo)/resolve/main/$($projector.path)"
+    Save-Download $projectorUrl $projectorFile
+    $expectedProjectorSha = "$($projector.lfs.oid)" -replace '^sha256:', ''
+    if ($expectedProjectorSha -match '^[0-9a-fA-F]{64}$') {
+        $actualProjectorSha = (Get-FileHash $projectorFile -Algorithm SHA256).Hash
+        if ($actualProjectorSha -ne $expectedProjectorSha) {
+            throw "The Gemma 4 E4B picture support download is damaged (SHA-256 $actualProjectorSha, expected $expectedProjectorSha)."
+        }
+    }
+    Write-Host "Bundled picture support $($gemma.Repo)/$($projector.path) ($([math]::Round((Get-Item $projectorFile).Length / 1MB)) MB)."
+    $projectorNotice = @"
+
+Gemma 4 E4B picture support (vision projector, $($projector.path))
+Source: https://huggingface.co/$($gemma.Repo)
+License: see the model card (Gemma 4 is released by Google DeepMind)
+
+"@
+}
+else {
+    Write-Warning "$($gemma.Repo) has no picture support (mmproj) file: the included Gemma 4 E4B will read text only until picture support is added in the app."
+}
 
 # Kokoro 82M for the built-in voice (KokoroSharp loads it from kokoro\kokoro.onnx; voices come with the build).
 $kokoroDir = Join-Path $publishDir "kokoro"
@@ -257,7 +303,7 @@ License: MIT
 Gemma 4 E4B (Q4_K_M GGUF)
 Source: https://huggingface.co/$($gemma.Repo)
 License: see the model card (Gemma 4 is released by Google DeepMind)
-
+$projectorNotice
 Kokoro 82M text-to-speech model and voices
 Source: https://huggingface.co/hexgrad/Kokoro-82M (ONNX export: https://github.com/Lyrcaxis/KokoroSharpBinaries)
 License: Apache 2.0

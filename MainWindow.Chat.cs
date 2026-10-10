@@ -794,6 +794,8 @@ public partial class MainWindow
 
             await AddKnowledgeContextAsync(messagesForModel, userText, modelUserText, documentContext, model, ct);
             ApplyDocumentContextToCurrentUserMessage(messagesForModel, documentContext);
+            if (await LeaveOutPicturesTheModelCannotSeeAsync(messagesForModel, ct) is { } picturesNote)
+                AddSystemMessage(picturesNote);
 
             var systemPrompt = GetEffectiveSystemPrompt(modelUserText, userText);
             var contextTokens = await GetContextTokensForRequestAsync(model, ct);
@@ -861,8 +863,9 @@ public partial class MainWindow
                                     }
                                     else
                                     {
-                                        assistantMessage.Body.Text = $"Error: {ex.Message}";
-                                        AddSystemMessage($"API Error: {ex.Message}");
+                                        var reason = FriendlyErrors.DescribeChatError(ex, IsBuiltInProvider);
+                                        assistantMessage.Body.Text = $"Error: {reason}";
+                                        AddSystemMessage($"API Error: {reason}");
                                     }
                                     CancelStreamingSpeechAndFinishTurn(streamingSpeech);
                                 });
@@ -1017,9 +1020,11 @@ public partial class MainWindow
         catch (Exception ex)
         {
             AppLog.Error("Chat request failed", ex);
+            // A model that cannot see pictures gets a plain explanation instead of the server's error.
+            var reason = FriendlyErrors.DescribeChatError(ex, IsBuiltInProvider);
             if (assistantMessage is not null)
-                assistantMessage.Body.Text = $"Error: {ex.Message}";
-            AddSystemMessage($"Chat error: {ex.Message}");
+                assistantMessage.Body.Text = $"Error: {reason}";
+            AddSystemMessage($"Chat error: {reason}");
             CancelStreamingSpeechAndFinishTurn(streamingSpeech);
         }
         finally

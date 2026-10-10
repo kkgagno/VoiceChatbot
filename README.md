@@ -1,6 +1,6 @@
 # Voice Chatbot Mini
 
-Voice Chatbot Mini is the standalone, smaller edition of Voice Chatbot: a Windows desktop and phone-browser voice assistant that works right after installing, without the extras that need the original home lab. It comes with its own AI model (Gemma 4 E4B on a bundled llama.cpp) and its own voice (Kokoro), so it runs offline with no setup. It can also use a bigger Gemma 4 model, Ollama, llama.cpp and other OpenAI-compatible servers, or OpenAI. It supports voice conversation, local Whisper transcription, image prompts for vision models, web search, a knowledge folder, a live transcriber and a phone remote.
+Voice Chatbot Mini is the standalone, smaller edition of Voice Chatbot: a Windows desktop and phone-browser voice assistant that works right after installing, without the extras that need the original home lab. It comes with its own AI model (Gemma 4 E4B on a bundled llama.cpp) and its own voice (Kokoro), so it runs offline with no setup. It can also use a bigger Gemma 4 model, Ollama, llama.cpp and other OpenAI-compatible servers, or OpenAI. It supports voice conversation, local Whisper transcription, image prompts (the built-in Gemma 4 models see pictures too), web search, a knowledge folder, a live transcriber and a phone remote.
 
 ## What Mini has, and what it leaves out
 
@@ -8,7 +8,7 @@ Mini keeps:
 
 - Typed and spoken chat with the built-in model, Ollama, llama.cpp or any OpenAI-compatible server (OpenAI included), the **Choose AI model...** chooser, model picking and **Refresh Models**.
 - Voice input with Whisper (**Listen** / **Stop listening**, wake word, global hotkey) and spoken replies with the built-in Kokoro or a remote Kokoro server.
-- Images attached to a message for vision models (Image button, Ctrl+V, phone remote files), documents and OCR.
+- Images attached to a message for the built-in Gemma 4 models and other vision models (Image button, Ctrl+V, phone remote files), documents and OCR.
 - The Live Transcriber (desktop window and web page), knowledge folder, Tavily web search, tools, personas, memories, saved conversations, the scheduler, the phone remote, tray icon, hotkey and themes.
 
 Mini does not have:
@@ -34,7 +34,7 @@ The installer is not code-signed yet, so Windows SmartScreen may show an **Unkno
 The installer:
 
 - Installs a self-contained Windows x64 build to `%LOCALAPPDATA%\Programs\VoiceChatbotMini`. The .NET runtime is included.
-- Includes everything needed to chat and talk offline: llama.cpp's `llama-server` (Vulkan build, in `llama\`), the **Gemma 4 E4B** model (Q4_K_M, in `models\`) and **Kokoro** speech (KokoroSharp with the Kokoro 82M model and voices, in `kokoro\`). No Python, Ollama or other server is needed.
+- Includes everything needed to chat and talk offline: llama.cpp's `llama-server` (Vulkan build, in `llama\`), the **Gemma 4 E4B** model (Q4_K_M, in `models\`, with its picture support `gemma-4-E4B-it-mmproj.gguf` so it can look at pictures) and **Kokoro** speech (KokoroSharp with the Kokoro 82M model and voices, in `kokoro\`). No Python, Ollama or other server is needed.
 - Creates **Voice Chatbot Mini** Start Menu shortcuts and, optionally, a desktop shortcut.
 - Leaves settings and conversation data in `%APPDATA%\VoiceChatbotMini`, and models you download later in `%LOCALAPPDATA%\VoiceChatbotMini\models`.
 
@@ -49,7 +49,9 @@ Mini is a separate product: its own installer ID, install folder, `VoiceChatbotM
 
 ## Choosing a chat model
 
-Nothing has to be set up: the default **Provider** (Chat Backend) is `Built-in model`, which runs the included Gemma 4 E4B on this PC. The app starts its bundled `llama-server` on `127.0.0.1` by itself, loads the model and stops it when you switch to another provider or close the app. Chat Backend shows its state ("Gemma 4 E4B: loading...", "ready on <GPU> (16K context)" or "could not start (reason)") with a **Restart** button. If the graphics card cannot hold the model, it runs on the processor (slower) and the chat says so. The server's log is `%APPDATA%\VoiceChatbotMini\logs\llama-server.log`. The built-in model reads text only (no vision projector is loaded); for pictures, use a vision model on Ollama or a server.
+Nothing has to be set up: the default **Provider** (Chat Backend) is `Built-in model`, which runs the included Gemma 4 E4B on this PC. The app starts its bundled `llama-server` on `127.0.0.1` by itself, loads the model and stops it when you switch to another provider or close the app. Chat Backend shows its state ("Gemma 4 E4B: loading...", "ready on <GPU> (16K context, sees pictures)" or "could not start (reason)") with a **Restart** button. If the graphics card cannot hold the model, it runs on the processor (slower) and the chat says so. The server's log is `%APPDATA%\VoiceChatbotMini\logs\llama-server.log`.
+
+The built-in Gemma 4 models see pictures: the app starts `llama-server` with the model's vision projector (`--mmproj`, the model's `-mmproj.gguf` file, called *picture support* in the app) when it is on this PC. Picture support comes with the included model and is part of each download. A model downloaded without it (with an older version of the app) reads text only, and Chat Backend says "text only": pick it in **Choose AI model...** and click **Add picture support**, which downloads just that file. If the picture support file does not load, the model starts text only anyway and the chat says so. `llama-server` reads JPEG, PNG, GIF and BMP pictures, so the app converts others (WebP, HEIC, AVIF, TIFF) to JPEG with Windows before sending them; one Windows cannot open is left out, with a note in the chat. A picture sent to the built-in model while it cannot see pictures is left out of the request, with a note in the chat, instead of failing the message; a server that rejects pictures gets a plain "this model can't see pictures" message too.
 
 ### The model chooser
 
@@ -58,9 +60,9 @@ Nothing has to be set up: the default **Provider** (Chat Backend) is `Built-in m
 | Model | Download | Video memory | Graphics card |
 | --- | --- | --- | --- |
 | Gemma 4 E4B | Included | about 6.5 GB | 8 GB or more: RTX 3060 Ti, RTX 4060, RX 7600, Arc A750 (6 GB cards work with a little on the processor) |
-| Gemma 4 12B | about 7.5 GB | about 9.5 GB | 12 GB: RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT, Arc B580 |
-| Gemma 4 26B A4B (mixture of experts: close to 31B quality, but quick) | about 17 GB | about 19 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX (16 GB cards run it with part on the processor) |
-| Gemma 4 31B (the smartest, slower) | about 18 GB | about 21 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX |
+| Gemma 4 12B | about 8.5 GB | about 9.5 GB | 12 GB: RTX 3060 12 GB, RTX 4070, RTX 5070, RX 6700 XT, Arc B580 |
+| Gemma 4 26B A4B (mixture of experts: close to 31B quality, but quick) | about 18 GB | about 19 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX (16 GB cards run it with part on the processor) |
+| Gemma 4 31B (the smartest, slower) | about 19.5 GB | about 21 GB | 24 GB: RTX 3090/4090/5090, RX 7900 XTX |
 
 The chooser also offers models that need no video memory on this PC:
 
@@ -68,7 +70,7 @@ The chooser also offers models that need no video memory on this PC:
 - **llama.cpp server (or another OpenAI-compatible server)**: LM Studio, vLLM and similar; an address such as `http://192.168.1.50:8080/v1`, plus an API key only if the server has one. Free.
 - **OpenAI (cloud)**: needs an [OpenAI API key](https://platform.openai.com/api-keys) with billing set up. Pay per use (`gpt-5-mini` by default, a fraction of a cent per answer; see [prices](https://openai.com/api/pricing)). Messages are sent to OpenAI.
 
-Downloads come from Hugging Face (Q4_K_M GGUF files) and run in the background, with progress in the chooser and in Chat Backend. **Pause** stops a download; starting it again continues where it stopped. The file's SHA-256 checksum is verified when it is complete. While a chosen model downloads the app keeps using Gemma 4 E4B, and switches to the new model by itself when it is done. Downloaded models are kept in `%LOCALAPPDATA%\VoiceChatbotMini\models` (the chooser's **Models folder** button opens it); delete files there to free disk space. Uninstalling does not delete them. The included E4B lives in the app folder's `models` folder.
+Downloads come from Hugging Face (Q4_K_M GGUF files, plus the model's picture support file from the same repository, f16 when there is one; the sizes above include it) and run in the background, with one progress bar in the chooser and in Chat Backend. Each card's **Pictures** line says whether the model can look at pictures. **Pause** stops a download; starting it again continues where it stopped. Each file's SHA-256 checksum is verified when it is complete. While a chosen model downloads the app keeps using Gemma 4 E4B, and switches to the new model by itself when it is done. Downloaded models are kept in `%LOCALAPPDATA%\VoiceChatbotMini\models` (the chooser's **Models folder** button opens it); delete files there to free disk space. Uninstalling does not delete them. The included E4B lives in the app folder's `models` folder.
 
 With `Built-in model` selected, the Ollama URL, OpenAI URL, API key, Model and Refresh Models fields are hidden. With `Ollama` only the Ollama URL shows; with `OpenAI-compatible` the URL and key show.
 
@@ -362,7 +364,7 @@ winget install --id JRSoftware.InnoSetup -e
 .\scripts\Build-Installer.ps1 -Version 1.0.0
 ```
 
-The script downloads the newest llama.cpp Vulkan build, Gemma 4 E4B (Q4_K_M, from Hugging Face, checksum-verified) and the Kokoro model into the published app, so it needs a few GB of free disk space and a fast connection. Outputs are written to `artifacts\`: `VoiceChatbotMini-Setup-<version>-win-x64.exe`, its `VoiceChatbotMini-Setup-<version>-win-x64-1.bin`, `-2.bin`, ... parts and `SHA256SUMS.txt`. There is no portable ZIP. The app builds as `VoiceChatbotMini.exe`; its product name and folders are set in `Core/AppPaths.cs`.
+The script downloads the newest llama.cpp Vulkan build, Gemma 4 E4B (Q4_K_M, from Hugging Face, checksum-verified) with its picture support file from the same repository (`models\gemma-4-E4B-it-mmproj.gguf`; when the repository has none it warns and the included model reads text only) and the Kokoro model into the published app, so it needs a few GB of free disk space and a fast connection. Outputs are written to `artifacts\`: `VoiceChatbotMini-Setup-<version>-win-x64.exe`, its `VoiceChatbotMini-Setup-<version>-win-x64-1.bin`, `-2.bin`, ... parts and `SHA256SUMS.txt`. There is no portable ZIP. The app builds as `VoiceChatbotMini.exe`; its product name and folders are set in `Core/AppPaths.cs`.
 
 Logic without WPF lives in `Core/` and is unit tested in `tests/VoiceChatbot.Tests` (`dotnet test tests/VoiceChatbot.Tests`, runs on any OS). The Live Transcriber's prompts and summary styles (`TranscriptSummaryPrompts`, `TranscriptSummaryStyles`), the notes layout (`TranscriptNotes`), live updates, final notes and Re-summarize all (`TranscriptNotesWriter`), long-transcript splitting (`TranscriptSummarizer`), live-notes timing (`LiveNotesPolicy`), the desktop session state (`TranscriberSessionStore`) and the saved Markdown/text document (`LiveTranscriptText`) are there so the web transcriber shares them. Its page (`PhoneRemoteTranscriberPage`), the values its script takes from those classes, its request limits and file names (`WebTranscriber`) and its background notes jobs (`TranscriberJobs`) are in `Core/` too; the endpoints are in `PhoneRemoteServer.Transcriber.cs`.
 
