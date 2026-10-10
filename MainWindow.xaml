@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:VoiceChatbot"
-        Title="Voice Chatbot"
+        Title="Voice Chatbot Mini"
         Width="1280" Height="820"
         MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen"
@@ -65,7 +65,7 @@
                                    HorizontalAlignment="Center"/>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="Voice Chatbot" FontSize="16" FontWeight="Bold"/>
+                        <TextBlock Text="Voice Chatbot Mini" FontSize="16" FontWeight="Bold"/>
                         <TextBlock Text="Local AI voice assistant" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"/>
                     </StackPanel>
                     <Button Grid.Column="2" Style="{StaticResource IconButton}" local:Ui.Icon="&#xE76B;"
@@ -645,7 +645,7 @@
                                 </Border>
 
                                 <TextBlock Text="LOGS" Style="{StaticResource SubHeading}"/>
-                                <TextBlock x:Name="AppLogFolderText" Text="%APPDATA%\VoiceChatbot\logs" Style="{StaticResource FieldHint}"
+                                <TextBlock x:Name="AppLogFolderText" Text="%APPDATA%\VoiceChatbotMini\logs" Style="{StaticResource FieldHint}"
                                            Margin="0,0,0,8"/>
                                 <Button x:Name="OpenLogsFolderBtn" Content="Open logs folder" local:Ui.Icon="&#xE838;"
                                         Style="{StaticResource SecondaryButton}" Click="OpenLogsFolder_Click"
@@ -665,7 +665,7 @@
                                 <StackPanel Style="{StaticResource FieldBlock}">
                                     <TextBlock Text="Listen hotkey" Style="{StaticResource SectionLabel}"/>
                                     <ComboBox x:Name="GlobalHotkeyCombo" SelectionChanged="GlobalHotkeyCombo_SelectionChanged"
-                                              ToolTip="Works in any app, also while Voice Chatbot is minimized or in the tray"/>
+                                              ToolTip="Works in any app, also while Voice Chatbot Mini is minimized or in the tray"/>
                                 </StackPanel>
                                 <Border Background="{DynamicResource InputBrush}" CornerRadius="8" Padding="10,8">
                                     <Grid>
@@ -861,7 +861,7 @@
                             <TextBox x:Name="MessageInput" Grid.ColumnSpan="1" Background="Transparent" BorderThickness="0"
                                      FontSize="14" Padding="4,6" AcceptsReturn="True" TextWrapping="Wrap"
                                      MinHeight="40" MaxHeight="180" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Center"
-                                     local:Ui.Placeholder="Message Voice Chatbot..."
+                                     local:Ui.Placeholder="Message Voice Chatbot Mini..."
                                      ToolTip="Enter or Shift+Enter to send, Ctrl+Enter for a new line. Ctrl+V pastes images."/>
                             <Button x:Name="SendBtn" Grid.Column="1" Style="{StaticResource RoundButton}" local:Ui.Icon="&#xE724;"
                                     VerticalAlignment="Bottom" Margin="8,0,0,0"

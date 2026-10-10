@@ -482,10 +482,7 @@ public partial class MainWindow
 
     private static string GetAssistantAudioDirectory()
     {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VoiceChatbot",
-            "assistant-audio");
+        return AppPaths.DataPath("assistant-audio");
     }
 
     private void AddAudioButtons(AssistantMessageUi assistantMessage, string audioPath)

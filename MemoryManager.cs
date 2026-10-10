@@ -29,9 +29,7 @@ public class ConversationMemory
 
 public static class MemoryManager
 {
-    private static readonly string MemoryDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "VoiceChatbot", "memory");
+    private static readonly string MemoryDir = AppPaths.DataPath("memory");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {

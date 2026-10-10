@@ -589,10 +589,7 @@ public partial class MainWindow : Window
     private static string GetWhisperModelPath(string size)
     {
         var normalized = size is "tiny" or "base" or "small" or "medium" ? size : "small";
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VoiceChatbot",
-            $"ggml-{normalized}.bin");
+        return AppPaths.DataPath($"ggml-{normalized}.bin");
     }
 
     private void SelectWhisperModelCombo(string size)

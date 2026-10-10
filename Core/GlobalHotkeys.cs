@@ -77,7 +77,7 @@ public static class GlobalHotkeys
     {
         var name = Normalize(choice);
         if (win32Error == ErrorHotkeyAlreadyRegistered)
-            return $"The {name} hotkey is already used by another app (or another copy of Voice Chatbot), so it is not active. " +
+            return $"The {name} hotkey is already used by another app (for example the full Voice Chatbot app, or another copy of {AppPaths.ProductName}), so it is not active. " +
                    "Close that app or pick a different hotkey in Settings > App.";
 
         var detail = win32Error == 0 ? "" : $" (Windows error {win32Error})";
@@ -88,11 +88,11 @@ public static class GlobalHotkeys
 /// <summary>The tray icon's hover text. NotifyIcon.Text throws above 127 characters.</summary>
 public static class TrayTooltip
 {
-    public const string AppName = "Voice Chatbot";
+    public const string AppName = AppPaths.ProductName;
     public const int MaxLength = 127;
 
     /// <summary>
-    /// "Voice Chatbot - Listening... (Ctrl+Alt+Space to talk)". The status and the hotkey hint are left out
+    /// "Voice Chatbot Mini - Listening... (Ctrl+Alt+Space to talk)". The status and the hotkey hint are left out
     /// when blank; pass no hotkey (or "Off") while none is registered. Whitespace runs become one space and
     /// the result is cut to <see cref="MaxLength"/> characters.
     /// </summary>

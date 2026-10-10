@@ -23,7 +23,7 @@ public sealed class YouTubeTranscriptService
 
     public async Task<YouTubeTranscriptResult> FetchTranscriptAsync(string url, CancellationToken ct)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "youtube-transcripts", Guid.NewGuid().ToString("N"));
+        var tempDir = AppPaths.TempPath("youtube-transcripts", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
 
         try
@@ -66,7 +66,7 @@ public sealed class YouTubeTranscriptService
         Func<Stream, CancellationToken, Task<string>> transcribeAsync,
         CancellationToken ct)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "youtube-audio", Guid.NewGuid().ToString("N"));
+        var tempDir = AppPaths.TempPath("youtube-audio", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
 
         try

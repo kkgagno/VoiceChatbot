@@ -130,11 +130,11 @@ public sealed class FileLogger
 }
 
 /// <summary>
-/// App-wide log: %APPDATA%\VoiceChatbot\logs\app-YYYYMMDD.log, 7 days kept.
+/// App-wide log: %APPDATA%\VoiceChatbotMini\logs\app-YYYYMMDD.log, 7 days kept.
 /// </summary>
 public static class AppLog
 {
-    public static string LogDirectory { get; } = Path.Combine(GetAppDataRoot(), "VoiceChatbot", "logs");
+    public static string LogDirectory { get; } = AppPaths.DataPath("logs");
 
     private static readonly FileLogger Logger = new(LogDirectory);
 
@@ -151,10 +151,4 @@ public static class AppLog
     public static void Info(string? message) => Logger.Write("INFO", message);
     public static void Warn(string? message, Exception? ex = null) => Logger.Write("WARN", message, ex);
     public static void Error(string? message, Exception? ex = null) => Logger.Write("ERROR", message, ex);
-
-    private static string GetAppDataRoot()
-    {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return string.IsNullOrEmpty(appData) ? Path.GetTempPath() : appData;
-    }
 }

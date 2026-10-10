@@ -146,10 +146,7 @@ public partial class MainWindow
             if (image is null)
                 return false;
 
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "VoiceChatbot",
-                "clipboard-images");
+            var dir = AppPaths.DataPath("clipboard-images");
             Directory.CreateDirectory(dir);
 
             var path = Path.Combine(dir, $"clipboard-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.png");

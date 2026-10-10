@@ -7,7 +7,8 @@ namespace VoiceChatbot;
 /// <summary>
 /// Windows DPAPI bound to the current Windows user: only this user on this PC can decrypt the values.
 /// The entropy is not a secret; it only keeps these blobs from being interchangeable with other
-/// DPAPI data of the same user.
+/// DPAPI data of the same user. It is the full Voice Chatbot app's value on purpose, so the keys in a
+/// settings.json Mini copied from it on first run (AppPaths.ImportFullAppSettingsIfMissing) still decrypt.
 /// </summary>
 public sealed class DpapiSecretProtector : ISecretProtector
 {

@@ -516,7 +516,7 @@ public sealed class DocumentTextService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "document-ocr", Guid.NewGuid().ToString("N"));
+        var tempDir = AppPaths.TempPath("document-ocr", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
         try
         {

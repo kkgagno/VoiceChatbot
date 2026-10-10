@@ -14,7 +14,7 @@ public sealed record KnowledgeStatus(bool IsIndexing, string Message, string Det
 /// <summary>
 /// Keeps the knowledge folder index (Core/KnowledgeIndex) up to date and searchable. A reindex runs on
 /// the thread pool, reads only new or changed files with DocumentTextService, skips files over 25 MB
-/// and saves the index to %APPDATA%\VoiceChatbot\knowledge-index.json. Every file the scan sees is
+/// and saves the index to %APPDATA%\VoiceChatbotMini\knowledge-index.json. Every file the scan sees is
 /// accounted for (indexed, unreadable, no text, unsupported type, too large) for the status line and
 /// the Files list. BuildContext can be called from any thread, also while a reindex runs; it uses the
 /// last published index, which is never changed again.
@@ -35,10 +35,7 @@ public sealed class KnowledgeService
     /// <summary>The formats the knowledge folder indexes (DocumentFileTypes.KnowledgeExtensions).</summary>
     public static readonly IReadOnlyList<string> SupportedExtensions = DocumentFileTypes.KnowledgeExtensions;
 
-    public static string DefaultIndexPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "VoiceChatbot",
-        "knowledge-index.json");
+    public static string DefaultIndexPath => AppPaths.DataPath("knowledge-index.json");
 
     // The Files list keeps at most this many unsupported files; the counts cover all of them.
     private const int MaxListedSkippedFiles = 5_000;

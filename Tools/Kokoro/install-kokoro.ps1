@@ -8,4 +8,4 @@ python.exe -m pip install --upgrade pip
 python.exe -m pip install -r "$PSScriptRoot\requirements.txt"
 
 Write-Host ""
-Write-Host "Kokoro dependencies installed. Voice Chatbot will start its local Kokoro server when needed."
+Write-Host "Kokoro dependencies installed. Voice Chatbot Mini will start its local Kokoro server when needed."

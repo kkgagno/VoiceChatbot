@@ -121,13 +121,35 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
         {
             await app.StartAsync(ct);
         }
-        catch
+        catch (Exception ex)
         {
             // A half-started host (for example the port is in use) would keep its resources otherwise.
             try { await app.DisposeAsync(); } catch { }
+            if (IsAddressInUse(ex))
+                throw new IOException(DescribePortInUse(_settings.Port), ex);
             throw;
         }
         _app = app;
+    }
+
+    /// <summary>
+    /// The message when the port is taken, for example by the full Voice Chatbot app's phone remote, which
+    /// uses the same default port.
+    /// </summary>
+    internal static string DescribePortInUse(int port) =>
+        $"Port {port} is already in use, maybe by the full Voice Chatbot app's phone remote or another program. " +
+        $"Stop that remote, or enter another port under Phone Remote (for example {(port < 65535 ? port + 1 : port - 1)}) and start it again.";
+
+    private static bool IsAddressInUse(Exception? ex)
+    {
+        for (; ex != null; ex = ex.InnerException)
+        {
+            if (ex is Microsoft.AspNetCore.Connections.AddressInUseException ||
+                ex is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
+                return true;
+        }
+
+        return false;
     }
 
     public async Task StopAsync()
@@ -307,7 +329,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
             var fileName = PhoneUploadFiles.SafeDisplayName(file.FileName);
             if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             {
-                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-images"), fileName);
+                var tempPath = PhoneUploadFiles.CreateTempPath(AppPaths.TempPath("phone-images"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 await using (var source = file.OpenReadStream())
                 await using (var target = File.Create(tempPath))
@@ -324,7 +346,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 
             if (IsAudioFile(contentType, fileName))
             {
-                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-audio"), fileName);
+                var tempPath = PhoneUploadFiles.CreateTempPath(AppPaths.TempPath("phone-audio"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 await using (var source = file.OpenReadStream())
                 await using (var target = File.Create(tempPath))
@@ -373,7 +395,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 
             if (IsReadableDocumentFile(contentType, fileName))
             {
-                var tempPath = PhoneUploadFiles.CreateTempPath(Path.Combine(Path.GetTempPath(), "VoiceChatbot", "phone-documents"), fileName);
+                var tempPath = PhoneUploadFiles.CreateTempPath(AppPaths.TempPath("phone-documents"), fileName);
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 try
                 {
@@ -474,11 +496,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(ffmpegPath))
             throw new InvalidOperationException("ffmpeg was not found, so this audio format cannot be converted to WAV.");
 
-        var outputPath = Path.Combine(
-            Path.GetTempPath(),
-            "VoiceChatbot",
-            "phone-audio",
-            Guid.NewGuid().ToString("N") + ".wav");
+        var outputPath = AppPaths.TempPath("phone-audio", Guid.NewGuid().ToString("N") + ".wav");
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         var start = new ProcessStartInfo
@@ -692,7 +710,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <title>Voice Chatbot Remote</title>
+  <title>Voice Chatbot Mini Remote</title>
   <style>
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     html { width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: pan-y; }
@@ -743,7 +761,7 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
 </head>
 <body>
 <main>
-  <header><h1>Voice Chatbot</h1><a id="openTranscriber" href="/transcribe" title="Live transcript with notes, from this device's microphone or a browser tab">Transcribe</a><span id="modelState"></span><span id="status">Ready</span></header>
+  <header><h1>Voice Chatbot Mini</h1><a id="openTranscriber" href="/transcribe" title="Live transcript with notes, from this device's microphone or a browser tab">Transcribe</a><span id="modelState"></span><span id="status">Ready</span></header>
   <div id="chat"></div>
   <div class="controls">
     <button id="talk">Hold to Talk</button>
@@ -1578,12 +1596,12 @@ public static class PhoneRemoteCertificateManager
 
     public static PhoneRemoteCertificateInfo EnsureCertificate(string localIpAddress)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceChatbot", "phone-remote-cert");
+        var dir = AppPaths.DataPath("phone-remote-cert");
         Directory.CreateDirectory(dir);
 
-        var pfxPath = Path.Combine(dir, "voicechatbot-phone-remote.pfx");
-        var cerPath = Path.Combine(dir, "voicechatbot-phone-remote.cer");
-        var ipPath = Path.Combine(dir, "voicechatbot-phone-remote-ip.txt");
+        var pfxPath = Path.Combine(dir, "voicechatbot-mini-phone-remote.pfx");
+        var cerPath = Path.Combine(dir, "voicechatbot-mini-phone-remote.cer");
+        var ipPath = Path.Combine(dir, "voicechatbot-mini-phone-remote-ip.txt");
         var desiredNames = GetDesiredCertificateNames(localIpAddress);
 
         if (File.Exists(pfxPath) && File.Exists(cerPath) && File.Exists(ipPath))
@@ -1603,7 +1621,8 @@ public static class PhoneRemoteCertificateManager
         }
 
         using var rsa = RSA.Create(2048);
-        var subject = new X500DistinguishedName("CN=VoiceChatbot Local Remote");
+        // Its own name, so a phone that trusts both apps' certificates can tell them apart.
+        var subject = new X500DistinguishedName("CN=VoiceChatbot Mini Local Remote");
         var request = new CertificateRequest(subject, rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));

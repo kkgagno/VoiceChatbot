@@ -36,9 +36,8 @@ public partial class TranscriptionWindow : Window
     // The session state is written this long after a change (and right away on stop, clear and close).
     private static readonly TimeSpan SessionStateDelay = TimeSpan.FromSeconds(2);
 
-    /// <summary>%APPDATA%\VoiceChatbot\transcripts: where each session is saved when it stops.</summary>
-    public static string TranscriptsFolder { get; } = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceChatbot", "transcripts");
+    /// <summary>%APPDATA%\VoiceChatbotMini\transcripts: where each session is saved when it stops.</summary>
+    public static string TranscriptsFolder { get; } = AppPaths.DataPath("transcripts");
 
     /// <summary>The current session (transcript, notes, time so far), restored when the window opens again.</summary>
     private static string SessionStatePath => TranscriberSessionStore.PathIn(TranscriptsFolder);
@@ -1386,7 +1385,7 @@ public partial class TranscriptionWindow : Window
     }
 
     /// <summary>
-    /// Saves the session to %APPDATA%\VoiceChatbot\transcripts\transcript_yyyyMMdd_HHmmss.md (one file per
+    /// Saves the session to %APPDATA%\VoiceChatbotMini\transcripts\transcript_yyyyMMdd_HHmmss.md (one file per
     /// session, rewritten as it grows, also after a restore). Returns the path, or null when there was nothing new to save.
     /// </summary>
     private string? AutoSave(TimeSpan? length = null)

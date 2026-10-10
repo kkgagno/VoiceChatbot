@@ -14,8 +14,10 @@
     <RootNamespace>VoiceChatbot</RootNamespace>
     <ApplicationIcon>Resources\AppIcon.ico</ApplicationIcon>
     <Version>1.0.0</Version>
-    <AssemblyName>VoiceChatbot</AssemblyName>
-    <Product>Voice Chatbot</Product>
+    <!-- The mini edition: its own exe name, product name and data folder (Core/AppPaths.cs), so it installs
+         and runs next to the full Voice Chatbot app. -->
+    <AssemblyName>VoiceChatbotMini</AssemblyName>
+    <Product>Voice Chatbot Mini</Product>
     <Company>Keith Gagnon</Company>
   </PropertyGroup>
 

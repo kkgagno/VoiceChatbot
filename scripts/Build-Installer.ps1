@@ -8,7 +8,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $projectRoot "VoiceChatbot.csproj"
 $publishDir = Join-Path $projectRoot "bin\Release\publish\win-x64"
 $artifactsDir = Join-Path $projectRoot "artifacts"
-$installerScript = Join-Path $projectRoot "installer\VoiceChatbot.iss"
+$installerScript = Join-Path $projectRoot "installer\VoiceChatbotMini.iss"
 
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 Get-ChildItem $artifactsDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -44,7 +44,7 @@ function Get-GitHubReleaseAsset {
         [Parameter(Mandatory = $true)][scriptblock]$AssetFilter
     )
 
-    $headers = @{ "User-Agent" = "VoiceChatbot-Build" }
+    $headers = @{ "User-Agent" = "VoiceChatbotMini-Build" }
     if ($env:GITHUB_TOKEN) {
         $headers["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
         $headers["X-GitHub-Api-Version"] = "2022-11-28"
@@ -68,7 +68,7 @@ Invoke-WebRequest $ytDlpAsset.browser_download_url -OutFile (Join-Path $mediaDir
 
 $denoAsset = Get-GitHubReleaseAsset "denoland/deno" { $_.name -eq "deno-x86_64-pc-windows-msvc.zip" }
 $denoZip = Join-Path $env:TEMP $denoAsset.name
-$denoExtract = Join-Path $env:TEMP "voicechatbot-deno-$Version"
+$denoExtract = Join-Path $env:TEMP "voicechatbotmini-deno-$Version"
 Invoke-WebRequest $denoAsset.browser_download_url -OutFile $denoZip
 if (Test-Path $denoExtract) {
     Remove-Item -LiteralPath $denoExtract -Recurse -Force
@@ -81,7 +81,7 @@ $ffmpegAsset = Get-GitHubReleaseAsset "yt-dlp/FFmpeg-Builds" {
     $_.name -match "win64-gpl\.zip$" -and $_.name -notmatch "shared"
 }
 $ffmpegZip = Join-Path $env:TEMP $ffmpegAsset.name
-$ffmpegExtract = Join-Path $env:TEMP "voicechatbot-ffmpeg-$Version"
+$ffmpegExtract = Join-Path $env:TEMP "voicechatbotmini-ffmpeg-$Version"
 Invoke-WebRequest $ffmpegAsset.browser_download_url -OutFile $ffmpegZip
 if (Test-Path $ffmpegExtract) {
     Remove-Item -LiteralPath $ffmpegExtract -Recurse -Force
@@ -128,7 +128,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed with exit code $LASTEXITCODE."
 }
 
-$zipPath = Join-Path $artifactsDir "VoiceChatbot-$Version-win-x64-portable.zip"
+$zipPath = Join-Path $artifactsDir "VoiceChatbotMini-$Version-win-x64-portable.zip"
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }

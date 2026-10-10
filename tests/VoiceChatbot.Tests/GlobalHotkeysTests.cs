@@ -111,12 +111,12 @@ public class GlobalHotkeysTests
 public class TrayTooltipTests
 {
     [Theory]
-    [InlineData(null, null, "Voice Chatbot")]
-    [InlineData("", "", "Voice Chatbot")]
-    [InlineData("Listening...", null, "Voice Chatbot - Listening...")]
-    [InlineData(null, "Ctrl+Alt+Space", "Voice Chatbot (Ctrl+Alt+Space to talk)")]
-    [InlineData("Speaking...", "Ctrl+Alt+L", "Voice Chatbot - Speaking... (Ctrl+Alt+L to talk)")]
-    [InlineData("  Two\r\n  lines ", "Off", "Voice Chatbot - Two lines")]
+    [InlineData(null, null, "Voice Chatbot Mini")]
+    [InlineData("", "", "Voice Chatbot Mini")]
+    [InlineData("Listening...", null, "Voice Chatbot Mini - Listening...")]
+    [InlineData(null, "Ctrl+Alt+Space", "Voice Chatbot Mini (Ctrl+Alt+Space to talk)")]
+    [InlineData("Speaking...", "Ctrl+Alt+L", "Voice Chatbot Mini - Speaking... (Ctrl+Alt+L to talk)")]
+    [InlineData("  Two\r\n  lines ", "Off", "Voice Chatbot Mini - Two lines")]
     public void Format(string? status, string? hotkey, string expected) =>
         Assert.Equal(expected, TrayTooltip.Format(status, hotkey));
 
@@ -127,14 +127,14 @@ public class TrayTooltipTests
 
         Assert.Equal(TrayTooltip.MaxLength, text.Length);
         Assert.EndsWith("...", text);
-        Assert.StartsWith("Voice Chatbot - aaa", text);
+        Assert.StartsWith("Voice Chatbot Mini - aaa", text);
     }
 
     [Fact]
     public void CutNeverSplitsASurrogatePair()
     {
         // Place an emoji (two UTF-16 units) so it straddles the cut point.
-        var prefix = "Voice Chatbot - ";
+        var prefix = "Voice Chatbot Mini - ";
         var status = new string('a', TrayTooltip.MaxLength - 3 - 1 - prefix.Length) + "\U0001F600" + new string('b', 50);
 
         var text = TrayTooltip.Format(status, null);

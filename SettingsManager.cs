@@ -77,7 +77,7 @@ public class AppSettings
     // "Default" is created from the current prompt/voice/rate on first run.
     public List<Persona> Personas { get; set; } = new();
     public string ActivePersona { get; set; } = "";
-    // Knowledge folder: the documents in KnowledgeFolder are indexed into %APPDATA%\VoiceChatbot\knowledge-index.json;
+    // Knowledge folder: the documents in KnowledgeFolder are indexed into %APPDATA%\VoiceChatbotMini\knowledge-index.json;
     // while KnowledgeEnabled is on, up to KnowledgeMaxChunks matching excerpts go with each message.
     public bool KnowledgeEnabled { get; set; } = false;
     public string KnowledgeFolder { get; set; } = "";
@@ -86,7 +86,7 @@ public class AppSettings
     // MemoryMaxItems) plus the newest memory, "All" = every saved memory.
     public string MemoryMode { get; set; } = MemorySelector.ModeRelevant;
     public int MemoryMaxItems { get; set; } = MemorySelector.DefaultMaxItems;
-    // Saved chat history: one JSON file per conversation in %APPDATA%\VoiceChatbot\conversations.
+    // Saved chat history: one JSON file per conversation in %APPDATA%\VoiceChatbotMini\conversations.
     public bool SaveConversationHistory { get; set; } = true;
 
     // Web Search
@@ -157,9 +157,7 @@ public class PhoneRemoteSettings
 
 public static class SettingsManager
 {
-    private static readonly string Path = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "VoiceChatbot", "settings.json");
+    private static readonly string Path = AppPaths.SettingsFile;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -179,6 +177,8 @@ public static class SettingsManager
     private static readonly object SaveLock = new();
     private static string? _loadWarning;
     private static string? _recoveryNotice;
+    private static string? _importNotice;
+    private static int _importChecked;
     private static bool _plainSaveLogged;
     // Set when settings.json could not be read: the file is kept as it is until the user changes a setting.
     private static volatile bool _keepUnreadableFile;
@@ -197,8 +197,18 @@ public static class SettingsManager
     /// </summary>
     public static string? TakeRecoveryNotice() => Interlocked.Exchange(ref _recoveryNotice, null);
 
+    /// <summary>
+    /// The notice for the user after the first run copied the full app's settings. Returns it once, then null.
+    /// </summary>
+    public static string? TakeImportNotice() => Interlocked.Exchange(ref _importNotice, null);
+
+    /// <summary>
+    /// Reads settings.json. Properties Mini does not know, such as the full app's settings for features Mini
+    /// does not have, are ignored, so the full app's file loads as it is (see ImportFullAppSettingsOnce).
+    /// </summary>
     public static AppSettings Load()
     {
+        ImportFullAppSettingsOnce();
         try
         {
             if (File.Exists(Path))
@@ -231,6 +241,29 @@ public static class SettingsManager
             HandleUnreadableFile();
         }
         return new AppSettings();
+    }
+
+    /// <summary>
+    /// First start of Mini on a PC with the full Voice Chatbot app: copies its settings.json (only that file)
+    /// so the backend, voice, personas and keys carry over. Checked once per run, before the first read.
+    /// </summary>
+    private static void ImportFullAppSettingsOnce()
+    {
+        if (Interlocked.Exchange(ref _importChecked, 1) != 0)
+            return;
+
+        var result = AppPaths.ImportFullAppSettingsIfMissing(AppPaths.DataDirectory, AppPaths.FullAppDataDirectory);
+        switch (result.Status)
+        {
+            case SettingsImportStatus.Imported:
+                AppLog.Info(result.Describe());
+                _importNotice = $"Copied your settings from the full Voice Chatbot app ({result.Source}). " +
+                                $"Voice Chatbot Mini keeps its own chats, memories, Whisper models and logs in {AppPaths.DataDirectory}.";
+                break;
+            case SettingsImportStatus.Failed:
+                AppLog.Warn(result.Describe());
+                break;
+        }
     }
 
     /// <summary>

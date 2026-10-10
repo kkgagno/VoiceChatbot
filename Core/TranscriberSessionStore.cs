@@ -7,7 +7,7 @@ namespace VoiceChatbot;
 
 /// <summary>
 /// The desktop Live Transcriber's session as it is kept between windows and app runs
-/// (%APPDATA%\VoiceChatbot\transcripts\current-session.json), so closing the window loses nothing.
+/// (%APPDATA%\VoiceChatbotMini\transcripts\current-session.json), so closing the window loses nothing.
 /// </summary>
 public sealed class TranscriberSessionState
 {

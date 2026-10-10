@@ -325,9 +325,6 @@ public partial class MainWindow
 
     private static string GetSchedulerAudioDirectory()
     {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VoiceChatbot",
-            "scheduled-audio");
+        return AppPaths.DataPath("scheduled-audio");
     }
 }

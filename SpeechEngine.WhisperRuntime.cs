@@ -51,7 +51,7 @@ public partial class SpeechEngine
             if (useGpu && LoadedWhisperLibrary() is { } loaded && loaded != RuntimeLibrary.Vulkan)
             {
                 ReportWhisperRuntime(VulkanProbe.HasGpu(out var reason)
-                    ? "Whisper: CPU - restart Voice Chatbot to use the GPU"
+                    ? $"Whisper: CPU - restart {AppPaths.ProductName} to use the GPU"
                     : $"Whisper: CPU ({reason})");
                 return;
             }

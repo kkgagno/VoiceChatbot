@@ -145,10 +145,7 @@ public sealed class ConversationStore
 
     public string Folder { get; }
 
-    public static string DefaultFolder => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "VoiceChatbot",
-        "conversations");
+    public static string DefaultFolder => AppPaths.DataPath("conversations");
 
     /// <summary>Sortable, file-name-safe id such as 20261008-142233-1a2b3c4d.</summary>
     public static string NewId(DateTime utcNow) =>

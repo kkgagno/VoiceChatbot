@@ -47,10 +47,12 @@ public partial class SpeechEngine : IDisposable
     private System.Diagnostics.Process? _kokoroProcess;
     private System.Diagnostics.Process? _kokoroServerProcess;
     private readonly object _kokoroServerLock = new();
-    private const string KokoroServerUrl = "http://127.0.0.1:8765";
+    // Not the full Voice Chatbot app's 8765, so both apps can run their own local Kokoro server at once.
+    private const int KokoroServerPort = 8766;
+    private static readonly string KokoroServerUrl = $"http://127.0.0.1:{KokoroServerPort}";
     // The bundled server only writes WAV files into this folder and only answers requests that
     // carry this per-launch token, so other local programs and web pages cannot use it.
-    private static readonly string KokoroServerOutputDirectory = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "tts");
+    private static readonly string KokoroServerOutputDirectory = AppPaths.TempPath("tts");
     private readonly string _kokoroServerToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
     private DateTime _remoteKokoroRetryAfterUtc = DateTime.MinValue;
     private DateTime _kokoroServerRetryAfterUtc = DateTime.MinValue;
@@ -199,9 +201,7 @@ public partial class SpeechEngine : IDisposable
     private void InitWhisper()
     {
         // Look for ggml model file
-        var modelDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VoiceChatbot");
+        var modelDir = AppPaths.DataDirectory;
         Directory.CreateDirectory(modelDir);
 
         // Try user-specified path first, then default locations
@@ -293,9 +293,7 @@ public partial class SpeechEngine : IDisposable
     /// </summary>
     public async Task DownloadModelAsync(string size = "base", IProgress<float>? progress = null)
     {
-        var modelDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VoiceChatbot");
+        var modelDir = AppPaths.DataDirectory;
         Directory.CreateDirectory(modelDir);
 
         var fileName = size == "tiny" ? "ggml-tiny.bin" :
@@ -892,7 +890,7 @@ public partial class SpeechEngine : IDisposable
 
     private async Task<string> TranscribeWithRyzenAiAsync(Stream wavStream, CancellationToken ct)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "ryzen-ai-transcribe");
+        var tempDir = AppPaths.TempPath("ryzen-ai-transcribe");
         Directory.CreateDirectory(tempDir);
         var inputPath = Path.Combine(tempDir, $"chunk_{Guid.NewGuid():N}.wav");
 
@@ -1385,7 +1383,7 @@ public partial class SpeechEngine : IDisposable
                 };
                 foreach (var argument in new[]
                 {
-                    scriptPath, "--host", "127.0.0.1", "--port", "8765", "--preload", "a,b",
+                    scriptPath, "--host", "127.0.0.1", "--port", KokoroServerPort.ToString(System.Globalization.CultureInfo.InvariantCulture), "--preload", "a,b",
                     "--out-dir", KokoroServerOutputDirectory, "--token", _kokoroServerToken
                 })
                 {
@@ -1416,7 +1414,7 @@ public partial class SpeechEngine : IDisposable
             if (IsKokoroServerHealthy(1000))
                 return true;
 
-            // It could not start, e.g. port 8765 is taken by a server from an earlier run that does
+            // It could not start, e.g. the port is taken by a server from an earlier run that does
             // not know this run's token: use the one-shot fallback instead of waiting.
             Process? server;
             lock (_kokoroServerLock)
@@ -1424,7 +1422,7 @@ public partial class SpeechEngine : IDisposable
             if (server == null || server.HasExited)
             {
                 if (_kokoroServerRetryAfterUtc == DateTime.MinValue)
-                    Log?.Invoke("[TTS] The local Kokoro server did not start (is port 8765 in use?). Using one-shot Kokoro for now.");
+                    Log?.Invoke($"[TTS] The local Kokoro server did not start (is port {KokoroServerPort} in use?). Using one-shot Kokoro for now.");
                 _kokoroServerRetryAfterUtc = DateTime.UtcNow.AddMinutes(1);
                 return false;
             }

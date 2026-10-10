@@ -204,7 +204,7 @@ public partial class MainWindow
 
             ToggleListening();
             if (AlwaysListenToggle.IsChecked != true)
-                NotifyWhenInBackground("Could not start listening. Open Voice Chatbot to see why.");
+                NotifyWhenInBackground($"Could not start listening. Open {AppPaths.ProductName} to see why.");
         }
         catch (Exception ex)
         {
@@ -226,7 +226,7 @@ public partial class MainWindow
             _trayIconImage ??= LoadTrayIconImage();
 
             menu = new Forms.ContextMenuStrip();
-            var openItem = new Forms.ToolStripMenuItem("Open Voice Chatbot", null, (_, _) => RunTrayCommand(ShowFromTray));
+            var openItem = new Forms.ToolStripMenuItem($"Open {AppPaths.ProductName}", null, (_, _) => RunTrayCommand(ShowFromTray));
             _trayListenItem = new Forms.ToolStripMenuItem("Listen", null, (_, _) => RunTrayCommand(ToggleListeningFromShortcut));
             _traySpeechItem = new Forms.ToolStripMenuItem("Speak responses", null, (_, _) => RunTrayCommand(ToggleSpeechFromTray));
             // Close after the menu finishes its click: closing disposes this menu (DisposeTrayAndHotkey).

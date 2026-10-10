@@ -9,10 +9,7 @@ namespace VoiceChatbot;
 
 public sealed class SchedulerStore
 {
-    private static readonly string StorePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "VoiceChatbot",
-        "scheduler.json");
+    private static readonly string StorePath = AppPaths.DataPath("scheduler.json");
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

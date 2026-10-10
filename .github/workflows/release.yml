@@ -1,10 +1,12 @@
-name: Build Windows release
+name: Build Windows release (Mini)
 
+# Voice Chatbot Mini is released from the mini branch with its own tags (mini-v1.2.3), so its
+# releases never mix with the full app's v1.2.3 tags and releases.
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "mini-v*"
 
 permissions:
   contents: write
@@ -31,7 +33,7 @@ jobs:
         shell: powershell
         run: |
           $version = if ("${{ github.ref_type }}" -eq "tag") {
-            "${{ github.ref_name }}".TrimStart("v")
+            "${{ github.ref_name }}" -replace '^mini-v', ''
           } else {
             "1.0.${{ github.run_number }}"
           }
@@ -46,12 +48,14 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceChatbot-${{ steps.version.outputs.version }}-win-x64
+          name: VoiceChatbotMini-${{ steps.version.outputs.version }}-win-x64
           path: artifacts/*
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          name: Voice Chatbot Mini ${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
           files: artifacts/*
           generate_release_notes: true

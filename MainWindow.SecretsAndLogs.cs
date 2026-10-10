@@ -28,6 +28,10 @@ public partial class MainWindow
         if (!string.IsNullOrEmpty(recoveryNotice))
             AddSystemMessage(recoveryNotice);
 
+        var importNotice = SettingsManager.TakeImportNotice();
+        if (!string.IsNullOrEmpty(importNotice))
+            AddSystemMessage(importNotice);
+
         var warning = SettingsManager.TakeLoadWarning();
         if (!string.IsNullOrEmpty(warning))
         {

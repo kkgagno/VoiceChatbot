@@ -9,7 +9,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        AppLog.Info($"Voice Chatbot {typeof(App).Assembly.GetName().Version} starting " +
+        AppLog.Info($"{AppPaths.ProductName} {typeof(App).Assembly.GetName().Version} starting " +
                     $"({RuntimeInformation.OSDescription}, .NET {Environment.Version})");
 
         // Catch unhandled exceptions on UI thread
@@ -20,7 +20,7 @@ public partial class App : Application
             MessageBox.Show(
                 $"Something went wrong: {FriendlyErrors.Describe(args.Exception)}\n\n" +
                 $"The details were written to the log in:\n{AppLog.LogDirectory}",
-                "Voice Chatbot Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                $"{AppPaths.ProductName} Error", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
 
@@ -32,7 +32,7 @@ public partial class App : Application
                          (ex == null ? $": {args.ExceptionObject}" : ""), ex);
             MessageBox.Show(
                 $"Fatal Error:\n\n{ex?.Message ?? args.ExceptionObject?.ToString() ?? "unknown"}\n\nInner: {ex?.InnerException?.Message ?? "none"}",
-                "Voice Chatbot Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                $"{AppPaths.ProductName} Error", MessageBoxButton.OK, MessageBoxImage.Error);
         };
 
         // Catch async unhandled exceptions
@@ -68,7 +68,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        AppLog.Info($"Voice Chatbot exiting (code {e.ApplicationExitCode})");
+        AppLog.Info($"{AppPaths.ProductName} exiting (code {e.ApplicationExitCode})");
         base.OnExit(e);
     }
 }

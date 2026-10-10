@@ -247,7 +247,7 @@ public partial class MainWindow
         {
             var name = voice.Split('(')[0].Trim();
             var spoken = name.Length > 3 ? char.ToUpperInvariant(name[3]) + name[4..] : "your assistant";
-            var previewDir = Path.Combine(Path.GetTempPath(), "VoiceChatbot", "voice-preview");
+            var previewDir = AppPaths.TempPath("voice-preview");
             var path = await _speech.CreateSpeechAudioFileAsync(
                 $"Hi, I'm {spoken}. This is how I'll sound when I answer you.", previewDir);
             if (string.IsNullOrWhiteSpace(path))
@@ -279,7 +279,7 @@ public partial class MainWindow
         ActiveModelText.Text = string.IsNullOrWhiteSpace(model)
             ? _settings.ChatProvider
             : $"{model}  ·  {_settings.ChatProvider}";
-        Title = string.IsNullOrWhiteSpace(model) ? "Voice Chatbot" : $"Voice Chatbot - {model}";
+        Title = string.IsNullOrWhiteSpace(model) ? AppPaths.ProductName : $"{AppPaths.ProductName} - {model}";
     }
 
     private void SetSidebarVisible(bool visible)
@@ -360,7 +360,7 @@ public partial class MainWindow
 
         try
         {
-            var header = $"# Voice Chatbot conversation\n\n_{DateTime.Now:f} · {ModelCombo.Text}_\n\n";
+            var header = $"# {AppPaths.ProductName} conversation\n\n_{DateTime.Now:f} · {ModelCombo.Text}_\n\n";
             File.WriteAllText(dialog.FileName, header + text);
             AddSystemMessage($"Conversation saved to {dialog.FileName}");
         }

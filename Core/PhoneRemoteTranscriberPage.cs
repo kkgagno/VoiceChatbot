@@ -46,7 +46,7 @@ public static class PhoneRemoteTranscriberPage
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <title>Voice Chatbot Transcribe</title>
+  <title>Voice Chatbot Mini Transcribe</title>
   <style nonce="__NONCE__">
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --fs: 18px; }
     * { box-sizing: border-box; }
@@ -706,7 +706,7 @@ async function api(path, options) {
     response = await fetch(path, init);
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;
-    throw new RequestError('Cannot reach Voice Chatbot on the PC. Check that it is running and that this device is on the same network.', 0);
+    throw new RequestError('Cannot reach Voice Chatbot Mini on the PC. Check that it is running and that this device is on the same network.', 0);
   }
 
   let data = null;
@@ -1467,7 +1467,7 @@ async function runJob(path, body, job, onProgress) {
       }
       if (e.status === 0) {
         cancelJobOnPc(job.id); // nobody waits for it any more
-        throw new Error('Gave up waiting: the PC stopped answering. Check that Voice Chatbot is running and this device is on the same network.');
+        throw new Error('Gave up waiting: the PC stopped answering. Check that Voice Chatbot Mini is running and this device is on the same network.');
       }
       throw e;
     }
@@ -1789,7 +1789,7 @@ async function saveClick() {
   el.savePc.disabled = true;
   try {
     const name = await saveOnPc();
-    setStatus('Saved on the PC as ' + name + ' in %APPDATA%\\VoiceChatbot\\transcripts.', !state.recording);
+    setStatus('Saved on the PC as ' + name + ' in %APPDATA%\\VoiceChatbotMini\\transcripts.', !state.recording);
   } catch (e) {
     setStatus('Save on PC failed: ' + e.message, true);
   } finally {
