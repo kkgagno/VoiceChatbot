@@ -64,6 +64,8 @@ function Get-GitHubReleaseAsset {
 }
 
 # The newest release that already has a matching asset (a brand-new release may still be uploading its files).
+# Pre-releases count: llama.cpp publishes its Windows builds as nightly pre-releases (b11429, ...), while its
+# "Latest" versioned releases (v0.6.0, ...) carry no binaries.
 function Get-RecentReleaseAsset {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
@@ -71,10 +73,10 @@ function Get-RecentReleaseAsset {
     )
 
     $releases = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$Repository/releases?per_page=15" `
+        -Uri "https://api.github.com/repos/$Repository/releases?per_page=30" `
         -Headers (Get-GitHubHeaders)
     foreach ($release in $releases) {
-        if ($release.draft -or $release.prerelease) {
+        if ($release.draft) {
             continue
         }
         $asset = $release.assets | Where-Object $AssetFilter | Select-Object -First 1
@@ -82,7 +84,9 @@ function Get-RecentReleaseAsset {
             return [pscustomobject]@{ Asset = $asset; Tag = $release.tag_name }
         }
     }
-    throw "No recent release of $Repository has a matching asset."
+    $newest = $releases | Select-Object -First 1
+    $names = ($newest.assets | ForEach-Object { $_.name }) -join ", "
+    throw "No recent release of $Repository has a matching asset. Newest release $($newest.tag_name) has: $names"
 }
 
 # curl.exe is much faster than Invoke-WebRequest for multi-GB files.
