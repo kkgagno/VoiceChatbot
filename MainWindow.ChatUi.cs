@@ -57,9 +57,15 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
                 continue;
 
+            // A format WPF cannot decode (HEIC, AVIF, SVG...) only loses its thumbnail;
+            // the image itself still goes to the model.
+            var thumbnail = TryLoadThumbnail(imagePath);
+            if (thumbnail == null)
+                continue;
+
             var image = new Image
             {
-                Source = new BitmapImage(new Uri(imagePath)),
+                Source = thumbnail,
                 MaxWidth = 260,
                 MaxHeight = 200,
                 Stretch = Stretch.Uniform
@@ -78,6 +84,26 @@ public partial class MainWindow
         ChatPanel.Children.Add(border);
         ScrollChat();
         return border;
+    }
+
+    private static BitmapImage? TryLoadThumbnail(string imagePath)
+    {
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            // Decode now, so a bad file fails here instead of while rendering.
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(imagePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not show image thumbnail {imagePath}: {ex.Message}");
+            return null;
+        }
     }
 
     private void HideWelcomeCard()
