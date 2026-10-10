@@ -1,22 +1,43 @@
-# Voice Chatbot
+# Voice Chatbot Mini
 
-Voice Chatbot is a Windows desktop and phone-browser client for local AI models. It supports voice conversation, local Whisper transcription, Ollama, OpenAI-compatible llama.cpp servers, multimodal image prompts, web search, ComfyUI image/video workflows, Kokoro speech, and SSH-based model switching.
+Voice Chatbot Mini is the standalone, smaller edition of Voice Chatbot: a Windows desktop and phone-browser client for the AI models you already run, without the extras that need the original home lab. It supports voice conversation, local Whisper transcription, Ollama, llama.cpp and other OpenAI-compatible servers, image prompts for vision models, web search, Kokoro speech, a knowledge folder, a live transcriber and a phone remote.
+
+## What Mini has, and what it leaves out
+
+Mini keeps:
+
+- Typed and spoken chat with Ollama, llama.cpp or any OpenAI-compatible server, model picking and **Refresh Models**.
+- Voice input with Whisper (**Listen** / **Stop listening**, wake word, global hotkey) and spoken replies with Kokoro.
+- Images attached to a message for vision models (Image button, Ctrl+V, phone remote files), documents and OCR.
+- The Live Transcriber (desktop window and web page), knowledge folder, Tavily web search, tools, personas, memories, saved conversations, the scheduler, the phone remote, tray icon, hotkey and themes.
+
+Mini does not have:
+
+- **Images & Video**: no ComfyUI image creation, image editing or video generation.
+- **Face Presence**: no camera, face profiles or identity gating; voice input is always allowed.
+- **Model Server Control**: no Hermes SSH commands and no buttons or commands that start, stop or switch models. Start your model server yourself; Mini connects to it.
 
 ## Download and install
 
-For a normal Windows installation, download the latest `VoiceChatbot-Setup-*-win-x64.exe` from GitHub Releases and run it.
+Download the latest `VoiceChatbotMini-Setup-*-win-x64.exe` from the GitHub release named **Voice Chatbot Mini** and run it.
 
 The installer is not code-signed yet, so Windows SmartScreen may show an **Unknown publisher** warning. Verify the SHA-256 checksum published with the release before running it.
 
 The installer:
 
-- Installs a self-contained Windows x64 build. The .NET runtime is included.
-- Creates Start Menu shortcuts.
-- Optionally creates a desktop shortcut.
-- Includes local face-detection resources and Kokoro helper scripts.
-- Leaves settings and conversation data in `%APPDATA%\VoiceChatbot`.
+- Installs a self-contained Windows x64 build to `%LOCALAPPDATA%\Programs\VoiceChatbotMini`. The .NET runtime is included.
+- Creates **Voice Chatbot Mini** Start Menu shortcuts and, optionally, a desktop shortcut.
+- Includes the Kokoro helper scripts.
+- Leaves settings and conversation data in `%APPDATA%\VoiceChatbotMini`.
 
 Windows 10 version 1809 or newer, or Windows 11, is required.
+
+### Next to the full Voice Chatbot app
+
+Mini is a separate product: its own installer ID, install folder, `VoiceChatbotMini.exe`, Start Menu entries, data folder (`%APPDATA%\VoiceChatbotMini`) and temp folder (`%TEMP%\VoiceChatbotMini`). Installing, updating or uninstalling one never touches the other.
+
+- **Settings on first run.** When Mini starts for the first time and finds the full app's `%APPDATA%\VoiceChatbot\settings.json`, it copies just that file, so your backend, voice, personas and keys carry over (the keys still decrypt for the same Windows user). The full app's settings for features Mini does not have are ignored. Chats, memories, Whisper models, transcripts and logs are not copied; Mini keeps its own. The copy is noted once in the chat and in the log.
+- **Both running at once.** Mini's local Kokoro server uses port `8766` (the full app uses `8765`). The phone remote defaults to port `5100` in both apps: if the full app's remote is running, Mini says the port is already in use; enter another port under **Phone Remote** (for example `5101`). Only one app can own a global listen hotkey at a time; the second says so under **App > Listen hotkey**.
 
 ## Minimum setup
 
@@ -31,7 +52,7 @@ You need at least one chat backend.
    ollama pull gemma3:4b
    ```
 
-3. In Voice Chatbot select `Ollama`.
+3. In Voice Chatbot Mini select `Ollama`.
 4. Set the Ollama URL to `http://localhost:11434`.
 5. Click **Refresh Models** and select the model.
 
@@ -40,17 +61,17 @@ You need at least one chat backend.
 1. Install or build [llama.cpp](https://github.com/ggml-org/llama.cpp).
 2. Start `llama-server.exe` with your GGUF model.
 3. For image-capable models, use the matching multimodal projector or media embedder required by that model.
-4. In Voice Chatbot select `OpenAI-compatible`.
+4. In Voice Chatbot Mini select `OpenAI-compatible`.
 5. Set the URL to the server's `/v1` endpoint, for example `http://192.168.1.50:8080/v1`.
 6. Click **Refresh Models**.
 
 **Context window.** The app asks the server how many tokens one request can use and plans the chat history to fit: llama.cpp's per-slot `n_ctx` (from `/props`, or `/slots`), vLLM's `max_model_len` or LM Studio's loaded context length. The model's training context (`n_ctx_train`) is never used, and nothing is guessed from the model name for a local or self-hosted server. The line under **Context window** (Chat Backend) shows the value in use and where it came from, for example `llama.cpp server: 16,384 tokens per request (detected)`. On llama.cpp the window is set with `-c` / `--ctx-size` on `llama-server`; with `-np` parallel slots each request gets one slot's share. The value is checked again every five minutes, after **Refresh Models** and when the URL or model changes, so a restarted server with a new `-c` is picked up without restarting the app. When the server reports nothing, the **Context window** box is used. If the server still rejects a request as too long, the app reads the window again, leaves out older messages and sends it once more; if that fails too, it tells you the server's size. With Ollama the box is sent as `num_ctx`, capped at the model's maximum.
 
-The server controls and Hermes commands expect model batch files in `C:\llama.cpp` on the SSH host. The desktop model dropdown discovers files named `start-*.bat`.
+Mini does not start or stop model servers: start `llama-server` (or Ollama) yourself, then click **Refresh Models**.
 
 ### Tools and formatting
 
-With **Let the model use tools** on (Chat Backend, on by default), the model decides by itself when to search the web (needs Web Search on and a Tavily key), check the current date and time, get a stock quote, read a web page, or save a memory. A short note appears in the chat for each tool it uses. So that a web page cannot plant memories, the model cannot save a memory in an answer where it has already read web results; ask it to remember things in a separate message. The Hermes, Pi, image and video commands work as before, and "search the web for ..." or "look it up online" still forces a search.
+With **Let the model use tools** on (Chat Backend, on by default), the model decides by itself when to search the web (needs Web Search on and a Tavily key), check the current date and time, get a stock quote, read a web page, or save a memory. A short note appears in the chat for each tool it uses. So that a web page cannot plant memories, the model cannot save a memory in an answer where it has already read web results; ask it to remember things in a separate message. The Pi command ("ask pi ...") works as before, and "search the web for ..." or "look it up online" still forces a search.
 
 Tools need a model and server with function calling: in Ollama, a model tagged *tools* (for example `qwen3` or `llama3.1`); in llama.cpp, start `llama-server` with `--jinja`. If the model cannot use tools, the app shows one note, turns tools off for that model until restart and answers normally. The phone remote and scheduled prompts do not use tools yet.
 
@@ -115,7 +136,7 @@ To install local Kokoro:
    powershell -ExecutionPolicy Bypass -File .\install-kokoro.ps1
    ```
 
-Voice Chatbot starts the bundled local Kokoro server on `http://127.0.0.1:8765` when needed. To use a specific Python executable, set the `VOICECHATBOT_PYTHON` environment variable to its full path.
+Voice Chatbot Mini starts the bundled local Kokoro server on `http://127.0.0.1:8766` when needed (the full Voice Chatbot app uses `8765`, so both can run at once). To use a specific Python executable, set the `VOICECHATBOT_PYTHON` environment variable to its full path.
 
 #### Remote Kokoro server
 
@@ -177,15 +198,15 @@ Turn on **Only respond after the wake word** under **Voice Input** to have the a
 - The button next to the style picker reads **Update notes now** while recording (adds a section right away, whatever the interval), **Summarize** when stopped with empty notes, and **Re-summarize all** otherwise. Re-summarize all asks first, then rebuilds the notes from the whole transcript: one section per interval by the `[mm:ss]` times (a transcript without times is split by size into Part 1, Part 2...), then the full summary. The status shows "Section 3 of 12..." and "Writing the summary..."; press the button again to cancel, and the previous notes stay on cancel or error. When stopped, the transcript can be edited, so you can fix names before summarizing.
 - Summary requests use the same context window as the chat (sent to Ollama as `num_ctx`), so long requests are not cut short.
 - **Copy** the transcript or notes, **Save...** it as Markdown or text, or **Send to chat**: the transcript and notes become the main chat's context and the message box starts with "Using the transcript, ". The chat also gets the transcript as context while it grows (its last 8,000 characters plus the notes).
-- Each session is saved automatically when you stop, clear or close the window, to `%APPDATA%\VoiceChatbot\transcripts\transcript_yyyyMMdd_HHmmss.md`. **Open folder** shows them.
-- The current session (transcript, notes, recording time, live-notes progress and its file name) is also kept in `%APPDATA%\VoiceChatbot\transcripts\current-session.json` (about 2 seconds after each change, and on stop, close and exit). Opening the window again restores it ("Restored your last session from ..."); recording continues its timestamps and updates the same session file. **Clear** saves the session and starts a new one. An unreadable state file is ignored (and logged).
+- Each session is saved automatically when you stop, clear or close the window, to `%APPDATA%\VoiceChatbotMini\transcripts\transcript_yyyyMMdd_HHmmss.md`. **Open folder** shows them.
+- The current session (transcript, notes, recording time, live-notes progress and its file name) is also kept in `%APPDATA%\VoiceChatbotMini\transcripts\current-session.json` (about 2 seconds after each change, and on stop, close and exit). Opening the window again restores it ("Restored your last session from ..."); recording continues its timestamps and updates the same session file. **Clear** saves the session and starts a new one. An unreadable state file is ignored (and logged).
 - Shortcuts in the window: **Ctrl+R** start/stop, **Ctrl+S** save, **Ctrl+0** default text size. **Esc** does nothing there, so it cannot stop a recording by accident.
 
 ## Conversations, memory and knowledge
 
 ### Saved conversations
 
-Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\VoiceChatbot\conversations`. Messages from the phone remote and scheduled prompts that appear in the main chat are saved too, along with attached image paths and the spoken-reply audio.
+Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\VoiceChatbotMini\conversations`. Messages from the phone remote and scheduled prompts that appear in the main chat are saved too, along with attached image paths and the spoken-reply audio.
 
 - Click the history button in the top bar (or press **Ctrl+H**) to open **Conversations**. Chats are grouped by Today, Yesterday, Previous 7 days and Older, and the search box matches titles and message text.
 - Click a conversation to reopen it. Its messages are redrawn, Replay Audio comes back if the audio file still exists, and the last *Max context messages* are loaded back into the model's context.
@@ -195,7 +216,7 @@ Every chat is saved automatically, one JSON file per conversation in `%APPDATA%\
 
 ### Memories
 
-**Save Memory** in the **Conversation** expander summarizes the current chat into a memory, and **View Memory** lets you add, edit or delete them. Memories are stored in `%APPDATA%\VoiceChatbot\memory`.
+**Save Memory** in the **Conversation** expander summarizes the current chat into a memory, and **View Memory** lets you add, edit or delete them. Memories are stored in `%APPDATA%\VoiceChatbotMini\memory`.
 
 **Memories in prompt** decides which memories go into the system prompt:
 
@@ -214,7 +235,7 @@ The assistant can answer from your own documents. Open **Knowledge Folder** in t
 - PDFs are read the way the page looks: each line is one row of the page, left to right, so a form's label and its amount stay together even when the PDF draws them far apart (*11 Subtract line 10 from line 9. This is your adjusted gross income ... 11 | 112,258*). ` | ` marks a wide gap between columns and dot leaders become `...`. Values typed into a fillable PDF form (text boxes, ticked boxes as `[X]`, chosen options) are read too and placed where their fields are. PDFs indexed by an earlier version of the app are read again automatically the next time the folder is checked.
 - While it is on, the folder is checked again a few seconds after the app starts and whenever you change it, and only new or changed files are read again. **Reindex** does the same now and also retries files that could not be read before (for example after adding an OCR language) and reads the rest of scans indexed when OCR stopped at 8 pages; photos and empty files that simply have no text are not read again until they change. A reindex you start (Reindex, a new folder, turning the switch on) always ends with a one-line summary in the chat, such as *Knowledge folder: 18 files indexed (412 chunks), 2 new or changed. Skipped 5 (3 video, 2 archive: not supported). Could not read 1: lease.pdf (this PDF file is password-protected). No text found in 40 image files.* or *Knowledge folder is up to date: 18 files (412 chunks), checked 11:52 PM.* The background checks only post when a file could not be read (a photo without words does not count).
 - A message about your documents (a passage matches it, or it mentions your documents, files, the folder or a word from a file name such as *deed* or *insurance*), desktop or phone remote, tells the model the folder's name and which documents are in it (up to 60 names), with an instruction to say which document might have an answer rather than invent its contents and to ignore the documents if the message is really about something else. When an answer uses a number, amount, date or name from a document, the model is asked to quote the exact line it came from and name the file, to say it is unclear rather than guess when a form's label and value are not clearly on the same line, and, when you say an answer is wrong, to re-read the text and quote it instead of guessing again. The folder's whole text is added when it fits in about a third of the model's context window; otherwise the best-matching passages are added, at least **Excerpts per message** (default 4, about 900 characters each) and more while they match well and fit. The chat shows a short note such as *Using 3 excerpts from: lease.pdf, car.md* or *Using all 5 documents in 'townhouse'*. Matching is keyword based, like memories, so small talk gets nothing from the folder. If you turn **Use my documents** off in a chat that already used them, the model is told not to bring them up again unless you ask; a new chat starts clean. File and subfolder names count as words and lift that file's passages, and a short follow-up (*and the parking rules?*) also uses your previous question to rank them.
-- The index is stored in `%APPDATA%\VoiceChatbot\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
+- The index is stored in `%APPDATA%\VoiceChatbotMini\knowledge-index.json`; your documents are never changed. The settings are saved as `KnowledgeEnabled`, `KnowledgeFolder` and `KnowledgeMaxChunks` in `settings.json`.
 
 ### Documents and OCR
 
@@ -251,26 +272,11 @@ A persona is a named preset for the system prompt, the voice, the speech rate, t
 
 ### Web search
 
-Create a key at [Tavily](https://tavily.com), enter it in the app, and enable **Web Search**. API keys are stored locally in `%APPDATA%\VoiceChatbot\settings.json`; they are not included in the installer or repository.
-
-### ComfyUI
-
-Install [ComfyUI](https://github.com/comfyanonymous/ComfyUI), install the models and custom nodes required by your workflows, then set the ComfyUI URL in the app. The default local URL is `http://localhost:8000`.
-
-The app's SSH start/stop buttons expect these batch files on the model host:
-
-- `C:\llama.cpp\Start-ComfyUI-LAN.bat`
-- `C:\llama.cpp\Stop-ComfyUI-LAN.bat`
-
-### SSH model control
-
-SSH model control is optional. Configure the host, port, username, and password in the app. The remote Windows machine must expose SSH and make its `C:` drive available to the SSH environment as `/mnt/c`.
-
-The application currently recognizes common batch files for Gemma, GPT-OSS, Mistral, Qwen, and LFM. The desktop dropdown also discovers additional `start-*.bat` files.
+Create a key at [Tavily](https://tavily.com), enter it in the app, and enable **Web Search**. API keys are stored locally in `%APPDATA%\VoiceChatbotMini\settings.json`; they are not included in the installer or repository.
 
 ### Phone HTTPS remote
 
-Enable **Phone Remote** and choose a LAN port. The app creates a local certificate. Install and trust the generated `.cer` certificate on the phone, then open the displayed HTTPS URL while both devices are on the same network. The remote always needs a PIN: if none is set, a random 6-digit PIN is created when it starts and shown under **Phone Remote** (and in its status). Enter it once on the phone; the page remembers it. **New PIN** creates a different one.
+Enable **Phone Remote** and choose a LAN port (default `5100`; pick another one, such as `5101`, while the full Voice Chatbot app's remote runs). The app creates a local certificate, named "VoiceChatbot Mini Local Remote" so it can be told apart from the full app's. Install and trust the generated `.cer` certificate on the phone, then open the displayed HTTPS URL while both devices are on the same network. The remote always needs a PIN: if none is set, a random 6-digit PIN is created when it starts and shown under **Phone Remote** (and in its status). Enter it once on the phone; the page remembers it. **New PIN** creates a different one.
 
 #### Web transcriber (from another PC or a phone)
 
@@ -282,7 +288,7 @@ The remote also serves the Live Transcriber as a web page: open `https://<PC add
 - **Source.** **Microphone** (echo cancellation off, noise suppression and automatic gain on) or, in Chrome and Edge on a PC, **Tab / system audio**: pick a tab (or the entire screen) and turn on **Share tab audio** (or **Share system audio**). Only the sound is used.
 - Audio is cut at pauses like the desktop window (half a second of silence once a chunk is 2 seconds long, at most 20 seconds, silence skipped). Chunks go to the PC one at a time and come back as `[mm:ss]` lines (time since the session started). **Stop** shows "Finishing..." until the last chunks are transcribed, then saves the session on the PC.
 - **Notes** work as in the desktop window, in the same layout (SUMMARY SO FAR, then NOTES BY TIME with one `[mm:ss–mm:ss]` section per update): **Live notes** (5, 10 or 15 minutes; a stored 2 becomes 5) adds a section while recording, **Update notes now** adds one right away, **Stop** adds the last section and replaces the top with a full summary in the chosen style, and **Summarize** / **Re-summarize all** (asks first) rebuild the notes from the whole transcript ("Section 3 of 12...", "Writing the summary..."; press the button again to cancel, the previous notes stay). The notes are read-only while recording. The PC writes them as background jobs that the page checks every second, so a phone that sleeps for a moment does not lose them. They use the desktop transcriber's system message and the chat's context window.
-- **Copy transcript**, **Copy notes**, **Download .md** (to the device), **Save on PC** (`%APPDATA%\VoiceChatbot\transcripts`, under a name the PC chooses; also saved automatically on Stop and before Clear) and **Send to chat** (the transcript and notes become the context of the desktop chat and the phone remote chat).
+- **Copy transcript**, **Copy notes**, **Download .md** (to the device), **Save on PC** (`%APPDATA%\VoiceChatbotMini\transcripts`, under a name the PC chooses; also saved automatically on Stop and before Clear) and **Send to chat** (the transcript and notes become the context of the desktop chat and the phone remote chat).
 - Drag the bar between the transcript and the notes to resize them; **A-**/**A+** change the text size. Text size, pane split, source, style and live-notes choices are remembered in that browser. The transcript and notes can be edited when stopped. The browser also keeps the session (transcript, notes, recording time and live-notes progress): after a reload the page says "Restored your last session from ...", recording continues its timestamps, and **Clear** starts a new one.
 - **Phones** stop the microphone when the screen locks or you switch apps. The page keeps the screen awake while recording where the browser allows it; keep the page open in front.
 
@@ -314,7 +320,7 @@ These tools can be installed with WinGet where packages are available.
 
 ### Tray and hotkey
 
-The listen hotkey (Ctrl+Alt+Space by default) works in any app, also while Voice Chatbot is minimized or hidden in the tray. It works like the **Listen** / **Stop listening** button: press it to turn the microphone on, press it again to turn it off. Pick Ctrl+Shift+Space, Ctrl+Alt+L or Off under **App > Listen hotkey**; if another app already uses the combination, the app says so there and in the chat. Right-click the tray icon for **Open Voice Chatbot**, **Listen** / **Stop listening**, **Speak responses** and **Exit**, or double-click it to open the window. Turn on **App > Minimize to tray** to hide the window in the tray instead of the taskbar when you minimize it.
+The listen hotkey (Ctrl+Alt+Space by default) works in any app, also while Voice Chatbot Mini is minimized or hidden in the tray. It works like the **Listen** / **Stop listening** button: press it to turn the microphone on, press it again to turn it off. Pick Ctrl+Shift+Space, Ctrl+Alt+L or Off under **App > Listen hotkey**; if another app already uses the combination, the app says so there and in the chat. Right-click the tray icon for **Open Voice Chatbot Mini**, **Listen** / **Stop listening**, **Speak responses** and **Exit**, or double-click it to open the window. Turn on **App > Minimize to tray** to hide the window in the tray instead of the taskbar when you minimize it.
 
 ## Building from source
 
@@ -339,29 +345,28 @@ winget install --id JRSoftware.InnoSetup -e
 .\scripts\Build-Installer.ps1 -Version 1.0.0
 ```
 
-Outputs are written to `artifacts\`.
+Outputs are written to `artifacts\`: `VoiceChatbotMini-Setup-<version>-win-x64.exe`, `VoiceChatbotMini-<version>-win-x64-portable.zip` and `SHA256SUMS.txt`. The app builds as `VoiceChatbotMini.exe`; its product name and folders are set in `Core/AppPaths.cs`.
 
 Logic without WPF lives in `Core/` and is unit tested in `tests/VoiceChatbot.Tests` (`dotnet test tests/VoiceChatbot.Tests`, runs on any OS). The Live Transcriber's prompts and summary styles (`TranscriptSummaryPrompts`, `TranscriptSummaryStyles`), the notes layout (`TranscriptNotes`), live updates, final notes and Re-summarize all (`TranscriptNotesWriter`), long-transcript splitting (`TranscriptSummarizer`), live-notes timing (`LiveNotesPolicy`), the desktop session state (`TranscriberSessionStore`) and the saved Markdown/text document (`LiveTranscriptText`) are there so the web transcriber shares them. Its page (`PhoneRemoteTranscriberPage`), the values its script takes from those classes, its request limits and file names (`WebTranscriber`) and its background notes jobs (`TranscriberJobs`) are in `Core/` too; the endpoints are in `PhoneRemoteServer.Transcriber.cs`.
 
 ## GitHub releases
 
-The included GitHub Actions workflow builds the installer and portable ZIP:
+Mini is built from the `mini` branch. Its GitHub Actions workflow builds the installer and portable ZIP:
 
-- Run **Build Windows release** manually from the Actions tab for test artifacts.
-- Push a tag such as `v1.0.0` to create a GitHub Release automatically.
+- Run **Build Windows release (Mini)** manually from the Actions tab (on the `mini` branch) for test artifacts, uploaded as `VoiceChatbotMini-<version>-win-x64`.
+- Push a tag such as `mini-v1.0.0` to create a GitHub Release named **Voice Chatbot Mini 1.0.0**. Mini tags start with `mini-v`, so they never mix with the full app's `v1.0.0` tags and releases.
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag mini-v1.0.0
+git push origin mini-v1.0.0
 ```
 
 ## Data and security
 
-- Settings, API keys, downloaded Whisper models, generated media, memories, saved conversations, and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbot`.
-- Do not commit `settings.json`, certificates, passwords, API keys, model files, or private batch files.
-- The SSH password, OpenAI API key, Tavily API key and phone remote PIN are encrypted in `settings.json` with Windows DPAPI for your Windows account (they appear as `"dpapi:..."`). Plain-text values from older versions are encrypted the next time the app starts. A settings file copied to another PC or Windows user cannot be decrypted there: those fields are left empty, the app warns once, and you enter them again. Still use a dedicated LAN account for SSH and restrict network access appropriately.
-- SSH host keys are pinned on first use. The first connection to each SSH `host:port` trusts the server's key, saves its fingerprint in `settings.json` as `SHA256:...` (the same text `ssh-keygen -lf` prints for the server's host key) and posts a "Trusted SSH host key" note in the chat. After that, a server that presents a different key is refused with an error saying the host key changed. **Model Server Control > Host key** shows the pinned fingerprint. After you reinstall or reconfigure the SSH server, click **Forget host key** there and the next connection trusts the new key.
-- The phone remote checks its PIN (in constant time) on every API request; spoken replies, generated images and videos are fetched by random, unguessable links. After 5 wrong PINs within 10 minutes, that IP address is locked out for 10 minutes: the phone shows "Too many wrong PIN attempts" (HTTP 429), even the right PIN is refused until the lockout ends, and the desktop app posts a note in the chat. A correct PIN resets the count, and **New PIN** lifts all lockouts. Requests without the right PIN are refused before their body is read, and request sizes are capped (64 MB for a voice clip, 256 MB for a message with files or a meeting recording, 8 MB for a web transcriber chunk and 16 MB for its text requests, which accept up to 4,000,000 characters of transcript). The web transcriber page itself contains no data, runs only its own script (Content-Security-Policy) and shows all text as plain text; its files are saved under names the PC generates, never a name or path from the browser. Uploaded files are saved under random names in `%TEMP%\VoiceChatbot\phone-*`, so a file name cannot place a file anywhere else.
-- The app keeps a daily log in `%APPDATA%\VoiceChatbot\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
-- The listen hotkey turns the microphone on from any app, also while the window is hidden in the tray. Face gating still applies, the tray icon's tooltip shows "Listening...", and **App > Listen hotkey > Off** turns it off. It is registered with Windows only while Voice Chatbot runs.
-- Uninstalling the application does not delete `%APPDATA%\VoiceChatbot`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.
+- Settings, API keys, downloaded Whisper models, reply audio, memories, saved conversations, transcripts and phone certificates are stored outside the installation directory under `%APPDATA%\VoiceChatbotMini`; temporary files go to `%TEMP%\VoiceChatbotMini`. The full Voice Chatbot app's `%APPDATA%\VoiceChatbot` is only read once, to copy its `settings.json` on Mini's first run.
+- Do not commit `settings.json`, certificates, passwords, API keys or model files.
+- The OpenAI API key, Tavily API key and phone remote PIN are encrypted in `settings.json` with Windows DPAPI for your Windows account (they appear as `"dpapi:..."`). Plain-text values from older versions are encrypted the next time the app starts. A settings file copied to another PC or Windows user cannot be decrypted there: those fields are left empty, the app warns once, and you enter them again.
+- The phone remote checks its PIN (in constant time) on every API request; spoken replies are fetched by random, unguessable links. After 5 wrong PINs within 10 minutes, that IP address is locked out for 10 minutes: the phone shows "Too many wrong PIN attempts" (HTTP 429), even the right PIN is refused until the lockout ends, and the desktop app posts a note in the chat. A correct PIN resets the count, and **New PIN** lifts all lockouts. Requests without the right PIN are refused before their body is read, and request sizes are capped (64 MB for a voice clip, 256 MB for a message with files or a meeting recording, 8 MB for a web transcriber chunk and 16 MB for its text requests, which accept up to 4,000,000 characters of transcript). The web transcriber page itself contains no data, runs only its own script (Content-Security-Policy) and shows all text as plain text; its files are saved under names the PC generates, never a name or path from the browser. Uploaded files are saved under random names in `%TEMP%\VoiceChatbotMini\phone-*`, so a file name cannot place a file anywhere else.
+- The app keeps a daily log in `%APPDATA%\VoiceChatbotMini\logs\app-YYYYMMDD.log` for 7 days: startup and shutdown, every system message shown in the chat, backend errors and crashes. Saved keys and passwords are masked in it. Use **App > Open logs folder** in the settings sidebar to attach it to a bug report.
+- The listen hotkey turns the microphone on from any app, also while the window is hidden in the tray. The tray icon's tooltip shows "Listening...", and **App > Listen hotkey > Off** turns it off. It is registered with Windows only while Voice Chatbot Mini runs.
+- Uninstalling the application does not delete `%APPDATA%\VoiceChatbotMini`, so reinstalling preserves settings. Delete that folder manually to remove all local app data.
