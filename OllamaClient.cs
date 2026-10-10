@@ -21,6 +21,8 @@ public class OllamaClient : IDisposable
     private string _openAiApiKey = "";
     // Base URLs whose server rejected the skip-thinking fields with HTTP 400 in this session.
     private readonly HashSet<string> _thinkingFieldsRejected = new(StringComparer.OrdinalIgnoreCase);
+    // What OpenAI-compatible servers accept (max_completion_tokens, default-only temperature, ...).
+    private readonly OpenAiRequestCompat _openAiCompat = new();
 
     public string Provider
     {
@@ -863,43 +865,79 @@ public class OllamaClient : IDisposable
 
     /// <summary>
     /// Sends a chat request made by <paramref name="createRequest"/> (true = with the fields that skip
-    /// the model's thinking, see <see cref="DisableThinking"/>). When the server answers HTTP 400 to a
-    /// request with those fields, it is sent once more without them; when that works, they are left out
-    /// for that server for the rest of the session.
+    /// the model's thinking, see <see cref="DisableThinking"/>). Requests to an OpenAI-compatible server are
+    /// first adjusted to what it accepts (<see cref="OpenAiRequestCompat"/>). When the server answers HTTP 400:
+    /// a refused tuning parameter (max_tokens, temperature, ...) is learned and the request sent again without
+    /// it; otherwise, if the skip-thinking fields were sent, it is sent once more without them, and when that
+    /// works they are left out for that server for the rest of the session.
     /// </summary>
     private async Task<HttpResponseMessage> SendChatRequestAsync(string baseUrl, Func<bool, HttpRequestMessage> createRequest,
         HttpCompletionOption completion, CancellationToken ct)
     {
+        const int MaxAttempts = 4;
         var skipThinking = ShouldSendSkipThinkingFields(baseUrl);
-        var response = await SendAsync(createRequest(skipThinking)).ConfigureAwait(false);
-        if (!skipThinking || response.StatusCode != HttpStatusCode.BadRequest)
-            return response;
+        var droppedThinking = false;
+        var openAi = IsOpenAiCompatible && string.Equals(baseUrl, _openAiBaseUrl, StringComparison.OrdinalIgnoreCase);
 
-        string problem;
-        try { problem = (await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)).Trim(); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { problem = ""; }
-        finally { response.Dispose(); }
-        // Too long for the context window: sending it again without the thinking fields would not help.
-        if (TryCreateContextOverflow(problem) is { } overflow)
-            throw overflow;
-        if (problem.Length > 300)
-            problem = problem[..300] + "...";
-
-        var retry = await SendAsync(createRequest(false)).ConfigureAwait(false);
-        if (retry.IsSuccessStatusCode)
+        for (var attempt = 1; ; attempt++)
         {
-            lock (_thinkingFieldsRejected)
-                _thinkingFieldsRejected.Add(baseUrl);
-            AppLog.Info($"The chat server at {baseUrl} rejected the request to skip model thinking (HTTP 400: {problem}). " +
-                        "Requests to it are sent without it for the rest of this session.");
+            var request = createRequest(skipThinking);
+            string? sentBody = null;
+            if (openAi && request.Content != null)
+            {
+                sentBody = _openAiCompat.Apply(baseUrl, await request.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+                request.Content = new StringContent(sentBody, Encoding.UTF8, "application/json");
+            }
+
+            var response = await SendAsync(request).ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.BadRequest)
+            {
+                if (droppedThinking && response.IsSuccessStatusCode)
+                {
+                    lock (_thinkingFieldsRejected)
+                        _thinkingFieldsRejected.Add(baseUrl);
+                    AppLog.Info($"The chat server at {baseUrl} rejected the request to skip model thinking. " +
+                                "Requests to it are sent without it for the rest of this session.");
+                }
+                return response;
+            }
+
+            string problem;
+            try { problem = (await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)).Trim(); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { problem = ""; }
+            finally { response.Dispose(); }
+            // Too long for the context window: sending it again with other fields would not help.
+            if (TryCreateContextOverflow(problem) is { } overflow)
+                throw overflow;
+
+            if (attempt < MaxAttempts && sentBody != null && _openAiCompat.Learn(baseUrl, sentBody, problem, out var change))
+            {
+                AppLog.Info($"The chat server at {baseUrl} refused a request setting ({Shorten(problem)}); from now on {change}.");
+                continue;
+            }
+
+            if (attempt < MaxAttempts && skipThinking)
+            {
+                skipThinking = false;
+                droppedThinking = true;
+                continue;
+            }
+
+            // Give the caller the server's own answer, as if the response had not been read.
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                ReasonPhrase = "Bad Request",
+                Content = new StringContent(problem, Encoding.UTF8, "application/json")
+            };
         }
-        return retry;
 
         async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
         {
             using (request)
                 return await _http.SendAsync(request, completion, ct).ConfigureAwait(false);
         }
+
+        static string Shorten(string text) => text.Length > 300 ? text[..300] + "..." : text;
     }
 
     private bool ShouldSendSkipThinkingFields(string baseUrl)
