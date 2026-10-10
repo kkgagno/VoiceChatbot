@@ -622,64 +622,6 @@
                             </StackPanel>
                         </Expander>
 
-                        <!-- ================= Image / video ================= -->
-                        <Expander Header="Images &amp; Video" local:Ui.Icon="&#xE91B;" local:Ui.Subtitle="ComfyUI generation settings">
-                            <StackPanel>
-                                <StackPanel Style="{StaticResource FieldBlock}">
-                                    <TextBlock Text="ComfyUI URL" Style="{StaticResource SectionLabel}"/>
-                                    <TextBox x:Name="ComfyUrlBox" Text="http://localhost:8000" local:Ui.Placeholder="http://localhost:8000"/>
-                                </StackPanel>
-
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Image width" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="ImageWidthBox" Text="1080"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Image height" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="ImageHeightBox" Text="1920"/>
-                                    </StackPanel>
-                                </Grid>
-
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Create steps" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="QwenCreateStepsBox" Text="4"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Edit steps" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="QwenEditStepsBox" Text="40"/>
-                                    </StackPanel>
-                                </Grid>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Video seconds" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="VideoSecondsBox" Text="6"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Video FPS" Style="{StaticResource SectionLabel}"/>
-                                        <TextBox x:Name="VideoFpsBox" Text="24"/>
-                                    </StackPanel>
-                                </Grid>
-                            </StackPanel>
-                        </Expander>
-
                         <!-- ================= Face presence ================= -->
                         <Expander Header="Face Presence" local:Ui.Icon="&#xE77B;" local:Ui.Subtitle="Camera identity and gating">
                             <StackPanel>
@@ -922,8 +864,6 @@
                                 <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,20">
                                     <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE774;" Click="Suggestion_Click"
                                             Content="What's happening in tech news today?" Tag="What's happening in tech news today?"/>
-                                    <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE790;" Click="Suggestion_Click"
-                                            Content="Create an image of a neon city at night" Tag="Create an image of a neon city at night, cinematic lighting"/>
                                     <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE714;" Click="Suggestion_Click"
                                             Content="Summarize a YouTube video" Tag="Summarize this YouTube video: "/>
                                     <Button Style="{StaticResource ChipButton}" local:Ui.Icon="&#xE943;" Click="Suggestion_Click"
@@ -984,15 +924,6 @@
                                           Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="2,0,12,6"
                                           Checked="KeepDocumentActiveToggle_Changed" Unchecked="KeepDocumentActiveToggle_Changed"
                                           ToolTip="When checked, the attached document stays in context for each question until unchecked."/>
-                                <Border Width="1" Height="18" Background="{DynamicResource BorderBrush}" Margin="0,0,8,6"/>
-                                <Button x:Name="CreateImageBtn" Content="Create" local:Ui.Icon="&#xE790;" Style="{StaticResource ChipButton}"
-                                        Click="CreateImage_Click" ToolTip="Create an image from the typed prompt using Qwen Image."/>
-                                <Button x:Name="EditImageBtn" Content="Edit" local:Ui.Icon="&#xE70F;" Style="{StaticResource ChipButton}"
-                                        Click="EditImage_Click" ToolTip="Edit the attached or last generated image using Qwen Image Edit."/>
-                                <Button x:Name="AudioBtn" Content="Video Audio" local:Ui.Icon="&#xE8D6;" Style="{StaticResource ChipButton}"
-                                        Click="AttachVideoAudio_Click" ToolTip="Attach optional audio for the next video generation."/>
-                                <Button x:Name="CreateVideoBtn" Content="Video" local:Ui.Icon="&#xE714;" Style="{StaticResource ChipButton}"
-                                        Click="CreateVideo_Click" ToolTip="Make a video from the attached or last generated image using ComfyUI."/>
                             </WrapPanel>
                         </Grid>
                     </Border>

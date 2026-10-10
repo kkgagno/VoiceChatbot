@@ -29,16 +29,11 @@ public partial class MainWindow : Window
     private const int LargePasteChars = 24000;
     private const int MaxCurrentModelInputChars = 300000;
     private const int EstimatedCharsPerToken = 4;
-    private static readonly string SyncedVideoDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "VoiceChatbot",
-        "videos");
     private OllamaClient _ollama;
     private PiAgentService _piAgent;
     private YouTubeTranscriptService _youtubeTranscripts;
     private DocumentTextService _documentText;
     private TavilySearchClient _tavily;
-    private ComfyUiImageClient _comfyImages;
     private SpeechEngine _speech;
     private CameraService _camera;
     private PhoneRemoteServer _phoneRemoteServer;
@@ -80,9 +75,6 @@ public partial class MainWindow : Window
     private TranscriptionWindow? _transcriptionWindow;
     private string _latestLiveTranscript = "";
     private string _latestLiveTranscriptSummary = "";
-    private string _latestGeneratedImagePath = "";
-    private string _latestGeneratedVideoPath = "";
-    private string _pendingVideoAudioPath = "";
     private readonly List<RecentWebSearchContext> _recentWebSearchContexts = new();
     // True while startup pushes saved settings into the UI. Selection-changed handlers call
     // SaveSettings, which would otherwise copy half-initialized controls back over the saved values.
@@ -108,7 +100,6 @@ public partial class MainWindow : Window
         ConfigureChatClient();
         _tavily = new TavilySearchClient(_settings.TavilyApiKey);
         _tavily.SearchFailed += ShowWebSearchFailure;
-        _comfyImages = new ComfyUiImageClient { BaseUrl = _settings.ComfyUiUrl };
         _speech = new SpeechEngine();
         _camera = new CameraService();
         _phoneRemoteServer = new PhoneRemoteServer(
@@ -280,13 +271,6 @@ public partial class MainWindow : Window
         ApplyConversationHistorySettings();
         WebSearchToggle.IsChecked = _settings.WebSearchEnabled;
         TavilyApiKeyBox.Password = _settings.TavilyApiKey;
-        ComfyUrlBox.Text = _settings.ComfyUiUrl;
-        ImageWidthBox.Text = _settings.ImageWidth.ToString();
-        ImageHeightBox.Text = _settings.ImageHeight.ToString();
-        QwenCreateStepsBox.Text = _settings.QwenCreateSteps.ToString();
-        QwenEditStepsBox.Text = _settings.QwenEditSteps.ToString();
-        VideoSecondsBox.Text = _settings.VideoSeconds.ToString();
-        VideoFpsBox.Text = _settings.VideoFps.ToString();
         FaceFeaturesToggle.IsChecked = _settings.FaceFeatures.CameraFeaturesEnabled;
         FaceGatingToggle.IsChecked = _settings.FaceFeatures.FaceGatingEnabled;
         FacePolicyText.Text = _settings.FaceFeatures.FaceGatingEnabled ? "Face gating enabled" : "Face gating disabled";
@@ -332,13 +316,6 @@ public partial class MainWindow : Window
         {
             if (_settings.SilenceTimeout < 2.0)
                 _settings.SilenceTimeout = 2.4;
-            if (_settings.QwenEditSteps <= 4)
-                _settings.QwenEditSteps = 40;
-            if (_settings.ImageWidth == 1328 && _settings.ImageHeight == 1328)
-            {
-                _settings.ImageWidth = AppSettings.DefaultImageWidth;
-                _settings.ImageHeight = AppSettings.DefaultImageHeight;
-            }
         }
 
         if (_settings.SettingsVersion < 2)
@@ -464,15 +441,6 @@ public partial class MainWindow : Window
         _settings.TavilyApiKey = string.IsNullOrWhiteSpace(tavilyKey)
             ? AppSettings.DefaultTavilyApiKey
             : tavilyKey;
-        _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
-            ? "http://localhost:8000"
-            : ComfyUrlBox.Text.Trim();
-        _settings.ImageWidth = ParseBoundedInt(ImageWidthBox.Text, AppSettings.DefaultImageWidth, 256, 2048);
-        _settings.ImageHeight = ParseBoundedInt(ImageHeightBox.Text, AppSettings.DefaultImageHeight, 256, 2048);
-        _settings.QwenCreateSteps = ParseBoundedInt(QwenCreateStepsBox.Text, 4, 1, 80);
-        _settings.QwenEditSteps = ParseBoundedInt(QwenEditStepsBox.Text, 40, 1, 80);
-        _settings.VideoSeconds = ParseBoundedInt(VideoSecondsBox.Text, 6, 1, 30);
-        _settings.VideoFps = ParseBoundedInt(VideoFpsBox.Text, 24, 1, 60);
         _settings.FaceFeatures.CameraFeaturesEnabled = FaceFeaturesToggle.IsChecked == true;
         _settings.FaceFeatures.FaceGatingEnabled = FaceGatingToggle.IsChecked == true;
         _settings.PhoneRemote.Enabled = PhoneRemoteToggle.IsChecked == true;
@@ -498,7 +466,6 @@ public partial class MainWindow : Window
 
         SettingsManager.Save(_settings, userChange);
         ConfigureChatClient();
-        ConfigureImageClient();
         // The provider, endpoint or Context window may have changed (cached detections are reused).
         if (userChange)
             ScheduleContextWindowStatusRefresh();
@@ -511,13 +478,6 @@ public partial class MainWindow : Window
         _ollama.OpenAiBaseUrl = _settings.OpenAiCompatibleUrl;
         _ollama.OpenAiApiKey = _settings.OpenAiCompatibleApiKey;
         _ollama.DisableThinking = _settings.DisableModelThinking;
-    }
-
-    private void ConfigureImageClient()
-    {
-        _comfyImages.BaseUrl = string.IsNullOrWhiteSpace(_settings.ComfyUiUrl)
-            ? "http://localhost:8000"
-            : _settings.ComfyUiUrl;
     }
 
     /// <summary>Reads the Max reply tokens and Context window fields into the settings.</summary>
@@ -754,13 +714,6 @@ public partial class MainWindow : Window
             ConfigureChatClient();
             ScheduleContextWindowStatusRefresh();
         };
-        ComfyUrlBox.TextChanged += (s, e) =>
-        {
-            _settings.ComfyUiUrl = string.IsNullOrWhiteSpace(ComfyUrlBox.Text)
-                ? "http://localhost:8000"
-                : ComfyUrlBox.Text.Trim();
-            ConfigureImageClient();
-        };
 
         // Voice combo change - guard against empty/null during init
         VoiceCombo.SelectionChanged += (s, e) =>
@@ -939,7 +892,6 @@ public partial class MainWindow : Window
         try { _ollama.Dispose(); } catch { }
         try { _tavily.Dispose(); } catch { }
         try { DisposeToolServices(); } catch { }
-        try { _comfyImages.Dispose(); } catch { }
 
         _shutdownComplete = true;
         await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
@@ -988,7 +940,7 @@ public partial class MainWindow : Window
         text = StageDirections.Strip(text);
         if (string.IsNullOrWhiteSpace(text)) return "";
         if (LooksLikeOnlyUnusedTokens(text))
-            return "The model returned only special placeholder tokens, such as <unused49>. That usually means the llama.cpp server was launched with the wrong Gemma chat template or an incompatible/missing mmproj projector. Restart the Gemma 4 12B server with the correct Gemma template and matching mmproj, then try the image again.";
+            return "The model returned only special placeholder tokens, such as <unused49>. That usually means the llama.cpp server was launched with the wrong chat template or an incompatible/missing mmproj projector. Restart the server with the model's chat template and matching mmproj, then try the image again.";
         if (LooksLikeLeakedReasoningDump(text))
             return "The model returned internal reasoning instead of a normal answer. This usually means the selected llama.cpp model/server template is misconfigured or using an incompatible reasoning/chat format. Try switching models or restarting the server with the correct chat template.";
 

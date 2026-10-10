@@ -361,21 +361,12 @@ public partial class MainWindow
         ImageBtn.IsEnabled = state == "idle";
         DocumentBtn.IsEnabled = state == "idle";
         KeepDocumentActiveToggle.IsEnabled = state == "idle";
-        CreateImageBtn.IsEnabled = state == "idle";
-        EditImageBtn.IsEnabled = state == "idle";
-        AudioBtn.IsEnabled = state == "idle";
-        CreateVideoBtn.IsEnabled = state == "idle";
         MessageInput.IsEnabled = state == "idle";
     }
 
     private void UpdateImageButtonLabel()
     {
         ImageBtn.Content = _pendingImages.Count > 0 ? $"Image ({_pendingImages.Count})" : "Image";
-    }
-
-    private void UpdateAudioButtonLabel()
-    {
-        AudioBtn.Content = File.Exists(_pendingVideoAudioPath) ? "Video Audio (1)" : "Video Audio";
     }
 
     private void UpdateDocumentButtonLabel()

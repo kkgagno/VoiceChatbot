@@ -39,8 +39,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     private readonly Func<string, CancellationToken, Task<DocumentTextResult>> _extractDocumentAsync;
     private readonly Func<PhoneRemoteModelState> _modelStateProvider;
     private readonly ConcurrentDictionary<string, string> _audioFiles = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _imageFiles = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _videoFiles = new(StringComparer.OrdinalIgnoreCase);
     // Kept across restarts so stopping and starting the remote does not lift a lockout.
     private readonly PhoneRemoteAuthenticator _auth = new();
     private WebApplication? _app;
@@ -237,22 +235,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
                 return Results.NotFound();
 
             return Results.File(path, "audio/wav", enableRangeProcessing: true);
-        });
-
-        app.MapGet("/image/{id}", (string id) =>
-        {
-            if (!_imageFiles.TryGetValue(id, out var path) || !File.Exists(path))
-                return Results.NotFound();
-
-            return Results.File(path, GetImageContentType(path), Path.GetFileName(path), enableRangeProcessing: true);
-        });
-
-        app.MapGet("/video/{id}", (string id) =>
-        {
-            if (!_videoFiles.TryGetValue(id, out var path) || !File.Exists(path))
-                return Results.NotFound();
-
-            return Results.File(path, GetVideoContentType(path), Path.GetFileName(path), enableRangeProcessing: true);
         });
     }
 
@@ -463,45 +445,15 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
             audioUrl = $"/audio/{id}";
         }
 
-        var imageUrl = "";
-        if (!string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath))
-        {
-            var id = Guid.NewGuid().ToString("N");
-            _imageFiles[id] = result.ImagePath;
-            imageUrl = $"/image/{id}";
-        }
-
-        var videoUrl = "";
-        if (!string.IsNullOrWhiteSpace(result.VideoPath) && File.Exists(result.VideoPath))
-        {
-            var id = Guid.NewGuid().ToString("N");
-            _videoFiles[id] = result.VideoPath;
-            videoUrl = $"/video/{id}";
-        }
-
         return new
         {
             transcript = input.Text,
             response = result.Response,
             audioUrl,
-            imageUrl,
-            videoUrl,
             activeDocumentCount = result.ActiveDocumentCount,
             activeProvider = modelState.Provider,
             activeModel = string.IsNullOrWhiteSpace(result.ActiveModel) ? modelState.Model : result.ActiveModel,
             activeEndpoint = string.IsNullOrWhiteSpace(result.ActiveEndpoint) ? modelState.Endpoint : result.ActiveEndpoint
-        };
-    }
-
-    private static string GetImageContentType(string path)
-    {
-        return Path.GetExtension(path).ToLowerInvariant() switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".webp" => "image/webp",
-            ".bmp" => "image/bmp",
-            ".gif" => "image/gif",
-            _ => "image/png"
         };
     }
 
@@ -594,17 +546,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
         }
     }
 
-    private static string GetVideoContentType(string path)
-    {
-        return Path.GetExtension(path).ToLowerInvariant() switch
-        {
-            ".webm" => "video/webm",
-            ".mov" => "video/quicktime",
-            ".mkv" => "video/x-matroska",
-            _ => "video/mp4"
-        };
-    }
-
     /// <summary>
     /// Every request except the page itself and the media links needs the PIN, so a route added later is
     /// protected by default. This runs before the endpoint reads or binds the request body, so a client
@@ -656,18 +597,16 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// The pages (the remote and the web transcriber, which contain no data), and the reply audio, images and
-    /// videos the remote shows. Media links carry a random 128-bit id that is only handed out in an
-    /// authenticated response; audio and img tags cannot send the PIN header.
+    /// The pages (the remote and the web transcriber, which contain no data), and the reply audio the remote
+    /// plays. Audio links carry a random 128-bit id that is only handed out in an authenticated response;
+    /// audio tags cannot send the PIN header.
     /// </summary>
     private static bool IsPublicPath(PathString path)
     {
         return path == "/" ||
                path == WebTranscriber.PagePath ||
                path == WebTranscriber.PagePath + "/" ||
-               path.StartsWithSegments("/audio", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWithSegments("/image", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWithSegments("/video", StringComparison.OrdinalIgnoreCase);
+               path.StartsWithSegments("/audio", StringComparison.OrdinalIgnoreCase);
     }
 
     private static long GetMaxBodyBytes(PathString path)
@@ -768,8 +707,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     .me { align-self: flex-end; background: #246bfe; max-width: 86%; }
     .bot { align-self: flex-start; background: #24262c; max-width: 86%; }
     .sys { align-self: center; color: #aeb3bd; font-size: 12px; }
-    .generated { display: block; max-width: 100%; border-radius: 7px; margin-top: 8px; }
-    .saveImage { display: inline-block; margin-top: 6px; color: white; background: #00a884; border-radius: 7px; padding: 7px 9px; text-decoration: none; font-weight: 700; }
     .bar { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; background: #101114; padding: 5px 0; }
     .filebar { grid-template-columns: auto 1fr auto; }
     .fileLabel { color: #d7dae0; font-size: 12px; font-weight: 700; white-space: nowrap; }
@@ -835,16 +772,6 @@ public sealed partial class PhoneRemoteServer : IAsyncDisposable
     <label class="keepdoc"><input id="keepDoc" type="checkbox"> Keep doc active</label>
     <span id="activeDocStatus"></span>
   </div>
-  <div class="bar filebar">
-    <label class="fileLabel" for="videoAudio">Video Audio</label>
-    <input id="videoAudio" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg">
-    <button id="clearVideoAudio">Clear Audio</button>
-  </div>
-  <div class="bar">
-    <button id="createImage">Create Image</button>
-    <button id="editImage">Edit Image</button>
-    <button id="createVideo">Make Video</button>
-  </div>
   <div class="textbar">
     <textarea id="textMessage" placeholder="Type, paste a URL, or attach a file"></textarea>
     <button id="sendText">Send</button>
@@ -863,13 +790,8 @@ const textMessage = document.getElementById('textMessage');
 const files = document.getElementById('files');
 const keepDoc = document.getElementById('keepDoc');
 const activeDocStatus = document.getElementById('activeDocStatus');
-const videoAudio = document.getElementById('videoAudio');
 const sendText = document.getElementById('sendText');
 const clearFiles = document.getElementById('clearFiles');
-const clearVideoAudio = document.getElementById('clearVideoAudio');
-const createImage = document.getElementById('createImage');
-const editImage = document.getElementById('editImage');
-const createVideo = document.getElementById('createVideo');
 const meetingRecord = document.getElementById('meetingRecord');
 const clearMeeting = document.getElementById('clearMeeting');
 const meetingStatus = document.getElementById('meetingStatus');
@@ -1013,37 +935,7 @@ function clearSpeechChunks() {
 
 function addBotResult(data) {
   updateModelState(data);
-  const el = add('bot', data.response || 'No response.');
-  if (data.imageUrl) {
-    const img = document.createElement('img');
-    img.className = 'generated';
-    img.src = data.imageUrl;
-    img.alt = 'Generated image';
-    el.appendChild(img);
-
-    const save = document.createElement('button');
-    save.className = 'saveImage';
-    save.type = 'button';
-    save.textContent = 'Share Image';
-    save.addEventListener('click', () => shareImage(data.imageUrl));
-    el.appendChild(save);
-  }
-  if (data.videoUrl) {
-    const video = document.createElement('video');
-    video.className = 'generated';
-    video.src = data.videoUrl;
-    video.controls = true;
-    video.playsInline = true;
-    el.appendChild(video);
-
-    const save = document.createElement('button');
-    save.className = 'saveImage';
-    save.type = 'button';
-    save.textContent = 'Share Video';
-    save.addEventListener('click', () => shareVideo(data.videoUrl));
-    el.appendChild(save);
-  }
-  return el;
+  return add('bot', data.response || 'No response.');
 }
 
 function updateModelState(data) {
@@ -1061,7 +953,6 @@ function updateModelState(data) {
 
 function appendAttachedFiles(form) {
   for (const file of files.files) form.append('files', file, file.name);
-  for (const file of videoAudio.files) form.append('files', file, file.name);
   if (meetingBlob) form.append('files', meetingBlob, 'iphone-meeting.wav');
 }
 
@@ -1075,45 +966,7 @@ function updateActiveDocStatus(count) {
 }
 
 function selectedFileNames() {
-  return [...Array.from(files.files), ...Array.from(videoAudio.files)].map(f => f.name);
-}
-
-async function shareImage(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Image fetch failed');
-    const blob = await response.blob();
-    const extension = blob.type === 'image/jpeg' ? 'jpg' : 'png';
-    const file = new File([blob], `voicechatbot-image.${extension}`, { type: blob.type || 'image/png' });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-      await navigator.share({ files: [file], title: 'Voice Chatbot image' });
-      return;
-    }
-
-    add('sys', 'Share is unavailable here. Long-press the image and choose Save to Photos.');
-  } catch (e) {
-    add('sys', 'Could not open share sheet. Long-press the image to save it.');
-  }
-}
-
-async function shareVideo(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Video fetch failed');
-    const blob = await response.blob();
-    const extension = blob.type === 'video/webm' ? 'webm' : 'mp4';
-    const file = new File([blob], `voicechatbot-video.${extension}`, { type: blob.type || 'video/mp4' });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-      await navigator.share({ files: [file], title: 'Voice Chatbot video' });
-      return;
-    }
-
-    window.open(url, '_blank');
-  } catch (e) {
-    add('sys', 'Could not open share sheet. Open the video and use the browser share menu.');
-  }
+  return Array.from(files.files).map(f => f.name);
 }
 
 function unlockLiveAudio() {
@@ -1299,7 +1152,7 @@ async function sendChunks(autoPlay) {
     add('me', transcript);
     statusEl.textContent = 'Thinking';
     let r;
-    if (files.files.length > 0 || videoAudio.files.length > 0) {
+    if (files.files.length > 0) {
       const messageForm = new FormData();
       messageForm.append('text', transcript);
       appendRequestFlags(messageForm);
@@ -1333,7 +1186,6 @@ async function sendChunks(autoPlay) {
       }
     }
     if (files.files.length > 0) files.value = '';
-    if (videoAudio.files.length > 0) videoAudio.value = '';
   } catch (e) {
     add('sys', e.message);
   } finally {
@@ -1349,7 +1201,7 @@ async function sendTypedMessage() {
   }
 
   const text = textMessage.value.trim();
-  if (!text && files.files.length === 0 && videoAudio.files.length === 0 && !meetingBlob) return;
+  if (!text && files.files.length === 0 && !meetingBlob) return;
   if (!requirePin()) return;
 
   const form = new FormData();
@@ -1379,7 +1231,6 @@ async function sendTypedMessage() {
 
     textMessage.value = '';
     files.value = '';
-    videoAudio.value = '';
     meetingBlob = null;
     meetingStatus.textContent = '';
   } catch (e) {
@@ -1642,33 +1493,6 @@ stopAudio.addEventListener('click', stopAllAudio);
 sendText.addEventListener('click', sendTypedMessage);
 meetingRecord.addEventListener('click', toggleMeetingRecording);
 clearMeeting.addEventListener('click', clearMeetingRecording);
-createImage.addEventListener('click', () => {
-  const text = textMessage.value.trim();
-  if (!text) {
-    add('sys', 'Type an image prompt first.');
-    return;
-  }
-  textMessage.value = 'create an image of ' + text;
-  sendTypedMessage();
-});
-editImage.addEventListener('click', () => {
-  const text = textMessage.value.trim();
-  if (!text) {
-    add('sys', 'Type an edit instruction first.');
-    return;
-  }
-  textMessage.value = 'edit this image ' + text;
-  sendTypedMessage();
-});
-createVideo.addEventListener('click', () => {
-  const text = textMessage.value.trim();
-  if (!text) {
-    add('sys', 'Type a video prompt first.');
-    return;
-  }
-  textMessage.value = 'create a video ' + text;
-  sendTypedMessage();
-});
 textMessage.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -1676,7 +1500,6 @@ textMessage.addEventListener('keydown', e => {
   }
 });
 clearFiles.addEventListener('click', () => { files.value = ''; });
-clearVideoAudio.addEventListener('click', () => { videoAudio.value = ''; });
 keepDoc.addEventListener('change', () => {
   if (!keepDoc.checked) updateActiveDocStatus(0);
 });
@@ -1710,8 +1533,6 @@ if (!navigator.mediaDevices) add('sys', 'This browser requires HTTPS before micr
 public sealed record PhoneRemoteAssistantResult(
     string Response,
     string? AudioPath,
-    string? ImagePath = null,
-    string? VideoPath = null,
     int ActiveDocumentCount = 0,
     string? ActiveModel = null,
     string? ActiveEndpoint = null);

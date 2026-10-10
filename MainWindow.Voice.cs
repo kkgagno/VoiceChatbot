@@ -212,8 +212,6 @@ public partial class MainWindow
     private void StopAll_Click(object sender, RoutedEventArgs e)
     {
         _chatCts?.Cancel();
-        // Also stops ComfyUI jobs the phone started without a cancellable token. Never throws.
-        _ = _comfyImages.InterruptAsync();
         _speech.StopAll();
         _autoListening = false;
         AlwaysListenToggle.IsChecked = false;

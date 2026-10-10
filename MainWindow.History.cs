@@ -27,9 +27,9 @@ public partial class MainWindow
     private readonly ConversationStore _conversationStore = new(ConversationStore.DefaultFolder);
     // All history disk access runs here, one item at a time and in order, off the UI thread.
     private readonly SerialWorkQueue _conversationIo = new();
-    // Assistant bubble -> the stored message it shows, so audio/images that arrive later land on it.
+    // Assistant bubble -> the stored message it shows, so audio that arrives later lands on it.
     private readonly ConditionalWeakTable<AssistantMessageUi, RecordedMessage> _recordedBubbles = new();
-    // Audio/images attached to a bubble before its text reached _history (phone remote, scheduler, media).
+    // Audio attached to a bubble before its text reached _history (phone remote, scheduler).
     private readonly ConditionalWeakTable<AssistantMessageUi, BubbleMedia> _unrecordedBubbleMedia = new();
     private readonly HashSet<string> _deletedConversationIds = new(StringComparer.Ordinal);
     private StoredConversation? _currentConversation;
@@ -50,7 +50,6 @@ public partial class MainWindow
     private sealed class BubbleMedia
     {
         public string? AudioPath { get; set; }
-        public List<string> ImagePaths { get; } = new();
     }
 
     private sealed class HistoryRowState
@@ -151,7 +150,6 @@ public partial class MainWindow
                 if (_unrecordedBubbleMedia.TryGetValue(bubble, out var media))
                 {
                     message.AudioPath = media.AudioPath ?? message.AudioPath;
-                    message.ImagePaths.AddRange(media.ImagePaths);
                     _unrecordedBubbleMedia.Remove(bubble);
                 }
             }
@@ -185,13 +183,7 @@ public partial class MainWindow
         _lastAssistantBubbleEpoch = _conversationEpoch;
     }
 
-    private void RecordAssistantAudio(AssistantMessageUi bubble, string audioPath) =>
-        RecordBubbleMedia(bubble, audioPath, isAudio: true);
-
-    private void RecordAssistantImage(AssistantMessageUi bubble, string imagePath) =>
-        RecordBubbleMedia(bubble, imagePath, isAudio: false);
-
-    private void RecordBubbleMedia(AssistantMessageUi bubble, string path, bool isAudio)
+    private void RecordAssistantAudio(AssistantMessageUi bubble, string path)
     {
         if (_restoringConversation || string.IsNullOrWhiteSpace(path))
             return;
@@ -201,24 +193,16 @@ public partial class MainWindow
             if (_recordedBubbles.TryGetValue(bubble, out var recorded))
             {
                 var message = recorded.Message;
-                if (isAudio ? message.AudioPath == path : message.ImagePaths.Contains(path))
+                if (message.AudioPath == path)
                     return;
 
-                if (isAudio)
-                    message.AudioPath = path;
-                else
-                    message.ImagePaths.Add(path);
-
+                message.AudioPath = path;
                 if (_settings.SaveConversationHistory)
                     SaveLateBubbleMedia(recorded);
                 return;
             }
 
-            var media = _unrecordedBubbleMedia.GetOrCreateValue(bubble);
-            if (isAudio)
-                media.AudioPath = path;
-            else if (!media.ImagePaths.Contains(path))
-                media.ImagePaths.Add(path);
+            _unrecordedBubbleMedia.GetOrCreateValue(bubble).AudioPath = path;
         }
         catch (Exception ex)
         {
@@ -233,7 +217,7 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Saves audio/images that reached a bubble after its text was recorded. Speech can finish after
+    /// Saves audio that reached a bubble after its text was recorded. Speech can finish after
     /// the user moved on, so a chat that is no longer open is patched in its file rather than
     /// re-saved from the old copy in memory, which would undo a rename or drop messages added after
     /// the chat was reopened.
@@ -278,7 +262,7 @@ public partial class MainWindow
         });
     }
 
-    // Finds the stored copy of a message (same role and time) and gives it the source's audio/images.
+    // Finds the stored copy of a message (same role and time) and gives it the source's audio.
     private static bool CopyMessageMedia(StoredMessage source, IEnumerable<StoredMessage> messages)
     {
         var target = messages.LastOrDefault(m => m.Role == source.Role && m.TimestampUtc == source.TimestampUtc);
@@ -286,8 +270,6 @@ public partial class MainWindow
             return false;
 
         target.AudioPath = source.AudioPath ?? target.AudioPath;
-        foreach (var path in source.ImagePaths.Where(p => !target.ImagePaths.Contains(p)))
-            target.ImagePaths.Add(path);
         return true;
     }
 
@@ -471,9 +453,6 @@ public partial class MainWindow
                 {
                     if (!string.IsNullOrWhiteSpace(message.AudioPath) && File.Exists(message.AudioPath))
                         AddAudioButtons(bubble, message.AudioPath);
-
-                    foreach (var imagePath in message.ImagePaths.Where(File.Exists))
-                        AddGeneratedImageToAssistantMessage(bubble, imagePath);
                 }
                 catch (Exception ex)
                 {

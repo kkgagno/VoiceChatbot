@@ -15,8 +15,6 @@ public class AppSettings
     public const int CurrentSettingsVersion = 3;
     public int SettingsVersion { get; set; }
 
-    public const int DefaultImageWidth = 1080;
-    public const int DefaultImageHeight = 1920;
     public const string DefaultTavilyApiKey = "";
     public const string DefaultRyzenAiWhisperCommand = "call \"%USERPROFILE%\\VoiceChatbot\\tools\\ryzen-ai-whisper-transcribe.bat\" {input}";
     /// <summary>
@@ -97,15 +95,6 @@ public class AppSettings
     public int MaxTokens { get; set; } = 2048;
     /// <summary>Largest context window to use; sent to Ollama as num_ctx. 0 = the model's full window.</summary>
     public int ContextWindow { get; set; } = TokenBudget.DefaultContextWindow;
-
-    // Image generation / editing
-    public string ComfyUiUrl { get; set; } = "http://localhost:8000";
-    public int ImageWidth { get; set; } = DefaultImageWidth;
-    public int ImageHeight { get; set; } = DefaultImageHeight;
-    public int QwenCreateSteps { get; set; } = 4;
-    public int QwenEditSteps { get; set; } = 40;
-    public int VideoSeconds { get; set; } = 6;
-    public int VideoFps { get; set; } = 24;
 
     // Window
     public double WindowLeft { get; set; } = -1;

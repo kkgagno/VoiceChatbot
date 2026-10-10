@@ -198,67 +198,6 @@ public partial class MainWindow
         }
     }
 
-    private async void CreateImage_Click(object sender, RoutedEventArgs e)
-    {
-        var prompt = MessageInput.Text.Trim();
-        if (string.IsNullOrWhiteSpace(prompt))
-        {
-            AddSystemMessage("Type an image prompt first.");
-            return;
-        }
-
-        MessageInput.Clear();
-        ResumeListeningAfterTextInput();
-        await RunQwenImageCreateAsync($"Create image: {prompt}", prompt);
-    }
-
-    private async void EditImage_Click(object sender, RoutedEventArgs e)
-    {
-        var prompt = MessageInput.Text.Trim();
-        if (string.IsNullOrWhiteSpace(prompt))
-        {
-            AddSystemMessage("Type an edit instruction first.");
-            return;
-        }
-
-        MessageInput.Clear();
-        ResumeListeningAfterTextInput();
-        await RunQwenImageEditAsync($"Edit image: {prompt}", prompt);
-    }
-
-    private void AttachVideoAudio_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Attach video speech audio",
-            Filter = "Audio files (*.wav;*.mp3;*.m4a;*.flac;*.ogg)|*.wav;*.mp3;*.m4a;*.flac;*.ogg|All files (*.*)|*.*",
-            Multiselect = false
-        };
-
-        if (dialog.ShowDialog(this) != true)
-            return;
-
-        _pendingVideoAudioPath = dialog.FileName;
-        AddSystemMessage($"Video audio ready: {Path.GetFileName(_pendingVideoAudioPath)}");
-        UpdateAudioButtonLabel();
-        MessageInput.Focus();
-        MessageInput.CaretIndex = MessageInput.Text.Length;
-    }
-
-    private async void CreateVideo_Click(object sender, RoutedEventArgs e)
-    {
-        var prompt = MessageInput.Text.Trim();
-        if (string.IsNullOrWhiteSpace(prompt))
-        {
-            AddSystemMessage("Type a video prompt first.");
-            return;
-        }
-
-        MessageInput.Clear();
-        ResumeListeningAfterTextInput();
-        await RunLtxVideoAsync($"Create video: {prompt}", prompt, TryParseVideoSeconds(prompt));
-    }
-
     private async void AttachDocument_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog

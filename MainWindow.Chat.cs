@@ -642,24 +642,6 @@ public partial class MainWindow
             return;
         }
 
-        if (TryGetVideoPrompt(userText, out var videoPrompt, out var videoSeconds))
-        {
-            await RunLtxVideoAsync(userText, videoPrompt, videoSeconds);
-            return;
-        }
-
-        if (TryGetImageEditPrompt(userText, out var editPrompt))
-        {
-            await RunQwenImageEditAsync(userText, editPrompt);
-            return;
-        }
-
-        if (TryGetImageCreatePrompt(userText, out var createPrompt))
-        {
-            await RunQwenImageCreateAsync(userText, createPrompt);
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(ModelCombo.Text))
         {
             AddSystemMessage("Please select a model first!");
