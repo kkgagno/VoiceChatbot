@@ -49,7 +49,7 @@ public sealed record TranscriberSendRequest(string? Transcript, string? Notes);
 /// runs one transcription at a time, so web chunks, the desktop transcriber and voice chat simply take turns) and
 /// cleaned like the desktop transcriber's. Notes are written by the same Core code as the desktop transcriber's
 /// (<see cref="TranscriptNotesWriter"/>), each as a background job the page polls, so a phone that sleeps for a
-/// moment does not lose them.
+/// moment does not lose them. Each chat-model request of a job has a time limit (<see cref="TranscriberChatTimeLimit"/>).
 /// </summary>
 public sealed partial class PhoneRemoteServer
 {
@@ -124,8 +124,9 @@ public sealed partial class PhoneRemoteServer
             var style = TranscriptSummaryStyles.Normalize(body.Style);
             var window = TimeSpan.FromMinutes(LiveNotesPolicy.NormalizeIntervalMinutes(body.IntervalMinutes ?? 0));
             var length = WebTranscriber.ResolveSessionLength(body.ElapsedMs);
-            return StartJob(style, async (progress, ct) => new TranscriberJobOutput(
-                await TranscriptNotesWriter.RebuildAsync(transcript, style, window, length, hooks.SummarizeAsync, progress, ct)));
+            var summarize = TranscriberChatTimeLimit.Apply(hooks.SummarizeAsync);
+            return StartJob("summarize", style, $"transcript {transcript.Length:N0} characters", async (progress, ct) => new TranscriberJobOutput(
+                await TranscriptNotesWriter.RebuildAsync(transcript, style, window, length, summarize, progress, ct)));
         });
 
         // Live notes: a background job that adds a section on only the text said since the last update and refreshes
@@ -149,11 +150,15 @@ public sealed partial class PhoneRemoteServer
 
             var style = TranscriptSummaryStyles.Normalize(body.Style);
             var elapsed = WebTranscriber.ResolveSessionLength(body.ElapsedMs) ?? TimeSpan.Zero;
-            return StartJob(style, async (progress, ct) =>
+            var summarize = TranscriberChatTimeLimit.Apply(hooks.SummarizeAsync);
+            var size = final
+                ? $"new text {newText.Length:N0} characters, transcript {transcript.Length:N0} characters"
+                : $"new text {newText.Length:N0} characters";
+            return StartJob(final ? "final notes" : "notes", style, size, async (progress, ct) =>
             {
                 var result = final
-                    ? await TranscriptNotesWriter.FinishAsync(notes, newText, transcript, elapsed, style, hooks.SummarizeAsync, progress, ct)
-                    : await TranscriptNotesWriter.UpdateAsync(notes, newText, elapsed, style, hooks.SummarizeAsync, progress, ct);
+                    ? await TranscriptNotesWriter.FinishAsync(notes, newText, transcript, elapsed, style, summarize, progress, ct)
+                    : await TranscriptNotesWriter.UpdateAsync(notes, newText, elapsed, style, summarize, progress, ct);
                 if (result.SummaryError is not { } error)
                     return new TranscriberJobOutput(result.Notes);
 
@@ -286,11 +291,41 @@ public sealed partial class PhoneRemoteServer
         }
     }
 
-    // Starts a notes job and answers with its state, or 409 when too many are running.
-    private IResult StartJob(string style, Func<IProgress<string>, CancellationToken, Task<TranscriberJobOutput>> work)
+    // Starts a notes job and answers with its state, or 409 when too many are running. kind ("summarize", "notes",
+    // "final notes") and size are only for the log, which gets a line when the job starts and when it ends.
+    private IResult StartJob(string kind, string style, string size, Func<IProgress<string>, CancellationToken, Task<TranscriberJobOutput>> work)
     {
         var job = _summaryJobs.TryStartWithWarning(style, work, DescribeSummaryError, out var refusal);
-        return job == null ? Error(StatusCodes.Status409Conflict, refusal) : Results.Json(JobJson(job.Snapshot()));
+        if (job == null)
+        {
+            AppLog.Info($"Web transcriber: {kind} job refused ({style}, {size}): {refusal}");
+            return Error(StatusCodes.Status409Conflict, refusal);
+        }
+
+        var logId = job.Id[..8];
+        AppLog.Info($"Web transcriber: {kind} job {logId} started ({style}, {size}).");
+        _ = job.Completion.ContinueWith(_ => LogJobEnd(kind, logId, job), CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return Results.Json(JobJson(job.Snapshot()));
+    }
+
+    private static void LogJobEnd(string kind, string logId, TranscriberJob job)
+    {
+        var snapshot = job.Snapshot();
+        var seconds = ((job.Finished ?? DateTimeOffset.UtcNow) - job.Started).TotalSeconds;
+        switch (snapshot.State)
+        {
+            case TranscriberJobState.Done:
+                var warning = snapshot.Warning.Length > 0 ? $"; {Shorten(snapshot.Warning)}" : "";
+                AppLog.Info($"Web transcriber: {kind} job {logId} finished in {seconds:0.0} s (result {snapshot.Result.Length:N0} characters{warning}).");
+                break;
+            case TranscriberJobState.Failed:
+                AppLog.Warn($"Web transcriber: {kind} job {logId} failed after {seconds:0.0} s: {Shorten(snapshot.Error)}");
+                break;
+            case TranscriberJobState.Cancelled:
+                AppLog.Info($"Web transcriber: {kind} job {logId} cancelled after {seconds:0.0} s.");
+                break;
+        }
     }
 
     private static object JobJson(TranscriberJobSnapshot job) => new

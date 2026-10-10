@@ -123,6 +123,34 @@ public class TranscriberJobsTests
     }
 
     [Fact]
+    public async Task AFailedOrCancelledJobFreesItsSlot()
+    {
+        var jobs = new TranscriberJobs(maxRunning: 1);
+        var failed = jobs.TryStart("Summary", async (_, _) =>
+        {
+            await Task.Yield();
+            throw new TimeoutException("The chat model on the PC did not answer within 5 minutes.");
+        }, Describe, out _)!;
+        await failed.Completion;
+
+        Assert.Equal(TranscriberJobState.Failed, failed.State);
+        Assert.Equal(0, jobs.RunningCount);
+
+        var cancelled = jobs.TryStart("Summary", async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return "never";
+        }, Describe, out var refusal);
+        Assert.NotNull(cancelled);
+        Assert.Equal("", refusal);
+
+        jobs.Cancel(cancelled!.Id);
+        await cancelled.Completion;
+        Assert.Equal(0, jobs.RunningCount);
+        Assert.NotNull(jobs.TryStart("Summary", (_, _) => Task.FromResult("ok"), Describe, out _));
+    }
+
+    [Fact]
     public async Task FinishedJobsAreForgottenAfterAWhile()
     {
         var now = new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero);

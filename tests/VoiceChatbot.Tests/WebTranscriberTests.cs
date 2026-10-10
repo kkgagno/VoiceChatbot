@@ -227,6 +227,19 @@ public class PhoneRemoteTranscriberPageTests
     }
 
     [Fact]
+    public void PageShowsHowLongANotesJobRunsAndWhyItEnded()
+    {
+        // The status counts the time with the job's progress and says when the PC is still waiting.
+        Assert.Contains("setStatus(title + ' ' + jobClock(job), true)", Page);
+        Assert.Contains("'still waiting for the chat model on the PC'", Page);
+        // A poll that hangs counts as the PC not answering; Cancel ends any wait at once.
+        Assert.Contains("setTimeout(() => controller.abort(), JOB_POLL_TIMEOUT_MS)", Page);
+        Assert.Contains("if (job.stop) job.stop();", Page);
+        // Failures and refusals stay in the status.
+        Assert.Contains("(e.status === 409 ? 'Summary not started: ' : 'Summary failed: ')", Page);
+    }
+
+    [Fact]
     public void PageKeepsNotesAndLiveNotesProgressAcrossAReload()
     {
         Assert.Contains("processedLength: policy.processed.length", Page);

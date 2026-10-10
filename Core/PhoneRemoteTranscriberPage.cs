@@ -179,6 +179,9 @@ const MIN_FONT = 12, MAX_FONT = 40, DEFAULT_FONT = 18;
 const MIN_SPLIT = 15, MAX_SPLIT = 85, DEFAULT_SPLIT = 60;
 const STATUS_MESSAGE_MS = 6000;
 const CHUNK_TIMEOUT_MS = 120000;
+const JOB_POLL_TIMEOUT_MS = 20000;  // one poll of a notes job on the PC; a longer one counts as the PC not answering
+const JOB_POLL_FAILURES_MAX = 60;   // polls in a row the PC may miss (about 3 minutes) before the page stops waiting
+const JOB_STALL_MS = 120000;        // no new progress for this long: the status says the PC is still waiting
 const UNREACHABLE_RETRY_MAX_MS = 10000; // while the PC cannot be reached, a chunk is retried at most this far apart
 const NO_AUDIO_SHARED = 'No audio was shared. Press Start again, choose the tab (or Entire screen) and turn on "Share tab audio" (or "Share system audio") before you press Share.';
 
@@ -959,7 +962,7 @@ function updateNotesHeader() {
   const updated = hasNotes && state.notesUpdatedAt ? formatUpdated(state.notesUpdatedAt) : '';
   let detail = updated;
   if (summaryJob) detail = summaryJob.progress || 'Summarizing...';
-  else if (liveJob) detail = 'Updating notes...';
+  else if (liveJob) detail = liveJob.startedAt ? 'Updating notes... ' + jobClock(liveJob) : 'Updating notes...';
   else if (state.liveNotesFailed) detail = updated ? 'Notes update failed · ' + updated : 'Notes update failed';
   else if (state.summaryNotRefreshed) detail = updated ? 'Summary not refreshed · ' + updated : 'Summary not refreshed';
   el.notesUpdated.textContent = detail;
@@ -1384,32 +1387,91 @@ function cancelJob(job) {
   if (!job || job.cancelled) return;
   job.cancelled = true;
   cancelJobOnPc(job.id);
+  if (job.stop) job.stop(); // a request or pause the job is waiting for ends now
 }
 
 function cancelSummary() { cancelJob(summaryJob); }
 function cancelLiveNotes() { cancelJob(liveJob); }
 
+// Waits for promise; Cancel (cancelJob) ends the wait at once with CancelledError.
+function untilCancelled(job, promise) {
+  return new Promise((resolve, reject) => {
+    job.stop = () => reject(new CancelledError());
+    if (job.cancelled) job.stop();
+    promise.then(resolve, reject);
+  }).finally(() => { job.stop = null; });
+}
+
+// One poll of a job. A poll the PC does not answer in time counts as the PC not answering (status 0).
+function pollJob(id) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), JOB_POLL_TIMEOUT_MS);
+  return api(API + '/jobs/' + encodeURIComponent(id), { signal: controller.signal })
+    .catch(e => {
+      if (e && e.name === 'AbortError') throw new RequestError('The PC did not answer in time.', 0);
+      throw e;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+function noteJobProgress(job, progress) {
+  const text = String(progress || '');
+  if (text === job.lastProgress) return;
+  job.lastProgress = text;
+  job.progressAt = Date.now();
+}
+
+// "0:42" or "1:02:03": how long a notes job has run.
+function formatDuration(ms) {
+  const total = Math.floor(Math.max(0, Number(ms) || 0) / 1000);
+  const h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
+  return h > 0 ? h + ':' + two(m) + ':' + two(s) : m + ':' + two(s);
+}
+
+// "0:42 - Section 1 of 2" while a notes job runs, with a note when nothing has moved on for a while.
+function jobClock(job) {
+  const now = Date.now();
+  const parts = [formatDuration(now - (job.startedAt || now))];
+  const progress = String(job.lastProgress || '').trim().replace(/(\.\.\.|\u2026)$/, '');
+  if (progress) parts.push(progress);
+  if (job.failures > 0) parts.push('the PC is not answering, trying again');
+  else if (now - (job.progressAt || now) >= JOB_STALL_MS) parts.push(job.id ? 'still waiting for the chat model on the PC' : 'still waiting for the PC to answer');
+  return parts.join(' - ');
+}
+
 // Starts a notes job on the PC and polls it until it ends, so a phone that sleeps or loses Wi-Fi for a moment
 // does not lose it (the job keeps going on the PC). Resolves to the finished job ({ result, warning });
-// throws CancelledError after cancelJob, or an Error when it failed.
+// throws CancelledError after cancelJob, or an Error when it failed, was refused or the PC no longer knows it.
+// While it runs, job.startedAt, job.lastProgress, job.progressAt and job.failures feed jobClock.
 async function runJob(path, body, job, onProgress) {
-  let data = await api(path, { method: 'POST', json: body });
+  job.startedAt = job.startedAt || Date.now();
+  job.progressAt = Date.now();
+  job.lastProgress = '';
+  job.failures = 0;
+  const start = api(path, { method: 'POST', json: body });
+  // After Cancel the page stops waiting at once; a job the PC still starts is then cancelled there.
+  start.then(d => { if (job.cancelled) cancelJobOnPc(String((d && d.id) || '')); }, () => {});
+  let data = await untilCancelled(job, start);
   job.id = String(data.id || '');
-  if (job.cancelled) cancelJobOnPc(job.id);
-  let failures = 0;
+  noteJobProgress(job, data.progress);
   while (data.state === 'running' && !job.cancelled) {
-    await sleep(1000);
-    if (job.cancelled) break;
+    await untilCancelled(job, sleep(1000));
     try {
-      data = await api(API + '/jobs/' + encodeURIComponent(job.id));
-      failures = 0;
+      data = await untilCancelled(job, pollJob(job.id));
+      job.failures = 0;
     } catch (e) {
-      if (e.status === 0 && ++failures < 60) {
-        await sleep(2000);
+      if (job.cancelled || e instanceof CancelledError) throw new CancelledError();
+      if (e.status === 0 && ++job.failures < JOB_POLL_FAILURES_MAX) {
+        await untilCancelled(job, sleep(2000));
         continue;
+      }
+      if (e.status === 0) {
+        cancelJobOnPc(job.id); // nobody waits for it any more
+        throw new Error('Gave up waiting: the PC stopped answering. Check that Voice Chatbot is running and this device is on the same network.');
       }
       throw e;
     }
+    noteJobProgress(job, data.progress);
     if (data.progress && !job.cancelled && onProgress) onProgress(String(data.progress));
   }
   if (job.cancelled || data.state === 'cancelled') throw new CancelledError();
@@ -1462,17 +1524,24 @@ async function rebuildNotes() {
     return;
   }
   const replacing = el.notes.value.trim().length > 0;
-  if (replacing && !confirm('Replace the current notes with a fresh summary of the whole transcript?')) return;
+  if (replacing && !confirm('Replace the current notes with a fresh summary of the whole transcript?')) {
+    setStatus('Not re-summarized; the current notes are kept.');
+    return;
+  }
   // Things may have moved on while the question was open.
   if (summaryJob || liveJob || state.recording || state.finishing || stopPromise || el.transcript.value !== snapshot) return;
 
   const style = normalizeStyle(el.style.value);
   const gen = state.sessionGen;
-  const job = { id: '', cancelled: false, progress: '' };
+  const job = { id: '', cancelled: false, progress: '', startedAt: Date.now() };
   summaryJob = job;
   updateNotesControls();
   updateNotesHeader();
-  setStatus(replacing ? 'Re-summarizing the whole transcript...' : 'Writing ' + style.toLowerCase() + '...', true);
+  // "Writing summary... 0:42 - Section 1 of 2", updated every second while the PC writes the notes.
+  const title = replacing ? 'Re-summarizing the whole transcript...' : 'Writing ' + style.toLowerCase() + '...';
+  const showClock = () => { if (summaryJob === job && !job.cancelled) setStatus(title + ' ' + jobClock(job), true); };
+  showClock();
+  const clock = setInterval(showClock, 1000);
 
   let done = false;
   try {
@@ -1484,7 +1553,7 @@ async function rebuildNotes() {
     }, job, message => {
       // Section by section: "Section 3 of 12...", then "Writing the summary...".
       job.progress = message;
-      setStatus(message, true);
+      showClock();
       updateNotesHeader();
     });
     if (gen !== state.sessionGen) return;
@@ -1507,12 +1576,17 @@ async function rebuildNotes() {
     persistSoon();
     done = true;
   } catch (e) {
-    if (e instanceof CancelledError || job.cancelled) {
+    if (job.cancelled) {
       if (gen === state.sessionGen) setStatus(replacing ? 'Re-summarize cancelled; the previous notes are kept.' : 'Summary cancelled.');
+    } else if (e instanceof CancelledError) {
+      // Not this page's Cancel: the job was stopped on the PC (the phone remote was stopped, say).
+      if (gen === state.sessionGen) setStatus('The summary was stopped on the PC.' + (replacing ? ' The previous notes are kept.' : '') + ' Press ' + (replacing ? 'Re-summarize all' : 'Summarize') + ' to try again.', true);
     } else {
-      setStatus('Summary failed: ' + e.message + (replacing ? ' The previous notes are kept.' : ''), !state.recording);
+      // Failed, refused (409, too many running), unknown to the PC (404) or the PC stopped answering: stays shown.
+      setStatus((e.status === 409 ? 'Summary not started: ' : 'Summary failed: ') + e.message + (replacing ? ' The previous notes are kept.' : ''), true);
     }
   } finally {
+    clearInterval(clock);
     if (summaryJob === job) summaryJob = null;
     updateNotesControls();
     updateNotesHeader();
@@ -1544,8 +1618,9 @@ function liveNotesTick() {
   if (ticket) startLiveNotes(ticket);
 }
 
-function startLiveNotes(ticket) {
-  const job = { ticket, id: '', cancelled: false, promise: null };
+// title: for the notes on Stop, the status shown with the job's time and progress while they are written.
+function startLiveNotes(ticket, title) {
+  const job = { ticket, id: '', cancelled: false, promise: null, title: title || '', startedAt: Date.now() };
   liveJob = job;
   job.promise = runLiveNotes(job);
   return job.promise;
@@ -1562,6 +1637,12 @@ async function runLiveNotes(job) {
   const elapsedMs = Math.round(sessionElapsedMs());
   updateNotesHeader();
   updateNotesControls();
+  // Every second: the time in the notes header and, for the notes on Stop, in the status (not while recording).
+  const clock = setInterval(() => {
+    if (liveJob !== job || job.cancelled) return;
+    updateNotesHeader();
+    if (job.title && !state.recording) setStatus(job.title + ' ' + jobClock(job), true);
+  }, 1000);
   try {
     const data = await runJob(API + '/notes', {
       notes: notesBefore,
@@ -1607,6 +1688,7 @@ async function runLiveNotes(job) {
     }
     return false;
   } finally {
+    clearInterval(clock);
     if (liveJob === job) liveJob = null;
     updateNotesHeader();
     updateNotesControls();
@@ -1622,8 +1704,9 @@ async function finishLiveNotes(stopped) {
   // A running Summarize blocks the final notes; they run when it ends (finishSkippedFinalNotes).
   finalAfterSummary = !ticket && !!summaryJob;
   if (!ticket) return updated;
-  if (!state.recording) setStatus(stopped + ' Writing the final notes and summary...', true);
-  return (await startLiveNotes(ticket)) || updated;
+  const title = stopped + ' Writing the final notes and summary...';
+  if (!state.recording) setStatus(title, true);
+  return (await startLiveNotes(ticket, title)) || updated;
 }
 
 function toggleLiveNotes() {
